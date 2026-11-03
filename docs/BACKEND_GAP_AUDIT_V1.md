@@ -107,6 +107,7 @@
 - `GET /api/v1/message-replies/{id}`
 - `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
+- `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源和账号信息，不泄露其他租户的账号数据）
 
 ## 5. CI 与代码状态
 
