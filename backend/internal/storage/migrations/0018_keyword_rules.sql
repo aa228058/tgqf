@@ -1,5 +1,7 @@
 CREATE TABLE tenant_keyword_rules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    UNIQUE(tenant_id, id),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE(tenant_id, id),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
     match_mode TEXT NOT NULL CHECK (match_mode IN ('any','all','regex')),
