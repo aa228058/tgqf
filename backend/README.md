@@ -1,30 +1,29 @@
 # Go Backend
 
-TG账号管理系统 API。HTTP API 与 Telegram 长连接 Worker 分离。
+TG账号管理系统 API。需要 Go 1.23+、PostgreSQL 和 Redis。设置 DATABASE_URL、REDIS_URL 后，在 backend 目录执行 go mod tidy，再运行 go run ./cmd/api。
 
-## 本地运行
+## 超级管理员初始化
+首次启动前设置 SUPER_ADMIN_USERNAME 和至少 16 字节的 SUPER_ADMIN_PASSWORD。数据库中没有超级管理员时，服务会创建一个；已有超级管理员时不会覆盖。初始化后建议从部署环境移除这两个环境变量。
 
-需要 Go 1.23+、PostgreSQL 和 Redis。设置 `DATABASE_URL`、`REDIS_URL` 后运行：
+## 认证接口
+- POST /api/v1/auth/register：注册租户管理员，创建待激活租户。
+- POST /api/v1/auth/login：签发随机 Bearer Token，数据库只保存令牌摘要。
+- POST /api/v1/auth/activate：提交一次性卡密。
+- GET /api/v1/auth/me：当前用户。
+- POST /api/v1/auth/logout：退出当前设备。
+- POST /api/v1/auth/password：修改密码并撤销其他设备会话。
 
-```bash
-cd backend
-go mod tidy
-go run ./cmd/api
-```
+## 超级管理员接口
+所有接口均要求超级管理员 Bearer Token。
+- POST /api/v1/admin/cards：批量生成卡密；请求字段 count、duration_days。明文卡密仅在创建响应中显示一次。
+- GET /api/v1/admin/cards?limit=100：查看卡密状态，不返回明文。
+- POST /api/v1/admin/cards/{id}/disable：禁用未使用卡密。
+- GET /api/v1/admin/tenants?limit=100：查看租户。
+- PATCH /api/v1/admin/tenants/{id}/status：设置 active 或 disabled。
+- PATCH /api/v1/admin/tenants/{id}/account-limit：设置账号上限。
+- PATCH /api/v1/admin/tenants/{id}/expiry：设置租户到期时间，字段 expires_at 使用 RFC3339。
 
-配置：`HTTP_ADDR`（默认 `:8080`）、`APP_ENV`、`DATABASE_URL`、`REDIS_URL`。健康检查：`GET /health/live`；依赖就绪检查：`GET /health/ready`。
-
-## 认证 API
-
-- `POST /api/v1/auth/register`：注册租户管理员账号，创建待激活租户。
-- `POST /api/v1/auth/login`：登录并签发随机 Bearer Token（服务端仅保存 SHA-256 摘要）。
-- `POST /api/v1/auth/activate`：登录后提交一次性卡密激活租户。
-- `GET /api/v1/auth/me`：当前用户信息。
-- `POST /api/v1/auth/logout`：撤销当前会话。
-- `POST /api/v1/auth/password`：修改密码并撤销其他设备会话，当前会话保留。
-
-注册后允许登录和激活卡密，但订阅激活前不能访问业务接口。卡密生成/超级管理员接口尚未实现，因此当前不能通过公开 API 自行创建卡密。
+禁用租户后业务请求会被订阅检查拦截。恢复租户不会自动恢复后台任务；后续 Worker 必须保持任务暂停，等待人工确认后恢复。
 
 ## 安全边界
-
-Telegram Session 和代理凭据必须加密存储；不得提交到 Git 或通过普通 API 返回。生产环境必须使用密钥管理、HTTPS 和受限数据库账户。业务查询必须从认证上下文取得 tenant_id，不得信任客户端传入的 tenant_id。当前认证模块仍需配套限流、验证码/反滥用策略、审计记录和自动化测试后才能用于公网生产。
+Telegram Session 和代理凭据必须加密存储，不得通过普通 API 返回。生产环境必须使用 HTTPS 和密钥管理。业务查询必须从认证上下文取得 tenant_id，不能信任客户端传入。当前仍需补充限流、审计、租户数据访问层和自动化测试，不能直接视为公网生产就绪。
