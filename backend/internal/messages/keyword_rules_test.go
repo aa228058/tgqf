@@ -126,3 +126,11 @@ func TestNormalizeKeywordRuleRejectsInvalidSenderFilter(t *testing.T) {
 	_,err:=normalizeKeywordRule(KeywordRule{Name:"bad sender",MatchMode:"any",Keywords:[]string{"x"},SenderIDs:[]int64{0}})
 	if err==nil {t.Fatal("zero sender id accepted")}
 }
+
+func TestNormalizeKeywordRuleReplyAction(t *testing.T) {
+	rule,err:=normalizeKeywordRule(KeywordRule{Name:"reply",MatchMode:"any",Keywords:[]string{"hello"},ReplyText:"  Welcome!  "})
+	if err!=nil {t.Fatalf("valid reply action rejected: %v",err)}
+	if rule.ReplyText!="Welcome!" {t.Fatalf("reply text not normalized: %q",rule.ReplyText)}
+	_,err=normalizeKeywordRule(KeywordRule{Name:"too long",MatchMode:"any",Keywords:[]string{"hello"},ReplyText:strings.Repeat("x",4097)})
+	if err==nil {t.Fatal("reply action longer than Telegram message limit accepted")}
+}
