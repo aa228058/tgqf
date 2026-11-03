@@ -14,6 +14,7 @@ import (
 	"github.com/mtgo-labs/mtgo/telegram"
  "github.com/mtgo-labs/mtgo/telegram/types"
  "github.com/mtgo-labs/mtgo/telegram/params"
+ "github.com/mtgo-labs/mtgo/tg"
  device "github.com/mtgo-labs/device-manager"
 )
 
@@ -335,6 +336,26 @@ func (m *Manager) ManagedAccountIDs() []string {
      if chat==nil||chat.ID==0{return 0,errors.New("Telegram returned no joined chat identity")}
      return chat.ID,nil
  }
+
+// CheckPrivateInviteApproval checks whether a private invite request has become an actual membership.
+func (m *Manager) CheckPrivateInviteApproval(ctx context.Context,accountID,inviteHash string)(string,error) {
+	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
+	if client==nil || !client.IsConnected(){return "",errors.New("Telegram account is not connected")}
+	if strings.TrimSpace(inviteHash)=="" {return "",errors.New("private invite hash is empty")}
+	result,err:=client.Raw().MessagesCheckChatInvite(ctx,&tg.MessagesCheckChatInviteRequest{Hash:inviteHash})
+	if err!=nil{return "",fmt.Errorf("check private Telegram invite approval: %w",err)}
+	switch value:=result.(type) {
+	case *tg.ChatInviteAlready:
+		return "member",nil
+	case *tg.ChatInvite:
+		if value.RequestNeeded{return "request_pending",nil}
+		return "unknown",nil
+	case *tg.ChatInvitePeek:
+		return "unknown",nil
+	default:
+		return "unknown",fmt.Errorf("unexpected Telegram invite status %T",result)
+	}
+}
 
 // CheckOwnChatMembership checks the managed account's current membership state.
 func (m *Manager) CheckOwnChatMembership(ctx context.Context, accountID string, chatID int64) (string,error) {
