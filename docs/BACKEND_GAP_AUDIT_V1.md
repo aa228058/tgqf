@@ -385,3 +385,12 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] 当前实现 Telethon 与 Pyrogram SQLite `.session`；加密/损坏数据库、WAL sidecar 组合文件及其他库的 SQLite schema 尚未支持。
 - [ ] 本流程只验证 SQLite 结构与 session 编码，不会在导入时自动连接 Telegram；账号授权有效性需由后续 MTGo 连接流程确认。
 - [ ] 需要运行 Go test/build 并在真实 Telethon session 文件上验收；按项目约定暂不执行全量 CI，等待后端模块整体完成。
+
+## 27. 2026-11-04 SQLite Session 导入安全加固（增量）
+
+- [x] Telethon / Pyrogram SQLite .session 解析在读取 sessions 表前执行 PRAGMA quick_check(1)；数据库损坏、页结构异常或完整性检查失败时拒绝导入。
+- [x] SQLite 仍以只读 URI mode=ro 打开并启用 PRAGMA query_only=ON，上传内容只写入权限受限的临时文件，完成后删除临时文件。
+- [x] 当 schema 同时满足 Telethon 与 Pyrogram 特征时明确拒绝，不再按优先级猜测来源格式，避免错误解释 auth key / user metadata。
+- [x] 新增 schema 歧义测试和输入字节不可变测试；已有测试覆盖 Telethon / Pyrogram 单行转换、重复行拒绝、损坏文件和超限文件。
+- [ ] 仍需统一 Go test/vet/build 及真实 MTGo 连接验证；本轮按约定不提前运行全量 CI。
+- [ ] 当前 SQLite 转换输出保持来源格式（Telethon 或 Pyrogram）供 MTGo Config.SessionString 自动识别；账号连接仍使用项目统一的 MTGo 客户端，不引入 gotd/td 运行时。
