@@ -88,6 +88,7 @@ func main() {
 	})
 
 	lastSavedSessions := make(map[string]string)
+	lastAppliedProxies := make(map[string]string)
 	reconnects := make(map[string]reconnectState)
 	statusSynced := make(map[string]bool)
 	ticker := time.NewTicker(30*time.Second)
@@ -96,7 +97,7 @@ func main() {
 	defer historyTicker.Stop()
 	logger.Info("Telegram account worker started")
 	for {
-		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
+		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, lastAppliedProxies, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		select {
 		case <-ctx.Done(): return
@@ -106,7 +107,11 @@ func main() {
 	}
 }
 
-func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
+func runtimeConfigChanged(currentSession, currentProxy, desiredSession, desiredProxy string) bool {
+	return currentSession != desiredSession || currentProxy != desiredProxy
+}
+
+func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, lastAppliedProxies map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
 	accountsList, err := accountsService.LoadAuthorizedRuntimeAccounts(ctx)
 	if err != nil { return err }
 	allowed := make(map[string]accounts.RuntimeAccount, len(accountsList))
@@ -117,12 +122,21 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 		if _, ok := allowed[id]; !ok {
 			if err := manager.Stop(id); err != nil { logger.Warn("stop inactive Telegram account", "account_id", id, "error", err) }
 			delete(lastSavedSessions, id)
+			delete(lastAppliedProxies, id)
 			delete(reconnects, id)
 			delete(statusSynced, id)
 			accountTenants.Delete(id)
 		}
 	}
 	for id, account := range allowed {
+		// A proxy binding or stored session can change while the client is online.
+		// Recreate the MTProto client so runtime state matches the tenant's latest config.
+		if manager.IsConnected(id) && lastSavedSessions[id] != "" && runtimeConfigChanged(lastSavedSessions[id], lastAppliedProxies[id], account.Session, account.ProxyJSON) {
+			if err := manager.Stop(id); err != nil {
+				logger.Warn("stop Telegram account after runtime config change", "account_id", id, "error", err)
+			}
+			delete(statusSynced, id)
+		}
 		if manager.IsConnected(id) {
 			delete(reconnects, id)
 			if account.ReconnectAttempts > 0 {
@@ -156,6 +170,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 				logger.Warn("clear Telegram reconnect state", "account_id", id, "error", clearErr)
 			}
 			lastSavedSessions[id] = account.Session
+			lastAppliedProxies[id] = account.ProxyJSON
 			logger.Info("Telegram account connected", "account_id", id)
 		}
 
