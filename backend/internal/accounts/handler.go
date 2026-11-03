@@ -37,7 +37,7 @@ func (h *Handler) startQR(w http.ResponseWriter,r *http.Request) {
  if err!=nil {if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error())}else{writeError(w,400,err.Error())};return}
  result,err:=h.telegram.StartQR(r.Context(),a.ID,string(q.Proxy))
  if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram QR login");return}
- if !result.Pending {_=h.telegram.Stop(a.ID);writeError(w,409,"Telegram QR authorization completed but phone details were not returned; account was not saved");return}
+ if !result.Pending { _,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,a.ID,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString); _=h.telegram.Stop(a.ID); if saveErr!=nil { writeError(w,409,"Telegram authorization completed but account details could not be saved");return }; writeJSON(w,201,map[string]any{"account":a,"status":"authorized"});return }
  writeJSON(w,201,map[string]any{"account":a,"qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}})
 }
 func (h *Handler) pollQR(w http.ResponseWriter,r *http.Request) {
@@ -47,8 +47,10 @@ func (h *Handler) pollQR(w http.ResponseWriter,r *http.Request) {
  if !found{writeError(w,404,"pending account not found");return}
  result,err:=h.telegram.PollQR(r.Context(),id);if err!=nil{writeError(w,502,"Telegram QR status check failed");return}
  if result.Pending{writeJSON(w,200,map[string]any{"status":"pending","qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}});return}
+ _,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString)
  _=h.telegram.Stop(id)
- writeJSON(w,200,map[string]any{"status":"authorized_but_not_persisted","telegram_user":map[string]any{"user_id":result.UserID,"username":result.Username,"first_name":result.FirstName}})
+ if saveErr!=nil { writeError(w,409,"Telegram authorization succeeded but account details could not be saved");return }
+ writeJSON(w,200,map[string]any{"status":"authorized","telegram_user":map[string]any{"user_id":result.UserID,"username":result.Username,"first_name":result.FirstName}})
 }
 func (h *Handler) cancelQR(w http.ResponseWriter,r *http.Request) {
  u:=auth.UserFromContext(r.Context());id:=r.PathValue("id")
