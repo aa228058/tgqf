@@ -314,7 +314,7 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 	if err != nil { return nil, 0, err }
 	items := []GroupLibraryItem{}
 	total := 0
-	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		filter := "cm.tenant_id=$1 AND cm.chat_type IN ('group','channel')"
 		args := []any{tenantID}
 		if chatType != "" { args = append(args, chatType); filter += " AND cm.chat_type=$" + strconv.Itoa(len(args)) }
