@@ -291,9 +291,18 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 		if err!=nil {logger.Error("list pending Telegram join approvals","tenant_id",tenantID,"error",err);continue}
 		for _,job:=range jobs {
 			if ctx.Err()!=nil{return}
-			if job.ChatID==0 || !manager.IsConnected(job.AccountID) {continue}
+			if !manager.IsConnected(job.AccountID) {continue}
 			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-			memberStatus,checkErr:=manager.CheckOwnChatMembership(checkCtx,job.AccountID,job.ChatID)
+			var memberStatus string
+			var checkErr error
+			if job.InviteHash!="" {
+				memberStatus,checkErr=manager.CheckPrivateInviteApproval(checkCtx,job.AccountID,job.InviteHash)
+			} else if job.ChatID>0 {
+				memberStatus,checkErr=manager.CheckOwnChatMembership(checkCtx,job.AccountID,job.ChatID)
+			} else {
+				cancel()
+				continue
+			}
 			cancel()
 			if checkErr!=nil {
 				if wait,ok:=tgerr.AsFloodWait(checkErr);ok {logger.Warn("Telegram approval sync FloodWait; deferring checks","account_id",job.AccountID,"wait",wait.String());continue}
