@@ -31,7 +31,8 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 LEFT JOIN public_group_links l ON l.id=t.target_link_id AND l.link_type='public' AND l.status<>'invalid'
                 LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
                 WHERE a.tenant_id=$1 AND t.status='queued' AND (a.status='queued' OR (a.status='processing' AND a.lease_until<NOW()))
-                    AND a.available_at<=NOW()
+                    AND a.available_at<=NOW() AND t.available_at<=NOW()
+                    AND (acc.join_flood_wait_until IS NULL OR acc.join_flood_wait_until<=NOW())
                     AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
                     AND COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) IS NOT NULL
                     AND (t.target_link_id IS NULL OR EXISTS(
@@ -74,8 +75,13 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
     if wait%time.Second!=0 {delay=wait.Truncate(time.Second)+2*time.Second}
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-        _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='queued',available_at=NOW()+($1 * INTERVAL '1 second'),lease_until=NULL,last_error=$2,updated_at=NOW()
-            WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='processing' AND lease_until=$6`,int64(delay/time.Second),strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+        seconds:=int64(delay/time.Second)
+        if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET join_flood_wait_until=GREATEST(COALESCE(join_flood_wait_until,NOW()),NOW()+($1 * INTERVAL '1 second'))
+            WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
+        if _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
+            WHERE tenant_id=$2 AND id=$3 AND status='queued'`,seconds,job.TenantID,job.TaskID);err!=nil{return err}
+        _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),lease_until=NULL,last_error=$2,updated_at=NOW()
+            WHERE tenant_id=$3 AND (telegram_account_id=$4 OR task_id=$5) AND status IN ('processing','queued')`,seconds,strings.TrimSpace(reason),job.TenantID,job.AccountID,job.TaskID)
         return err
     })
 }
