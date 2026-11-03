@@ -116,3 +116,52 @@ func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string
     `,tenantID,taskID)
     return err
 }
+
+type JoinApprovalJob struct {
+	TenantID string
+	TaskID string
+	AccountRowID int64
+	AccountID string
+	ChatID int64
+}
+
+func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,limit int)([]JoinApprovalJob,error) {
+	if limit<1||limit>100 {limit=50}
+	out:=[]JoinApprovalJob{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		rows,err:=tx.QueryContext(ctx,`
+			SELECT a.tenant_id::text,a.task_id::text,a.id,a.telegram_account_id::text,g.telegram_chat_id
+			FROM tenant_join_task_accounts a
+			JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
+			LEFT JOIN public_group_links l ON l.id=t.target_link_id
+			JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
+			JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
+			WHERE a.tenant_id=$1 AND a.status='request_pending'
+			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
+			  AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
+			ORDER BY a.updated_at LIMIT $2
+		`,tenantID,limit)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var job JoinApprovalJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID);err!=nil{return err};out=append(out,job)}
+		return rows.Err()
+	})
+	return out,err
+}
+
+func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,memberStatus string)error {
+	status:="request_pending";application:="request_pending"
+	switch memberStatus {
+	case "member","administrator","creator","owner":
+		status="joined";application="approved"
+	case "banned","left":
+		status="failed";application="declined"
+	default:
+		return nil
+	}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,last_error='',updated_at=NOW()
+			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending'`,status,application,job.TenantID,job.TaskID,job.AccountRowID)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return nil}
+		return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
+	})
+}
