@@ -163,7 +163,17 @@ func (h *Handler) importFile(w http.ResponseWriter,r *http.Request) {
 func validateImportedSession(value string) error {
     value=strings.TrimSpace(value)
     if value==""||len(value)>65536{return errors.New("invalid session string length")}
-    if _,_,err:=tgconv.Decode(value);err!=nil{return errors.New("unsupported or invalid Telegram session format")}
+    session,format,err:=tgconv.Decode(value)
+    if err!=nil{return errors.New("unsupported or invalid Telegram session format")}
+    if session.DCID<1||session.DCID>5||len(session.AuthKey)!=256{return errors.New("Telegram session has invalid DC or authorization key")}
+    switch format {
+    case tgconv.FormatTelethon:
+        if net.ParseIP(session.ServerAddress)==nil||session.Port<1||session.Port>65535{return errors.New("Telethon session has invalid server address or port")}
+    case tgconv.FormatPyrogram:
+        if session.AppID<=0||session.UserID<=0{return errors.New("Pyrogram session has invalid API ID or user ID")}
+    case tgconv.FormatMTGO:
+        if session.AppID<=0||session.UserID<=0||len(session.APIHash)!=32{return errors.New("MTGO session is missing required account credentials")}
+    }
     return nil
 }
 
