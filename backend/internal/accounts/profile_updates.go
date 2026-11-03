@@ -174,7 +174,7 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 			ORDER BY j.next_run_at,j.created_at,j.id
 			FOR UPDATE OF j,acc SKIP LOCKED LIMIT $2
 		), claimed AS (
-			UPDATE account_profile_update_jobs j SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',updated_at=NOW()
+			UPDATE account_profile_update_jobs j SET status='processing',lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
 			FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
 			RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.username_prefix,j.username_random_length,j.username_charset,j.photo_data,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at,j.tenant_id AS schedule_tenant_id,j.account_id AS schedule_account_id
 		), scheduled AS (
