@@ -68,6 +68,7 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 
 接口（租户 Bearer Token）：
 - GET /api/v1/messages：默认只返回未处理消息；支持 limit、offset、include_processed=true。
+- GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、未处理数量和最近一条消息。
 - PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
 - GET /api/v1/messages/settings：读取当前租户收集条件。
 - PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
