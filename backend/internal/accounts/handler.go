@@ -50,7 +50,7 @@ func (h *Handler) startQR(w http.ResponseWriter,r *http.Request) {
  if err!=nil {if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error())}else{writeError(w,400,err.Error())};return}
  result,err:=h.telegram.StartQR(r.Context(),a.ID,string(q.Proxy))
  if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram QR login");return}
- if !result.Pending { _,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,a.ID,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString); _=h.telegram.Stop(a.ID); if saveErr!=nil { writeError(w,409,"Telegram authorization completed but account details could not be saved");return }; writeJSON(w,201,map[string]any{"account":a,"status":"authorized"});return }
+ if !result.Pending { authorizedAccount,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,a.ID,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString); _=h.telegram.Stop(a.ID); if saveErr!=nil { writeError(w,409,"Telegram authorization completed but account details could not be saved");return }; writeJSON(w,201,map[string]any{"account":authorizedAccount,"status":"authorized"});return }
  writeJSON(w,201,map[string]any{"account":a,"qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}})
 }
 func (h *Handler) pollQR(w http.ResponseWriter,r *http.Request) {
