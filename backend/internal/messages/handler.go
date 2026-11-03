@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -92,6 +93,15 @@ func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
   return
  }
  defer sub.Close()
+ // Wait for Redis to confirm the tenant subscription before sending headers;
+ // otherwise a message arriving during the handshake could be missed.
+ subscribeCtx,cancelSubscribe:=context.WithTimeout(r.Context(),3*time.Second)
+ _,subscribeErr:=sub.Receive(subscribeCtx)
+ cancelSubscribe()
+ if subscribeErr!=nil {
+  messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"realtime message stream could not subscribe"})
+  return
+ }
  flusher,ok:=w.(http.Flusher)
  if !ok { http.Error(w,"streaming is not supported",http.StatusInternalServerError);return }
  w.Header().Set("Content-Type","text/event-stream")
