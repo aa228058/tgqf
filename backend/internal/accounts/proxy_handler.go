@@ -49,10 +49,10 @@ func (h *Handler) bindProxy(w http.ResponseWriter,r *http.Request) {
 	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
 	u:=auth.UserFromContext(r.Context())
 	if err:=h.service.BindProxy(r.Context(),u.TenantID,r.PathValue("id"),strings.TrimSpace(input.ProxyID));err!=nil{
-		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return}
+		if strings.Contains(err.Error(),"proxy not found") || strings.Contains(err.Error(),"account not found"){writeError(w,http.StatusNotFound,err.Error());return}
 		writeError(w,http.StatusBadRequest,err.Error());return
 	}
-	writeJSON(w,http.StatusOK,map[string]string{"proxy_id":input.ProxyID})
+	writeJSON(w,http.StatusOK,map[string]string{"proxy_id":strings.TrimSpace(input.ProxyID)})
 }
 
 func (h *Handler) checkProxy(w http.ResponseWriter,r *http.Request) {
@@ -73,6 +73,7 @@ func (h *Handler) updateProxy(w http.ResponseWriter,r *http.Request) {
 	item,err:=h.service.UpdateProxy(r.Context(),u.TenantID,r.PathValue("id"),input)
 	if err!=nil{
 		if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){writeError(w,http.StatusServiceUnavailable,"proxy encryption is not configured");return}
+		if errors.Is(err,sql.ErrNoRows){writeError(w,http.StatusNotFound,"proxy not found");return}
 		writeError(w,http.StatusBadRequest,err.Error());return
 	}
 	writeJSON(w,http.StatusOK,map[string]any{"proxy":item})
