@@ -38,11 +38,15 @@ type Manager struct {
 	cfg RuntimeConfig
 	clients map[string]*telegram.Client
 	pendingQR map[string]*pendingQR
+ pendingPhone map[string]*pendingPhone
  messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
 // The manager mutex is never held while waiting for this per-entry mutex.
+type pendingPhone struct { mu sync.Mutex; client *telegram.Client; phone string; phoneCodeHash string }
+type PhoneCodeResult struct { NeedsPassword bool; Timeout int; DeliveryType string }
+type PhoneAuthResult struct { UserID int64; Username string; FirstName string; Phone string; SessionString string }
 type pendingQR struct {
 	mu sync.Mutex
 	client *telegram.Client
@@ -64,7 +68,7 @@ func selectDeviceProfile(profiles []device.Profile) (device.Profile, error) {
 
 func NewManager(cfg RuntimeConfig) *Manager {
 	if cfg.ConnectTimeout <= 0 { cfg.ConnectTimeout = 45 * time.Second }
-	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR)}
+	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR), pendingPhone: make(map[string]*pendingPhone)}
 }
 
 // SetMessageHandler installs the worker-owned callback for new Telegram messages.
@@ -483,4 +487,76 @@ func (m *Manager) IsReplyToOwnMessage(ctx context.Context, accountID string, cha
 	original, err := client.GetMessages(ctx, chatID, []int32{replyToID})
 	if err != nil || len(original) == 0 || original[0] == nil { return false }
 	return original[0].Out || original[0].FromID == me.ID
+}
+
+
+// StartPhoneLogin opens a short-lived MTGo client and asks Telegram to deliver
+// an authentication code. Challenges are held only in process memory.
+func (m *Manager) StartPhoneLogin(ctx context.Context, accountID, phone, proxyJSON string, profiles ...device.Profile) (PhoneCodeResult, error) {
+	accountID=strings.TrimSpace(accountID); phone=strings.TrimSpace(phone)
+	if accountID=="" || len(phone)<5 || len(phone)>32 { return PhoneCodeResult{}, errors.New("valid account ID and phone number are required") }
+	profile,err:=selectDeviceProfile(profiles); if err!=nil{return PhoneCodeResult{},err}
+	var proxy *telegram.Proxy
+	if strings.TrimSpace(proxyJSON)!="" && strings.TrimSpace(proxyJSON)!="null" && strings.TrimSpace(proxyJSON)!="{}" {
+		var p proxyConfig; if err=json.Unmarshal([]byte(proxyJSON),&p);err!=nil{return PhoneCodeResult{},errors.New("invalid proxy configuration")}
+		p.Addr=strings.TrimSpace(p.Addr); protocol:=strings.ToLower(strings.TrimSpace(p.Protocol))
+		if p.Addr=="" {return PhoneCodeResult{},errors.New("proxy address is required")}
+		switch protocol {case "","socks5","socks4","http","https":default:return PhoneCodeResult{},errors.New("unsupported proxy protocol")}
+		proxy=&telegram.Proxy{Addr:p.Addr,Username:p.Username,Password:p.Password,Protocol:protocol}
+	}
+	m.mu.RLock(); _,active:=m.clients[accountID]; _,qr:=m.pendingQR[accountID]; _,phonePending:=m.pendingPhone[accountID]; m.mu.RUnlock()
+	if active||qr||phonePending{return PhoneCodeResult{},errors.New("account already has an active or pending login")}
+	cfg:=telegram.Config{SessionName:"tgqf-"+accountID,InMemory:true,Proxy:proxy}; ApplyDeviceProfile(&cfg,profile)
+	client,err:=telegram.NewClient(m.cfg.APIID,m.cfg.APIHash,&cfg);if err!=nil{return PhoneCodeResult{},fmt.Errorf("create MTGo phone client: %w",err)}
+	if err=client.Connect(m.cfg.ConnectTimeout);err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("connect MTGo phone client: %w",err)}
+	sent,err:=client.SendCode(ctx,phone);if err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("request Telegram login code: %w",err)}
+	entry:=&pendingPhone{client:client,phone:phone,phoneCodeHash:sent.PhoneCodeHash}
+	m.mu.Lock()
+	if _,ok:=m.clients[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account client is already managed")}
+	if _,ok:=m.pendingQR[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account QR login is already pending")}
+	if _,ok:=m.pendingPhone[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account phone login is already pending")}
+	m.pendingPhone[accountID]=entry;m.mu.Unlock()
+	delivery:="telegram"
+	if sent.Type!=nil { delivery=fmt.Sprintf("%T",sent.Type) }
+	return PhoneCodeResult{Timeout:sent.Timeout,DeliveryType:delivery},nil
+}
+
+// VerifyPhoneCode verifies the OTP. Err2FARequired is represented as a
+// password-required state; no password is stored by this manager.
+func (m *Manager) VerifyPhoneCode(ctx context.Context, accountID, code string) (PhoneAuthResult, bool, error) {
+	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
+	if entry==nil{return PhoneAuthResult{},false,errors.New("no pending phone login")}
+	entry.mu.Lock();defer entry.mu.Unlock()
+	if strings.TrimSpace(code)==""||len(code)>32{return PhoneAuthResult{},false,errors.New("invalid verification code")}
+	user,err:=entry.client.SignIn(ctx,entry.phone,entry.phoneCodeHash,strings.TrimSpace(code))
+	if errors.Is(err,telegram.Err2FARequired){return PhoneAuthResult{},true,nil}
+	if err!=nil{return PhoneAuthResult{},false,fmt.Errorf("verify Telegram login code: %w",err)}
+	return m.finishPhoneLogin(accountID,entry,user)
+}
+
+func (m *Manager) VerifyPhonePassword(ctx context.Context, accountID, password string) (PhoneAuthResult,error) {
+	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
+	if entry==nil{return PhoneAuthResult{},errors.New("no pending phone login")}
+	entry.mu.Lock();defer entry.mu.Unlock()
+	if strings.TrimSpace(password)==""||len(password)>1024{return PhoneAuthResult{},errors.New("invalid two-factor password")}
+	user,err:=entry.client.CheckPassword(ctx,password)
+	if err!=nil{return PhoneAuthResult{},fmt.Errorf("verify Telegram two-factor password: %w",err)}
+	result,_,err:=m.finishPhoneLogin(accountID,entry,user)
+	return result,err
+}
+
+func (m *Manager) finishPhoneLogin(accountID string, entry *pendingPhone, user *types.User) (PhoneAuthResult,bool,error) {
+	if user==nil{return PhoneAuthResult{},false,errors.New("Telegram authorization returned no user")}
+	session,err:=entry.client.ExportSessionString();if err!=nil{return PhoneAuthResult{},false,fmt.Errorf("export phone-authorized session: %w",err)}
+	m.mu.Lock()
+	if m.pendingPhone[accountID]!=entry {m.mu.Unlock();return PhoneAuthResult{},false,errors.New("phone login was cancelled")}
+	delete(m.pendingPhone,accountID);m.clients[accountID]=entry.client
+	m.mu.Unlock()
+	return PhoneAuthResult{UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone,SessionString:session},false,nil
+}
+
+func (m *Manager) CancelPhoneLogin(accountID string) error {
+	m.mu.Lock();entry:=m.pendingPhone[accountID];delete(m.pendingPhone,accountID);m.mu.Unlock()
+	if entry==nil{return nil};entry.mu.Lock();defer entry.mu.Unlock()
+	if entry.client==nil{return nil};return entry.client.Disconnect()
 }
