@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mtgo-labs/mtgo/telegram"
+	device "github.com/mtgo-labs/device-manager"
  "github.com/mtgo-labs/mtgo/telegram/types"
  "github.com/mtgo-labs/mtgo/telegram/params"
 )
@@ -86,6 +87,13 @@ func (m *Manager) registerMessageHandler(accountID string, client *telegram.Clie
 // Start restores an existing MTGo-compatible session and connects it.
 // The caller must pass decrypted session data only in memory.
 func (m *Manager) Start(accountID, sessionString, proxyJSON string) error {
+	profile, err := DeviceProfile(accountID, "", "", "", "")
+	if err != nil { return err }
+	return m.StartWithDeviceProfile(accountID, sessionString, proxyJSON, profile)
+}
+
+// StartWithDeviceProfile restores a session using the account's persisted device identity.
+func (m *Manager) StartWithDeviceProfile(accountID, sessionString, proxyJSON string, profile device.Profile) error {
 	accountID = strings.TrimSpace(accountID)
 	sessionString = strings.TrimSpace(sessionString)
 	if accountID == "" { return errors.New("account ID is required") }
@@ -102,8 +110,9 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string) error {
 		proxy = &telegram.Proxy{Addr:p.Addr, Username:p.Username, Password:p.Password, Protocol:protocol}
 	}
 
-	profile, err := DeviceProfile(accountID, "", "", "", "")
-	if err != nil { return err }
+	if profile.DeviceModel == "" || profile.SystemVersion == "" || profile.AppVersion == "" {
+		return errors.New("device profile is incomplete")
+	}
 	cfg := telegram.Config{SessionString:sessionString, SessionName:"tgqf-"+accountID, InMemory:true, Proxy:proxy}
 	ApplyDeviceProfile(&cfg, profile)
 	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
@@ -202,6 +211,13 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string) (QRAuthResult, error) {
+	profile, err := DeviceProfile(accountID, "", "", "", "")
+	if err != nil { return QRAuthResult{}, err }
+	return m.StartQRWithDeviceProfile(ctx, accountID, proxyJSON, profile)
+}
+
+// StartQRWithDeviceProfile starts QR authorization using the persisted device identity.
+func (m *Manager) StartQRWithDeviceProfile(ctx context.Context, accountID, proxyJSON string, profile device.Profile) (QRAuthResult, error) {
 	accountID = strings.TrimSpace(accountID)
 	if accountID == "" { return QRAuthResult{}, errors.New("account ID is required") }
 	m.mu.RLock()
@@ -219,8 +235,7 @@ func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string) (QRA
 		switch protocol { case "", "socks5", "socks4", "http", "https": default: return QRAuthResult{}, fmt.Errorf("unsupported proxy protocol %q", protocol) }
 		proxy = &telegram.Proxy{Addr:p.Addr, Username:p.Username, Password:p.Password, Protocol:protocol}
 	}
-	profile, err := DeviceProfile(accountID, "", "", "", "")
-	if err != nil { return QRAuthResult{}, err }
+	if profile.DeviceModel == "" || profile.SystemVersion == "" || profile.AppVersion == "" { return QRAuthResult{}, errors.New("device profile is incomplete") }
 	cfg := telegram.Config{SessionName:"tgqf-"+accountID, InMemory:true, Proxy:proxy}
 	ApplyDeviceProfile(&cfg, profile)
 	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
