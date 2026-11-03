@@ -137,7 +137,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 			}
 			if now.Before(state.nextTry) { continue }
 			_ = manager.Stop(id)
-			if err := manager.Start(id, account.Session, account.ProxyJSON); err != nil {
+			if err := manager.Start(id, account.Session, account.ProxyJSON, account.DeviceProfile); err != nil {
 				delay := scheduleReconnect(&state, now)
 				reconnects[id] = state
 				if persistErr := accountsService.SaveRuntimeReconnectState(ctx, account.TenantID, id, state.attempts, state.nextTry); persistErr != nil {
