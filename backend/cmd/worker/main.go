@@ -1,6 +1,7 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"context"
 	"log/slog"
@@ -301,6 +302,20 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			}
 			updateCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
 			updateErr:=manager.UpdateProfile(updateCtx,job.AccountID,job.FirstName,job.LastName,job.About)
+			if updateErr==nil && job.GenerateUsername {
+				var username string
+				for attempt:=0;attempt<8;attempt++ {
+					username,updateErr=generateRandomTelegramUsername()
+					if updateErr!=nil { break }
+					updateErr=manager.UpdateUsername(updateCtx,job.AccountID,username)
+					if updateErr==nil { job.AppliedUsername=username; break }
+					if tgerr.IsUsernameOccupied(updateErr) { continue }
+					break
+				}
+				if updateErr!=nil && tgerr.IsUsernameOccupied(updateErr) {
+					updateErr=errors.New("Telegram username remained occupied after 8 random candidates")
+				}
+			}
 			cancel()
 			if updateErr!=nil {
 				floodWait,_:=tgerr.AsFloodWait(updateErr)
@@ -321,4 +336,14 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			logger.Info("Telegram profile updated","job_id",job.ID,"account_id",job.AccountID)
 		}
 	}
+}
+
+func generateRandomTelegramUsername() (string,error) {
+	const alphabet="abcdefghijklmnopqrstuvwxyz0123456789"
+	random:=make([]byte,10)
+	if _,err:=cryptorand.Read(random);err!=nil{return "",err}
+	username:=make([]byte,12)
+	username[0]='t';username[1]='g'
+	for i,value:=range random { username[i+2]=alphabet[int(value)%len(alphabet)] }
+	return string(username),nil
 }
