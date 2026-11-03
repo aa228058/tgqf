@@ -214,6 +214,18 @@ func processRecentHistory(ctx context.Context, service *messages.Service, manage
 			fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			history, fetchErr := manager.GetChatHistory(fetchCtx, accountID, chatID, 50)
 			if fetchErr != nil { cancel(); logger.Debug("history backfill skipped", "account_id", accountID, "chat_id", chatID, "error", fetchErr); continue }
+			// Resolve all reply targets for this chat in one Telegram request
+			// instead of issuing one RPC for every historical reply.
+			replyIDs := make([]int32, 0)
+			for _, message := range history {
+				if message != nil && message.Chat != nil && message.ReplyToID > 0 {
+					switch message.Chat.Type {
+					case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum:
+						replyIDs = append(replyIDs, message.ReplyToID)
+					}
+				}
+			}
+			replyTargets := manager.IsRepliesToOwnMessages(fetchCtx, accountID, chatID, replyIDs)
 			for _, message := range history {
 				if message == nil || message.Chat == nil || message.ID <= 0 { continue }
 				chatType := ""
@@ -222,10 +234,7 @@ func processRecentHistory(ctx context.Context, service *messages.Service, manage
 				case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum: chatType = "group"
 				default: continue
 				}
-				replyToOwn := false
-				if chatType == "group" && message.ReplyToID > 0 {
-					replyToOwn = manager.IsReplyToOwnMessage(fetchCtx, accountID, chatID, message.ReplyToID)
-				}
+				replyToOwn := chatType == "group" && replyTargets[message.ReplyToID]
 				body := message.Text
 				if body == "" { body = message.Caption }
 				mediaType := ""
