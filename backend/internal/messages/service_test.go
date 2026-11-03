@@ -22,3 +22,18 @@ func TestValidUUID(t *testing.T) {
 		if validUUID(value){t.Errorf("invalid UUID accepted: %q",value)}
 	}
 }
+
+func TestNormalizeGroupLibraryFilters(t *testing.T) {
+	valid, query, err := normalizeGroupLibraryFilters(" CHANNEL ", "  design  ")
+	if err != nil { t.Fatalf("valid filters rejected: %v", err) }
+	if valid != "channel" || query != "design" { t.Fatalf("unexpected normalized filters: %q %q", valid, query) }
+
+	for _, input := range []struct{ chatType, query string }{
+		{chatType:"private"},
+		{chatType:"group", query:strings.Repeat("x", 101)},
+	} {
+		if _, _, err := normalizeGroupLibraryFilters(input.chatType, input.query); !errors.Is(err, ErrInvalidGroupLibraryQuery) {
+			t.Errorf("invalid filters (%q, %d chars) error = %v", input.chatType, len(input.query), err)
+		}
+	}
+}
