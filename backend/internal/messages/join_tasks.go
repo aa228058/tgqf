@@ -18,6 +18,7 @@ type JoinTaskInput struct {
     AccountIDs []string `json:"account_ids"`
     AuthorizationConfirmed bool `json:"authorization_confirmed"`
     AuthorizationNote string `json:"authorization_note"`
+    PrivateInviteLink string `json:"private_invite_link,omitempty"`
 }
 
 type JoinTask struct {
@@ -49,13 +50,31 @@ type JoinTaskDetail struct {
     Accounts []JoinTaskAccount `json:"accounts"`
 }
 
+func normalizePrivateInviteLink(value string)(string,error) {
+    value=strings.TrimSpace(value)
+    value=strings.TrimPrefix(value,"https://");value=strings.TrimPrefix(value,"http://")
+    value=strings.TrimPrefix(value,"www.")
+    if strings.HasPrefix(value,"t.me/"){value=strings.TrimPrefix(value,"t.me/")} else if strings.HasPrefix(value,"telegram.me/"){value=strings.TrimPrefix(value,"telegram.me/")} else {return "",errors.New("unsupported invite host")}
+    value=strings.Trim(value,"/")
+    value=strings.TrimPrefix(value,"+")
+    value=strings.TrimPrefix(value,"joinchat/")
+    if strings.ContainsAny(value,"/?#&=+ ")||len(value)<8||len(value)>128{return "",errors.New("invalid invite hash")}
+    for _,ch:=range value {if !((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'||ch=='-'){return "",errors.New("invalid invite hash")}}
+    return value,nil
+}
+
 func normalizeJoinTaskInput(in JoinTaskInput)(JoinTaskInput,error) {
     in.Name=strings.TrimSpace(in.Name)
     in.AuthorizationNote=strings.TrimSpace(in.AuthorizationNote)
     if len(in.Name)<1||len(in.Name)>120||len(in.AuthorizationNote)>500{return in,fmt.Errorf("%w: invalid task name or authorization note",ErrInvalidJoinTask)}
     if !in.AuthorizationConfirmed{return in,fmt.Errorf("%w: explicit authorization confirmation is required",ErrInvalidJoinTask)}
-    if in.TargetGroupID<=0&&in.TargetLinkID<=0{return in,fmt.Errorf("%w: a target group or discovered link is required",ErrInvalidJoinTask)}
-    if in.TargetGroupID<0||in.TargetLinkID<0||(in.TargetGroupID>0&&in.TargetLinkID>0&&in.TargetGroupID==0){return in,ErrInvalidJoinTask}
+    if in.PrivateInviteLink!="" {
+        hash,err:=normalizePrivateInviteLink(in.PrivateInviteLink);if err!=nil{return in,fmt.Errorf("%w: invalid private invite link",ErrInvalidJoinTask)}
+        in.PrivateInviteLink=hash
+    }
+    targetCount:=0;if in.TargetGroupID>0{targetCount++};if in.TargetLinkID>0{targetCount++};if in.PrivateInviteLink!=""{targetCount++}
+    if targetCount!=1{return in,fmt.Errorf("%w: select exactly one public target or private invite link",ErrInvalidJoinTask)}
+    if in.TargetGroupID<0||in.TargetLinkID<0{return in,ErrInvalidJoinTask}
     if len(in.AccountIDs)==0||len(in.AccountIDs)>20{return in,fmt.Errorf("%w: assign 1-20 accounts",ErrInvalidJoinTask)}
     seen:=map[string]bool{}
     for _,id:=range in.AccountIDs {if !validUUID(id)||seen[id]{return in,fmt.Errorf("%w: invalid or duplicate account id",ErrInvalidJoinTask)};seen[id]=true}
@@ -65,6 +84,8 @@ func normalizeJoinTaskInput(in JoinTaskInput)(JoinTaskInput,error) {
 func (s *Service) CreateJoinTask(ctx context.Context,tenantID,actorID string,input JoinTaskInput)(JoinTask,error) {
     input,err:=normalizeJoinTaskInput(input);if err!=nil{return JoinTask{},err}
     if !validUUID(actorID){return JoinTask{},ErrInvalidJoinTask}
+    var inviteCiphertext []byte
+    if input.PrivateInviteLink!="" { inviteCiphertext,err=encryptJoinInviteHash(input.PrivateInviteLink);if err!=nil{return JoinTask{},err} }
     task:=JoinTask{Name:input.Name,TargetGroupID:input.TargetGroupID,TargetLinkID:input.TargetLinkID,Status:"draft",AuthorizationConfirmed:true,AuthorizationNote:input.AuthorizationNote}
     err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         var active bool
@@ -77,9 +98,9 @@ func (s *Service) CreateJoinTask(ctx context.Context,tenantID,actorID string,inp
             if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='authorized' AND session_ciphertext IS NOT NULL)`,tenantID,accountID).Scan(&authorized);err!=nil{return err}
             if !authorized{return fmt.Errorf("account %s is not authorized for this tenant",accountID)}
         }
-        err:=tx.QueryRowContext(ctx,`INSERT INTO tenant_join_tasks(tenant_id,name,target_group_id,target_link_id,status,authorization_confirmed,authorization_note,authorized_by,authorized_at)
-            VALUES($1,$2,NULLIF($3,0),NULLIF($4,0),'draft',TRUE,$5,$6,NOW())
-            RETURNING id::text,created_at,updated_at,authorized_at`,tenantID,input.Name,input.TargetGroupID,input.TargetLinkID,input.AuthorizationNote,actorID).Scan(&task.ID,&task.CreatedAt,&task.UpdatedAt,&task.AuthorizedAt)
+        err:=tx.QueryRowContext(ctx,`INSERT INTO tenant_join_tasks(tenant_id,name,target_group_id,target_link_id,private_invite_hash_ciphertext,status,authorization_confirmed,authorization_note,authorized_by,authorized_at)
+            VALUES($1,$2,NULLIF($3,0),NULLIF($4,0),$5,'draft',TRUE,$6,$7,NOW())
+            RETURNING id::text,created_at,updated_at,authorized_at`,tenantID,input.Name,input.TargetGroupID,input.TargetLinkID,inviteCiphertext,input.AuthorizationNote,actorID).Scan(&task.ID,&task.CreatedAt,&task.UpdatedAt,&task.AuthorizedAt)
         if err!=nil{return err}
         for _,accountID:=range input.AccountIDs {if _,err:=tx.ExecContext(ctx,"INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id) VALUES($1,$2,$3)",tenantID,task.ID,accountID);err!=nil{return err}}
         task.AccountCount=len(input.AccountIDs)
