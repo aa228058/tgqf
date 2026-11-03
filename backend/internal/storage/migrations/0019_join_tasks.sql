@@ -29,7 +29,7 @@ CREATE TABLE tenant_join_task_accounts (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     task_id UUID NOT NULL,
     telegram_account_id UUID NOT NULL,
-    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','paused','request_pending','joined','already_member','failed','skipped','cancelled')),
+    status TEXT NOT NULL DEFAULT 'paused' CHECK (status IN ('queued','paused','request_pending','joined','already_member','failed','skipped','cancelled')),
     application_status TEXT NOT NULL DEFAULT 'not_started' CHECK (application_status IN ('not_started','request_pending','approved','declined','not_required','unknown')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts>=0),
     last_error TEXT NOT NULL DEFAULT '',
