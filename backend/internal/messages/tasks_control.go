@@ -107,17 +107,52 @@ func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, raw
 // refreshJoinTaskControlStatus derives the parent state from its children.
 // Pending approval remains active; paused children do not block other queued
 // children. A stale worker is fenced because pause/cancel clears its lease.
+func deriveJoinTaskParentStatus(childStatuses []string) string {
+	if len(childStatuses) == 0 { return "completed" }
+	hasQueued, hasPaused, hasFailed, allCancelled := false, false, false, true
+	for _, status := range childStatuses {
+		switch status {
+		case "queued", "processing", "request_pending":
+			hasQueued = true
+			allCancelled = false
+		case "paused":
+			hasPaused = true
+			allCancelled = false
+		case "failed":
+			hasFailed = true
+			allCancelled = false
+		case "cancelled":
+		case "joined", "already_member", "skipped":
+			allCancelled = false
+		default:
+			// Unknown future states must not make the parent appear complete.
+			hasQueued = true
+			allCancelled = false
+		}
+	}
+	switch {
+	case hasQueued: return "queued"
+	case hasPaused: return "paused"
+	case hasFailed: return "failed"
+	case allCancelled: return "cancelled"
+	default: return "completed"
+	}
+}
+
 func refreshJoinTaskControlStatus(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
-	_, err := tx.ExecContext(ctx, `
-		UPDATE tenant_join_tasks t SET status = CASE
-			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status IN ('queued','processing','request_pending')) THEN 'queued'
-			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='paused') THEN 'paused'
-			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='failed') THEN 'failed'
-			WHEN NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status<>'cancelled') THEN 'cancelled'
-			ELSE 'completed'
-		END, updated_at=NOW()
-		WHERE t.tenant_id=$1 AND t.id=$2 AND t.status<>'draft'
-	`, tenantID, taskID)
+	rows, err := tx.QueryContext(ctx, `SELECT status FROM tenant_join_task_accounts WHERE tenant_id=$1 AND task_id=$2 ORDER BY id FOR UPDATE`, tenantID, taskID)
+	if err != nil { return err }
+	statuses := make([]string, 0)
+	for rows.Next() {
+		var status string
+		if err := rows.Scan(&status); err != nil { rows.Close(); return err }
+		statuses = append(statuses, status)
+	}
+	if err := rows.Err(); err != nil { rows.Close(); return err }
+	if err := rows.Close(); err != nil { return err }
+	parentStatus := deriveJoinTaskParentStatus(statuses)
+	_, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET status=$3,updated_at=NOW()
+		WHERE tenant_id=$1 AND id=$2 AND status<>'draft'`, tenantID, taskID, parentStatus)
 	return err
 }
 
