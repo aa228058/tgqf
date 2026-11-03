@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -617,7 +618,7 @@ func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phon
 func normalizeIdempotencyKey(key string) (string,error) {
 	key=strings.TrimSpace(key)
 	if key=="" { return "",nil }
-	if len(key)<8 || len(key)>128 || strings.ContainsAny(key,"\r\n\x00") {
+	if len(key)<8 || len(key)>128 || strings.IndexFunc(key,unicode.IsControl)>=0 {
 		return "",errors.New("Idempotency-Key must contain 8-128 non-control characters")
 	}
 	return key,nil
