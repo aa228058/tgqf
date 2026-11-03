@@ -428,6 +428,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 加群子任务控制使用租户范围的行更新；暂停/取消 processing 子任务时清空 lease，旧 Worker 的完成/失败写回因精确 lease 不匹配而失效。
 - [x] 恢复/重试加群子任务时同时验证租户有效、父任务保留明确授权记录、Telegram 账号仍授权且 Session 存在；重试仅重置被选中的失败子任务。
 - [x] 父任务状态从子任务集合重新推导：queued/processing/request_pending 优先保持 queued；无可运行项但存在 paused 时为 paused；否则按 failed、全 cancelled、completed 收敛。未知未来状态按活动状态保守处理。
+- [x] 加群父任务行锁统一先于子任务行锁：Worker claim、完成/失败/FloodWait 重排、审批同步、单项控制及父任务重试遵循相同锁顺序，降低并发控制与 Worker 写回之间的死锁风险。
 - [x] 增加父子状态聚合单元测试，覆盖混合状态、待审批、失败、全取消和未知状态。
 - [x] 保留现有批量接口的逐项独立事务与部分成功语义；不承诺整批原子提交。
 - [ ] 本次变更尚未运行 Go test、vet、build 或 GitHub Actions；必须在最终后端验收时执行。
