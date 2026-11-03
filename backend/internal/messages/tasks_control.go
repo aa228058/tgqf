@@ -16,6 +16,24 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 	if action != "pause" && action != "resume" && action != "retry" && action != "cancel" {
 		return errors.New("unsupported task action")
 	}
+	if taskType == "group_join" {
+		var parentID string
+		if err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID)
+		}); err != nil {
+			return errors.New("join task not found")
+		}
+		switch action {
+		case "pause":
+			return s.PauseJoinTask(ctx, tenantID, parentID)
+		case "resume":
+			return s.ResumeJoinTask(ctx, tenantID, parentID)
+		case "cancel":
+			return s.CancelJoinTask(ctx, tenantID, parentID)
+		case "retry":
+			return errors.New("retry is managed at the join-task level")
+		}
+	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		var query string
 		switch taskType {
@@ -56,32 +74,7 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 			case "cancel":
 				query = `UPDATE account_profile_update_jobs SET status='cancelled',last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused')`
 			}
-		case "group_join":
-			var parentID string
-			if err := tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID); err != nil {
-				return errors.New("join task not found")
-			}
-			switch action {
-			case "pause":
-				query = `UPDATE tenant_join_tasks SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status='queued'`
-			case "resume":
-				query = `UPDATE tenant_join_tasks j SET status='queued',updated_at=NOW() FROM tenants t WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status='paused' AND j.authorization_confirmed=TRUE AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()`
-				result, err := tx.ExecContext(ctx, query, tenantID, parentID)
-				if err != nil { return err }
-				if err = checkTaskRows(result, nil); err != nil { return err }
-				_, err = tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts SET status='queued',available_at=NOW(),last_error='',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2::uuid AND status='paused'`, tenantID, parentID)
-				return err
-			case "cancel":
-				query = `UPDATE tenant_join_tasks SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('draft','queued','paused','failed')`
-				result, err := tx.ExecContext(ctx, query, tenantID, parentID)
-				if err != nil { return err }
-				if err = checkTaskRows(result, nil); err != nil { return err }
-				_, err = tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2::uuid AND status IN ('queued','paused','request_pending','failed')`, tenantID, parentID)
-				return err
-			case "retry":
-				return errors.New("retry is managed at the join-task level")
-			}
-			id = parentID
+
 		default:
 			return errors.New("invalid task type")
 		}
