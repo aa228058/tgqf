@@ -40,13 +40,45 @@ func (s *Service) publishCreated(ctx context.Context, tenantID string, in Incomi
  if err!=nil { return }
  publishCtx,cancel:=context.WithTimeout(ctx,2*time.Second)
  defer cancel()
- _=s.redis.Publish(publishCtx,"tgqf:tenant:"+tenantID+":messages",string(payload)).Err()
+ key := "tgqf:tenant:"+tenantID+":message-events"
+ // Redis Streams make reconnects resumable; keep a bounded recent history per tenant.
+ _ = s.redis.XAdd(publishCtx,&redis.XAddArgs{
+  Stream:key, MaxLen:10000, Approx:true,
+  Values:map[string]any{"payload":string(payload)},
+ }).Err()
 }
 
-// SubscribeMessages subscribes to one tenant's realtime message stream.
-func (s *Service) SubscribeMessages(ctx context.Context, tenantID string) *redis.PubSub {
- if s.redis==nil { return nil }
- return s.redis.Subscribe(ctx,"tgqf:tenant:"+tenantID+":messages")
+// MessageStreamEvent is one durable event in the tenant-scoped Redis stream.
+type MessageStreamEvent struct {
+ ID string `json:"id"`
+ Payload string `json:"payload"`
+}
+
+// ReadMessageEvents reads events after the supplied Redis stream cursor.
+// Use "$" for a new connection and the last received ID when reconnecting.
+func (s *Service) ReadMessageEvents(ctx context.Context, tenantID, cursor string, block time.Duration, count int64) ([]MessageStreamEvent, error) {
+ if s.redis==nil { return nil, errors.New("realtime message stream is unavailable") }
+ if strings.TrimSpace(tenantID)=="" { return nil, errors.New("tenant is required") }
+ if cursor=="" { cursor="$" }
+ if block<=0 || block>30*time.Second { block=15*time.Second }
+ if count<1 || count>500 { count=100 }
+ streams,err:=s.redis.XRead(ctx,&redis.XReadArgs{
+  Streams:[]string{"tgqf:tenant:"+tenantID+":message-events",cursor},
+  Count:count,Block:block,
+ }).Result()
+ if err!=nil {
+  if errors.Is(err,redis.Nil) { return nil,nil }
+  return nil,err
+ }
+ events:=make([]MessageStreamEvent,0)
+ for _,stream:=range streams {
+  for _,message:=range stream.Messages {
+   payload,ok:=message.Values["payload"].(string)
+   if !ok { continue }
+   events=append(events,MessageStreamEvent{ID:message.ID,Payload:payload})
+  }
+ }
+ return events,nil
 }
 
 type Incoming struct {
