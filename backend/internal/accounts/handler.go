@@ -37,6 +37,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeProfileUpdate)))
+ m.Handle("POST /api/v1/accounts/profile-updates/{id}/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelProfileUpdate)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
@@ -216,6 +217,16 @@ func (h *Handler) resumeProfileUpdate(w http.ResponseWriter,r *http.Request) {
 		writeError(w,status,err.Error());return
 	}
 	writeJSON(w,http.StatusOK,map[string]string{"status":"pending"})
+}
+
+func (h *Handler) cancelProfileUpdate(w http.ResponseWriter,r *http.Request) {
+ user:=auth.UserFromContext(r.Context())
+ if err:=h.service.CancelProfileUpdate(r.Context(),user.TenantID,r.PathValue("id"));err!=nil {
+  status:=http.StatusConflict
+  if strings.Contains(err.Error(),"not found") {status=http.StatusNotFound}
+  writeError(w,status,err.Error());return
+ }
+ writeJSON(w,http.StatusOK,map[string]string{"status":"cancelled"})
 }
 
 func (h *Handler) getUsernameGenerationSettings(w http.ResponseWriter,r *http.Request) {
