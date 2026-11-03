@@ -325,16 +325,6 @@ func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64,
 }
 
 
-// GetChatHistory returns a bounded recent history slice for a known chat.
-func (m *Manager) GetChatHistory(ctx context.Context, accountID string, chatID int64, limit int) ([]*types.Message, error) {
-	m.mu.RLock()
-	client := m.clients[accountID]
-	m.mu.RUnlock()
-	if client == nil || !client.IsConnected() { return nil, errors.New("Telegram account is not connected") }
-	if limit < 1 || limit > 100 { limit = 50 }
-	return client.GetChatHistory(ctx, chatID, limit, 0)
-}
-
 // IsRepliesToOwnMessages verifies a batch of historical reply targets with one
 // Telegram lookup. Missing targets are intentionally treated as non-matches.
 func (m *Manager) IsRepliesToOwnMessages(ctx context.Context, accountID string, chatID int64, replyToIDs []int32) map[int32]bool {
