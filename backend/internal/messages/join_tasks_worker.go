@@ -123,7 +123,7 @@ type JoinApprovalJob struct {
 	AccountRowID int64
 	AccountID string
 	ChatID int64
-	InviteHash []byte
+	InviteHash string
 }
 
 func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,limit int)([]JoinApprovalJob,error) {
@@ -144,7 +144,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
 			ORDER BY a.updated_at LIMIT $2
 		`,tenantID,limit)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job JoinApprovalJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&job.InviteHash);err!=nil{return err};if len(job.InviteHash)>0 { hash,decryptErr:=decryptJoinInviteHash(job.InviteHash);if decryptErr!=nil{return decryptErr};job.InviteHash=[]byte(hash) }
+		for rows.Next(){var job JoinApprovalJob;var ciphertext []byte;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&ciphertext);err!=nil{return err};if len(ciphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(ciphertext);if decryptErr!=nil{return decryptErr};job.InviteHash=hash }
 			out=append(out,job)}
 		return rows.Err()
 	})
