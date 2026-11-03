@@ -420,3 +420,16 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 每条任务复用既有 ChangeUnifiedTaskStatus 服务端状态条件与租户事务，不绕过队列控制逻辑；响应逐条返回成功/失败及原因，部分成功使用 HTTP 207。
 - [ ] 批量控制采用逐项独立事务，明确为部分成功语义，不承诺全有或全无；需要 UI 对失败项展示原因，并允许用户重新提交失败项。
 - [ ] 尚未运行 Go test/vet/build 或 PostgreSQL 集成测试；最终统一验收需覆盖混合有效/无效状态、跨租户 ID、并发 Worker claim 与批量取消竞争。
+
+
+## 31. 2026-11-04 任务中心批量控制与加群子任务状态一致性（增量）
+
+- [x] 统一任务中心的 group_join 行按所选账号子任务执行 pause/resume/retry/cancel，不再把单行操作错误升级为整个父任务操作；同一父任务的多个子任务可以独立批量操作。
+- [x] 加群子任务控制使用租户范围的行更新；暂停/取消 processing 子任务时清空 lease，旧 Worker 的完成/失败写回因精确 lease 不匹配而失效。
+- [x] 恢复/重试加群子任务时同时验证租户有效、父任务保留明确授权记录、Telegram 账号仍授权且 Session 存在；重试仅重置被选中的失败子任务。
+- [x] 父任务状态从子任务集合重新推导：queued/processing/request_pending 优先保持 queued；无可运行项但存在 paused 时为 paused；否则按 failed、全 cancelled、completed 收敛。未知未来状态按活动状态保守处理。
+- [x] 增加父子状态聚合单元测试，覆盖混合状态、待审批、失败、全取消和未知状态。
+- [x] 保留现有批量接口的逐项独立事务与部分成功语义；不承诺整批原子提交。
+- [ ] 本次变更尚未运行 Go test、vet、build 或 GitHub Actions；必须在最终后端验收时执行。
+- [ ] 尚需 PostgreSQL 多连接集成测试覆盖：两个 Worker 同时 claim、租约到期后重领、旧 Worker 延迟写回、跨租户 ID 混入批次、并发父子状态变化，以及批量请求部分失败。
+- [ ] Worker 当前通过各队列 claim SQL 直接重新领取过期 processing 租约，无独立定时 reaper；该设计避免额外状态迁移，但恢复时延取决于 Worker 轮询周期。执行中固定租约仍需继续遵守当前 RPC deadline 上限。
