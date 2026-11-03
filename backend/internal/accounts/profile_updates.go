@@ -16,6 +16,7 @@ type ProfileUpdateInput struct {
 	LastName string `json:"last_name"`
 	About string `json:"about"`
 	GenerateUsername bool `json:"generate_username"`
+	PhotoData []byte `json:"-"`
 }
 
 type UsernameGenerationSettings struct {
@@ -71,6 +72,7 @@ type ProfileUpdateJob struct {
 	LastName string `json:"last_name"`
 	About string `json:"about"`
 	GenerateUsername bool `json:"generate_username"`
+	PhotoData []byte `json:"-"`
 	UsernamePrefix string `json:"-"`
 	UsernameRandomLength int `json:"-"`
 	UsernameCharset string `json:"-"`
@@ -90,7 +92,7 @@ func normalizeProfileUpdate(in ProfileUpdateInput) (ProfileUpdateInput,error) {
 	in.LastName=strings.TrimSpace(in.LastName)
 	in.About=strings.TrimSpace(in.About)
 	if !validAccountUUID(in.AccountID) { return in,errors.New("invalid account id") }
-	if in.FirstName=="" && in.LastName=="" && in.About=="" && !in.GenerateUsername { return in,errors.New("at least one profile field or username generation must be requested") }
+	if in.FirstName=="" && in.LastName=="" && in.About=="" && !in.GenerateUsername && len(in.PhotoData)==0 { return in,errors.New("at least one profile field, username generation, or avatar must be requested") }
 	if utf8.RuneCountInString(in.FirstName)>64 || utf8.RuneCountInString(in.LastName)>64 { return in,errors.New("first and last names must be at most 64 characters") }
 	if utf8.RuneCountInString(in.About)>70 { return in,errors.New("profile bio must be at most 70 characters") }
 	return in,nil
@@ -121,10 +123,10 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 			if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='authorized' AND session_ciphertext IS NOT NULL)`,tenantID,in.AccountID).Scan(&authorized);err!=nil{return err}
 			if !authorized{return fmt.Errorf("account %s is not an authorized account in this tenant",in.AccountID)}
 			var job ProfileUpdateJob
-			err:=tx.QueryRowContext(ctx,`INSERT INTO account_profile_update_jobs(batch_id,tenant_id,account_id,requested_by_user_id,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset)
-				VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-				RETURNING id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at`,
-				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
+			err:=tx.QueryRowContext(ctx,`INSERT INTO account_profile_update_jobs(batch_id,tenant_id,account_id,requested_by_user_id,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data)
+				VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+				RETURNING id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at`,
+				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset,in.PhotoData).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
 			if err!=nil{return err}
 			out=append(out,job)
 		}
@@ -142,10 +144,10 @@ func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,sta
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:=`tenant_id=$1 AND ($2='' OR batch_id=$2::uuid) AND ($3='' OR status=$3)`
 		if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM account_profile_update_jobs WHERE `+filter,tenantID,batchID,status).Scan(&total);err!=nil{return err}
-		rows,err:=tx.QueryContext(ctx,`SELECT id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at
+		rows,err:=tx.QueryContext(ctx,`SELECT id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at
 			FROM account_profile_update_jobs WHERE `+filter+` ORDER BY created_at DESC,id LIMIT $4 OFFSET $5`,tenantID,batchID,status,limit,offset)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
+		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
 	})
 	return out,total,err
@@ -164,7 +166,7 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 		)
 		UPDATE account_profile_update_jobs j SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',updated_at=NOW()
 		FROM picked WHERE j.id=picked.id
-		RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.username_prefix,j.username_random_length,j.username_charset,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at`,tenantID,limit)
+		RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.username_prefix,j.username_random_length,j.username_charset,j.photo_data,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at`,tenantID,limit)
 		if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
