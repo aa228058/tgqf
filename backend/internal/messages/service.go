@@ -29,7 +29,6 @@ type MessageCreatedEvent struct {
  ChatID int64 `json:"chat_id"`
  MessageID int64 `json:"message_id"`
  CreatedAt time.Time `json:"created_at"`
-	LeaseUntil time.Time `json:"-"`
 }
 
 func (s *Service) publishCreated(ctx context.Context, tenantID string, in Incoming) {
@@ -538,6 +537,7 @@ type ReplyJob struct {
 	TelegramMessageID int64 `json:"telegram_message_id,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	LeaseUntil time.Time `json:"-"`
 }
 
 func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phone,firstName,lastName string)(ReplyJob,error) {
