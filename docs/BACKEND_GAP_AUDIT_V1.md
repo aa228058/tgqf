@@ -258,3 +258,13 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 新增 migration 0032 与 OR/AND 组合、空分组、非法运算符测试。
 - [ ] CI 和 migration 运行结果待确认；当前无真实租户数据库环境可执行迁移验收。
 - 注：分组是简单两层结构（组间 AND/OR + 组内现有 match_mode），尚不是任意深度的布尔表达式树。
+
+ 
+## 16. 2026-11-04 关键词自动动作任务管理 API
+
+- [x] 新增 `GET /api/v1/keyword-actions`，支持状态筛选、分页，返回规则名、命中记录、账号/群组、回复内容、发送状态、尝试次数和错误信息。
+- [x] 新增 `POST /api/v1/keyword-actions/{id}/pause`：暂停待处理或失败任务。
+- [x] 新增 `POST /api/v1/keyword-actions/{id}/resume`：恢复暂停任务；仅有效租户可恢复。
+- [x] 新增 `POST /api/v1/keyword-actions/{id}/retry`：重置失败次数并重新排队；仅有效租户可重试。
+- [x] 列表及状态变更均限定当前租户；状态变更检查合法来源状态。
+- [ ] CI 与数据库迁移执行验收待完成；目前未连接生产 Telegram 账号进行端到端验证。
