@@ -310,6 +310,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 
 - [x] 新增 migration `0039_reply_idempotency.sql`，为 `message_reply_jobs` 增加 `idempotency_key`、`request_hash`，并建立租户范围的部分唯一索引。
 - [x] `POST /api/v1/messages/{id}/reply` 接受可选 `Idempotency-Key` 请求头；同租户同 key 的重复请求返回原任务，不再重复创建待发送任务。
+- [x] 原生联系人卡片接口 `POST /api/v1/messages/{id}/contact` 使用同一机制，避免客户端超时重试时重复排入联系人卡片发送任务。
 - [x] 同一个 key 如果用于不同消息或不同回复文本，返回冲突错误，不会静默复用旧任务。
 - [x] 增加 key 格式与请求指纹单元测试。
 - [ ] 仍需最新 HEAD 的 Go test/vet/build 和真实 PostgreSQL migration/并发重复请求集成测试。
