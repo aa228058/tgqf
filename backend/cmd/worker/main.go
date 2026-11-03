@@ -15,6 +15,7 @@ import (
 	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 	"github.com/aa228058/tgqf/backend/internal/messages"
 	"github.com/mtgo-labs/mtgo/telegram/types"
+	"github.com/mtgo-labs/mtgo/tgerr"
 )
 
 type reconnectState struct {
@@ -205,7 +206,11 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 		telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
 		cancel()
 		if sendErr!=nil {
-			if err:=service.FailReply(ctx,job,sendErr);err!=nil { logger.Error("reschedule failed Telegram reply","job_id",job.ID,"error",err) }
+			floodWait,_:=tgerr.AsFloodWait(sendErr)
+			if floodWait>0 {
+				logger.Warn("Telegram imposed FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
+			}
+			if err:=service.FailReplyWithFloodWait(ctx,job,sendErr,floodWait);err!=nil { logger.Error("reschedule failed Telegram reply","job_id",job.ID,"error",err) }
 			logger.Warn("Telegram reply failed","job_id",job.ID,"account_id",job.AccountID,"attempt",job.Attempts,"error",sendErr)
 			continue
 		}
