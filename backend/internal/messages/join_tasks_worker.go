@@ -14,6 +14,7 @@ type JoinTaskJob struct {
     AccountRowID int64
     AccountID string
     TargetURL string
+    PrivateInviteCiphertext []byte
     LeaseUntil time.Time
 }
 
@@ -24,7 +25,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
         rows,err:=tx.QueryContext(ctx,`
             WITH picked AS (
                 SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
-                    COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) AS target_url
+                    COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) AS target_url,t.private_invite_hash_ciphertext
                 FROM tenant_join_task_accounts a
                 JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
                 JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
@@ -34,7 +35,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                     AND a.available_at<=NOW() AND t.available_at<=NOW()
                     AND (acc.join_flood_wait_until IS NULL OR acc.join_flood_wait_until<=NOW())
                     AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
-                    AND COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) IS NOT NULL
+                    AND (COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
                     AND (t.target_link_id IS NULL OR EXISTS(
                         SELECT 1 FROM public_group_link_sources src
                         WHERE src.tenant_id=a.tenant_id AND src.link_id=t.target_link_id
@@ -47,10 +48,10 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
             SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',attempts=a.attempts+1,updated_at=NOW()
             FROM picked p
             WHERE a.id=p.id
-            RETURNING p.tenant_id::text,p.task_id::text,p.id,p.telegram_account_id::text,p.target_url,a.lease_until
+            RETURNING p.tenant_id::text,p.task_id::text,p.id,p.telegram_account_id::text,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
         `,tenantID,limit)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.TargetURL,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
+        for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.TargetURL,&job.PrivateInviteCiphertext,&job.LeaseUntil);err!=nil{return err};if len(job.PrivateInviteCiphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(job.PrivateInviteCiphertext);if decryptErr!=nil{return decryptErr};job.TargetURL="https://t.me/+"+hash };jobs=append(jobs,job)}
         return rows.Err()
     })
     return jobs,err
