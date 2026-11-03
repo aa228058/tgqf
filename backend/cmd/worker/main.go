@@ -75,15 +75,10 @@ func main() {
 		if textBody == "" { textBody = message.Caption }
 		mediaType := ""
 		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
-		photoID := ""
-		if message.Chat.Photo != nil {
-			photoID = message.Chat.Photo.BigPhotoUniqueID
-			if photoID == "" { photoID = message.Chat.Photo.SmallPhotoUniqueID }
-		}
 		_, err := messageService.Ingest(ctx, tenantValue.(string), messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, ChatPhotoID: photoID, SenderID: message.FromID,
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, SenderID: message.FromID,
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
 		})
@@ -239,15 +234,10 @@ func processRecentHistory(ctx context.Context, service *messages.Service, manage
 				if body == "" { body = message.Caption }
 				mediaType := ""
 				if message.Media != nil { mediaType = string(message.Media.MediaType()) }
-				photoID := ""
-				if message.Chat.Photo != nil {
-					photoID = message.Chat.Photo.BigPhotoUniqueID
-					if photoID == "" { photoID = message.Chat.Photo.SmallPhotoUniqueID }
-				}
 				_, ingestErr := service.Ingest(fetchCtx, tenantID, messages.Incoming{
 					AccountID: accountID, ChatID: chatID, MessageID: int64(message.ID),
 					ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-					ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, ChatPhotoID: photoID,
+					ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified,
 					SenderID: message.FromID, ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 					IsOutgoing: message.Out || message.Outgoing, Text: body, MediaType: mediaType, MessageDate: message.Date,
 				})
