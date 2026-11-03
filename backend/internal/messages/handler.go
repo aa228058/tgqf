@@ -32,6 +32,7 @@ func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst 
 type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
+	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
 	h.groupCorrectionRoutes(mux)
 	mux.Handle("GET /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
 	mux.Handle("POST /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
@@ -60,6 +61,24 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
 	mux.Handle("POST /api/v1/message-replies/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeReply)))
 }
+func (h *Handler) unifiedTasks(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, total, err := h.service.ListUnifiedTasks(r.Context(), user.TenantID, UnifiedTaskFilter{
+		Status: r.URL.Query().Get("status"),
+		Type: r.URL.Query().Get("type"),
+		AccountID: r.URL.Query().Get("account_id"),
+		Limit: limit,
+		Offset: offset,
+	})
+	if err != nil {
+		messageJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	messageJSON(w, http.StatusOK, map[string]any{"tasks": items, "total": total, "limit": normalizeLimit(limit), "offset": max(0, offset)})
+}
+
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
 	user:=auth.UserFromContext(r.Context())
 	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
