@@ -95,3 +95,11 @@ func validUUID(v string)bool {
 	for i,c:=range v { if i==8||i==13||i==18||i==23 {if c!='-'{return false};continue};if !((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')){return false} }
 	return true
 }
+
+func withTenantTx(ctx context.Context,db *sql.DB,tenantID string,fn func(*sql.Tx)error)error{
+	if tenantID==""{return errors.New("tenant scope is required")}
+	tx,err:=db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+	if _,err=tx.ExecContext(ctx,"SELECT set_config('app.tenant_id',$1,true)",tenantID);err!=nil{return err}
+	if err=fn(tx);err!=nil{return err}
+	return tx.Commit()
+}
