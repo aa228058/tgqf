@@ -42,7 +42,7 @@ func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, er
 		return filter, errors.New("invalid task type")
 	}
 	switch filter.Status {
-	case "", "pending", "processing", "sent", "failed", "paused", "completed", "cancelled",
+	case "", "pending", "processing", "sent", "failed", "paused", "completed", "cancelled", "queued",
 		"draft", "queued", "request_pending", "joined", "already_member", "skipped":
 	default:
 		return filter, errors.New("invalid task status")
