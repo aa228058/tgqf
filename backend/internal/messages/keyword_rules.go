@@ -286,12 +286,25 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
         err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
             remaining:=limit-len(jobs);if remaining>5{remaining=5}
             picked,err:=tx.QueryContext(ctx,`WITH picked AS (
-                SELECT id FROM keyword_action_jobs WHERE tenant_id=$1 AND
-                ((status='pending' AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW()))
-                ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
-            ) UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
-            FROM picked WHERE j.id=picked.id
-            RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts`,tenantID,remaining)
+                SELECT j.id,j.tenant_id,j.telegram_account_id
+                FROM keyword_action_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
+                WHERE j.tenant_id=$1
+                AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+                AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
+                AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
+                AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+                AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+                AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
+                AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+                ORDER BY j.created_at,j.id FOR UPDATE OF j,a SKIP LOCKED LIMIT $2
+            ), claimed AS (
+                UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
+                FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
+                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts
+            ), scheduled AS (
+                UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
+                FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
+            ) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
             if err!=nil{return err};defer picked.Close()
             for picked.Next(){var job KeywordActionJob;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts);err!=nil{return err};jobs=append(jobs,job)}
             return picked.Err()
@@ -302,6 +315,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
 
 func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration) error {
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if sendErr!=nil && floodWait>0 { waitSeconds:=int64(floodWait/time.Second); if floodWait%time.Second!=0 {waitSeconds++}; waitSeconds++; if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID);err!=nil{return err} }
         if sendErr==nil {
             if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,telegramMessageID)
