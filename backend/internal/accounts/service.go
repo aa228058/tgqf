@@ -14,7 +14,7 @@ import (
  device "github.com/mtgo-labs/device-manager"
 )
 type Service struct{db *sql.DB}
-type Account struct{ID string `json:"id"`;Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Status string `json:"status"`;HasSession bool `json:"has_session"`;HasProxy bool `json:"has_proxy"`;LastError string `json:"last_error"`;CreatedAt time.Time `json:"created_at"`;UpdatedAt time.Time `json:"updated_at"`}
+type Account struct{ID string `json:"id"`;Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Tags []string `json:"tags"`;Status string `json:"status"`;HasSession bool `json:"has_session"`;HasProxy bool `json:"has_proxy"`;LastError string `json:"last_error"`;CreatedAt time.Time `json:"created_at"`;UpdatedAt time.Time `json:"updated_at"`}
 func New(db *sql.DB)*Service{return &Service{db:db}}
 func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session string,proxy json.RawMessage)(Account,error){
  phone=strings.TrimSpace(phone);name=strings.TrimSpace(name);group=strings.TrimSpace(group);session=strings.TrimSpace(session)
@@ -31,13 +31,13 @@ func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session str
  if err=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM telegram_accounts WHERE tenant_id=$1`,tenantID).Scan(&count);err!=nil{return Account{},err}
  if count>=limit{return Account{},fmt.Errorf("account limit reached (%d)",limit)}
  var a Account
- err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,session_ciphertext,session_key_version,proxy_ciphertext,proxy_id) VALUES($1,$2,$3,$4,'pending',$5,1,$6,CASE WHEN $6::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,phone,display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,phone,name,group,sessionCipher,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+ err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,session_ciphertext,session_key_version,proxy_ciphertext,proxy_id) VALUES($1,$2,$3,$4,'pending',$5,1,$6,CASE WHEN $6::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,phone,display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,phone,name,group,sessionCipher,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
  if err!=nil{return Account{},err};if err=insertDeviceProfile(ctx,tx,tenantID,a.ID);err!=nil{return Account{},err};if err=tx.Commit();err!=nil{return Account{},err};return a,nil
 }
 func nullBytes(v []byte)any{if len(v)==0{return nil};return v}
 func(s *Service)List(ctx context.Context,tenantID string)([]Account,error){
  out:=[]Account{}
- err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
  return out,err
 }
 
@@ -97,6 +97,43 @@ func (s *Service) DeleteBatch(ctx context.Context,tenantID string,accountIDs []s
 
 func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,tenantID,id);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func(s *Service)SetGroup(ctx context.Context,tenantID,id,group string)error{group=strings.TrimSpace(group);if len(group)>80{return errors.New("group name must be at most 80 characters")};return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,id,group);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
+
+func normalizeAccountTags(input []string) ([]string,error) {
+	if len(input)>20 { return nil,errors.New("an account may have at most 20 tags") }
+	out:=make([]string,0,len(input));seen:=map[string]bool{}
+	for _,tag:=range input {
+		tag=strings.TrimSpace(tag)
+		if tag=="" { return nil,errors.New("account tags cannot be empty") }
+		if len([]rune(tag))>32 { return nil,errors.New("account tags must be at most 32 characters") }
+		for _,r:=range tag { if r<32 || r==127 { return nil,errors.New("account tags cannot contain control characters") } }
+		key:=strings.ToLower(tag);if seen[key] { continue };seen[key]=true;out=append(out,tag)
+	}
+	return out,nil
+}
+
+// SetAccountTags replaces one account's tags. An empty slice clears all tags.
+func (s *Service) SetAccountTags(ctx context.Context,tenantID,accountID string,tags []string) error {
+	normalized,err:=normalizeAccountTags(tags);if err!=nil{return err}
+	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,"UPDATE telegram_accounts SET tags=$3::text[],updated_at=NOW() WHERE tenant_id=$1 AND id=$2",tenantID,accountID,normalized)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil
+	})
+}
+
+// SetAccountTagsBatch atomically replaces tags for every selected account.
+func (s *Service) SetAccountTagsBatch(ctx context.Context,tenantID string,accountIDs,tags []string)(int,error) {
+	ids,_,err:=normalizeBulkGroupInput(accountIDs,"");if err!=nil{return 0,err}
+	normalized,err:=normalizeAccountTags(tags);if err!=nil{return 0,err}
+	updated:=0
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		for _,id:=range ids {
+			res,err:=tx.ExecContext(ctx,"UPDATE telegram_accounts SET tags=$3::text[],updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid",tenantID,id,normalized)
+			if err!=nil{return err};n,err:=res.RowsAffected();if err!=nil{return err};if n!=1{return errors.New("one or more accounts were not found in this tenant")};updated+=int(n)
+		}
+		return nil
+	})
+	if err!=nil{return 0,err};return updated,nil
+}
 func withTenantTx(ctx context.Context,db *sql.DB,tenantID string,fn func(*sql.Tx)error)error{if tenantID==""{return errors.New("tenant scope is required")};tx,err:=db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback();if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return err};if err=fn(tx);err!=nil{return err};return tx.Commit()}
 
 
