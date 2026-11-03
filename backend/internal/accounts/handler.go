@@ -86,10 +86,10 @@ func(h *Handler)exportCSV(w http.ResponseWriter,r *http.Request){
 	w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=telegram-accounts-%s.csv",time.Now().UTC().Format("20060102-150405")))
 	w.WriteHeader(http.StatusOK)
 	writer:=csv.NewWriter(w)
-	_ = writer.Write([]string{"id","phone","display_name","group_name","status","has_session","has_proxy","last_error","created_at","updated_at"})
+	_ = writer.Write([]string{"id","phone","display_name","group_name","tags","status","has_session","has_proxy","last_error","created_at","updated_at"})
 	for offset:=0;offset<total;offset+=100{
 		if offset>0{query.Offset=offset;items,_,err=h.service.ListPage(r.Context(),u.TenantID,query);if err!=nil{return}}
-		for _,a:=range items{_ = writer.Write([]string{safeCSVCell(a.ID),safeCSVCell(a.Phone),safeCSVCell(a.DisplayName),safeCSVCell(a.GroupName),safeCSVCell(a.Status),fmt.Sprint(a.HasSession),fmt.Sprint(a.HasProxy),safeCSVCell(a.LastError),a.CreatedAt.UTC().Format(time.RFC3339),a.UpdatedAt.UTC().Format(time.RFC3339)})}
+		for _,a:=range items{_ = writer.Write([]string{safeCSVCell(a.ID),safeCSVCell(a.Phone),safeCSVCell(a.DisplayName),safeCSVCell(a.GroupName),safeCSVCell(strings.Join(a.Tags,";")),safeCSVCell(a.Status),fmt.Sprint(a.HasSession),fmt.Sprint(a.HasProxy),safeCSVCell(a.LastError),a.CreatedAt.UTC().Format(time.RFC3339),a.UpdatedAt.UTC().Format(time.RFC3339)})}
 	}
 	writer.Flush()
 }
