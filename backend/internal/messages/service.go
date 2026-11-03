@@ -295,15 +295,22 @@ type GroupLibraryItem struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
+
+func normalizeGroupLibraryFilters(chatType, query string) (string, string, error) {
+	chatType = strings.ToLower(strings.TrimSpace(chatType))
+	if chatType != "" && chatType != "group" && chatType != "channel" {
+		return "", "", ErrInvalidGroupLibraryQuery
+	}
+	query = strings.TrimSpace(query)
+	if len(query) > 100 { return "", "", ErrInvalidGroupLibraryQuery }
+	return chatType, query, nil
+}
+
 func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, query string, limit, offset int) ([]GroupLibraryItem, int, error) {
 	if limit < 1 || limit > 100 { limit = 50 }
 	if offset < 0 { offset = 0 }
-	chatType = strings.ToLower(strings.TrimSpace(chatType))
-	if chatType != "" && chatType != "group" && chatType != "channel" {
-		return nil, 0, ErrInvalidGroupLibraryQuery
-	}
-	query = strings.TrimSpace(query)
-	if len(query) > 100 { return nil, 0, ErrInvalidGroupLibraryQuery }
+	chatType, query, err := normalizeGroupLibraryFilters(chatType, query)
+	if err != nil { return nil, 0, err }
 	items := []GroupLibraryItem{}
 	total := 0
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
