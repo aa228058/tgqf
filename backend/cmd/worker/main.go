@@ -265,7 +265,7 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
                     continue
                 }
                 upper:=strings.ToUpper(joinErr.Error())
-                if strings.Contains(upper,"INVITE_REQUEST_SENT") {
+                if strings.Contains(upper,"INVITE_REQUEST_SENT") || strings.Contains(upper,"INVITEREQUESTSENT") {
                     if err:=service.CompleteJoinTaskAccount(ctx,job,0,"request_pending");err!=nil{logger.Error("record pending Telegram join request","task_id",job.TaskID,"error",err)}
                     continue
                 }
