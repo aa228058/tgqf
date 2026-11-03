@@ -138,7 +138,6 @@ func negotiateHTTPConnect(rw io.ReadWriter, username, password, target string) e
 	reader := bufio.NewReader(rw)
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil { return fmt.Errorf("HTTP CONNECT response failed: %w", err) }
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP CONNECT rejected: %s", textproto.TrimString(resp.Status))
 	}
