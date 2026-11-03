@@ -285,7 +285,7 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			if ctx.Err()!=nil{return}
 			if blockedAccounts[job.AccountID] { continue }
 			if !messageService.TenantCanOperate(ctx,job.TenantID) {
-				if err:=accountService.FailProfileUpdate(ctx,job,errors.New("tenant subscription inactive; manual review required"),0);err!=nil {
+				if err:=accountService.PauseProfileUpdate(ctx,job,"tenant subscription inactive; manual review required");err!=nil {
 					logger.Error("pause profile update for inactive tenant","job_id",job.ID,"error",err)
 				}
 				continue
