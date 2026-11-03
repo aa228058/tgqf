@@ -72,5 +72,7 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
 - GET /api/v1/messages/settings：读取当前租户收集条件。
 - PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
+- POST /api/v1/messages/{id}/reply：提交对该条汇总消息的回复，字段 text，返回 202 和 reply job ID；实际发送由独立 Worker 执行。
+- GET /api/v1/message-replies/{id}：查询回复任务状态（pending、processing、sent、failed）、尝试次数和 Telegram 返回的消息 ID。
 
-消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id，供后续点击消息跳转原聊天并回复。当前版本提供收集、筛选、分页和已处理状态；发送回复 API、群组资料/头像同步和历史消息回填仍需后续实现。
+消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料/头像同步和历史消息回填仍需后续实现。
