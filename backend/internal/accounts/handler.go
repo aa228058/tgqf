@@ -32,6 +32,8 @@ type phonePasswordRequest struct{Password string `json:"password"`}
 type bulkPhoneStartItem struct { Phone string `json:"phone"`; GroupName string `json:"group_name"`; Proxy json.RawMessage `json:"proxy"` }
 type bulkPhoneStartRequest struct { Accounts []bulkPhoneStartItem `json:"accounts"` }
 type bulkPhoneCancelRequest struct { AccountIDs []string `json:"account_ids"` }
+type bulkPhoneVerifyItem struct { AccountID string `json:"account_id"`; Code string `json:"code"`; Password string `json:"password"` }
+type bulkPhoneVerifyRequest struct { Accounts []bulkPhoneVerifyItem `json:"accounts"` }
 type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account `json:"account,omitempty"`; Status string `json:"status"`; DeliveryType string `json:"delivery_type,omitempty"`; ResendAfterSeconds int `json:"resend_after_seconds,omitempty"`; Error string `json:"error,omitempty"` }
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
@@ -60,7 +62,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("PUT /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateProxy)))
  m.Handle("DELETE /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.deleteProxy)))
  m.Handle("POST /api/v1/proxies/{id}/check",h.auth.Authenticated(http.HandlerFunc(h.checkProxy)))
- if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/bulk/start",h.auth.Authenticated(http.HandlerFunc(h.startBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
+ if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/bulk/start",h.auth.Authenticated(http.HandlerFunc(h.startBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
 }
 
 func safeCSVCell(value string) string {
@@ -343,6 +345,51 @@ func (h *Handler) startBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
 	status:=http.StatusAccepted
 	if started==0 { status=http.StatusBadGateway }
 	writeJSON(w,status,map[string]any{"requested":len(input.Accounts),"started":started,"failed":len(input.Accounts)-started,"results":results,"next_step":"verify each account with POST /api/v1/accounts/{id}/phone/verify; use /phone/2fa when Telegram requests a password"})
+}
+
+func normalizeBulkPhoneVerify(input bulkPhoneVerifyRequest)(bulkPhoneVerifyRequest,error) {
+	if len(input.Accounts)<1 || len(input.Accounts)>20 { return input,errors.New("phone verification batch must contain 1-20 accounts") }
+	seen:=map[string]bool{}
+	for i:=range input.Accounts {
+		item:=&input.Accounts[i];item.AccountID=strings.TrimSpace(item.AccountID);item.Code=strings.TrimSpace(item.Code)
+		if !validAccountUUID(item.AccountID)||seen[item.AccountID] { return input,fmt.Errorf("account %d: invalid or duplicate account ID",i+1) }
+		seen[item.AccountID]=true
+		if (item.Code=="")== (strings.TrimSpace(item.Password)=="") { return input,fmt.Errorf("account %d: provide exactly one of code or password",i+1) }
+		if len(item.Code)>32||len(item.Password)>1024 { return input,fmt.Errorf("account %d: verification credential is too long",i+1) }
+	}
+	return input,nil
+}
+
+// verifyBulkPhoneLogin verifies independent OTP/2FA challenges and persists each
+// authorized MTGo session separately. Credentials are never echoed in responses.
+func (h *Handler) verifyBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
+	var input bulkPhoneVerifyRequest
+	if !decode(w,r,&input) { writeError(w,http.StatusBadRequest,"invalid phone verification batch");return }
+	input,err:=normalizeBulkPhoneVerify(input);if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+	u:=auth.UserFromContext(r.Context())
+	results:=make([]map[string]any,0,len(input.Accounts));authorized:=0
+	for _,item:=range input.Accounts {
+		entry:=map[string]any{"account_id":item.AccountID,"status":"failed"}
+		pending,checkErr:=h.service.IsPending(r.Context(),u.TenantID,item.AccountID)
+		if checkErr!=nil || !pending { entry["error"]="pending account not found";results=append(results,entry);continue }
+		var authResult telegrammtgo.PhoneAuthResult
+		var needsPassword bool
+		if item.Code!="" {
+			authResult,needsPassword,err=h.telegram.VerifyPhoneCode(r.Context(),item.AccountID,item.Code)
+			if err==nil && needsPassword { entry["status"]="two_factor_required";results=append(results,entry);continue }
+		} else {
+			authResult,err=h.telegram.VerifyPhonePassword(r.Context(),item.AccountID,item.Password)
+		}
+		if err!=nil { entry["error"]="Telegram verification failed";results=append(results,entry);continue }
+		account,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,item.AccountID,authResult.Phone,authResult.FirstName,authResult.SessionString)
+		_ = h.telegram.Stop(item.AccountID)
+		if saveErr!=nil { entry["error"]="Telegram authorization succeeded but account details could not be saved";results=append(results,entry);continue }
+		entry["status"]="authorized";entry["account"]=account;entry["telegram_user"]=map[string]any{"user_id":authResult.UserID,"username":authResult.Username,"first_name":authResult.FirstName}
+		authorized++;results=append(results,entry)
+	}
+	status:=http.StatusOK
+	if authorized==0 { status=http.StatusMultiStatus }
+	writeJSON(w,status,map[string]any{"requested":len(input.Accounts),"authorized":authorized,"pending_or_failed":len(input.Accounts)-authorized,"results":results})
 }
 
 // cancelBulkPhoneLogin removes only pending phone-login accounts belonging to the caller's tenant.
