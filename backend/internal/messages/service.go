@@ -196,7 +196,10 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		}
 		// Link discovery runs only on this live incoming update. It never queries history.
 		if !in.IsOutgoing && strings.TrimSpace(in.Text)!="" {
-			if err:=storeDiscoveredLinks(ctx,tx,tenantID,in);err!=nil{return err}
+			linkSettings,err:=loadLinkCollectionSettings(ctx,tx,tenantID);if err!=nil{return err}
+			if linkSettings.Allows(in.ChatType) {
+				if err:=storeDiscoveredLinks(ctx,tx,tenantID,in);err!=nil{return err}
+			}
 		}
 		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
@@ -421,6 +424,54 @@ func (s *Service) ListGroupSources(ctx context.Context, tenantID string, groupID
 	return items,err
 }
 
+
+
+type LinkCollectionSettings struct {
+	Enabled bool `json:"enabled"`
+	FromPrivateMessages bool `json:"from_private_messages"`
+	FromGroups bool `json:"from_groups"`
+	FromChannels bool `json:"from_channels"`
+}
+
+func DefaultLinkCollectionSettings() LinkCollectionSettings {
+	return LinkCollectionSettings{Enabled:true,FromPrivateMessages:true,FromGroups:true,FromChannels:true}
+}
+
+func (s LinkCollectionSettings) Allows(chatType string) bool {
+	if !s.Enabled { return false }
+	switch chatType {
+	case "private": return s.FromPrivateMessages
+	case "group": return s.FromGroups
+	case "channel": return s.FromChannels
+	default: return false
+	}
+}
+
+func loadLinkCollectionSettings(ctx context.Context,tx *sql.Tx,tenantID string)(LinkCollectionSettings,error){
+	settings:=DefaultLinkCollectionSettings()
+	err:=tx.QueryRowContext(ctx,`SELECT enabled,from_private_messages,from_groups,from_channels FROM tenant_link_collection_settings WHERE tenant_id=$1`,tenantID).
+		Scan(&settings.Enabled,&settings.FromPrivateMessages,&settings.FromGroups,&settings.FromChannels)
+	if errors.Is(err,sql.ErrNoRows){return settings,nil}
+	return settings,err
+}
+
+func (s *Service) GetLinkCollectionSettings(ctx context.Context,tenantID string)(LinkCollectionSettings,error){
+	settings:=DefaultLinkCollectionSettings()
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{var err error;settings,err=loadLinkCollectionSettings(ctx,tx,tenantID);return err})
+	return settings,err
+}
+
+func (s *Service) UpdateLinkCollectionSettings(ctx context.Context,tenantID string,settings LinkCollectionSettings)(LinkCollectionSettings,error){
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_link_collection_settings(tenant_id,enabled,from_private_messages,from_groups,from_channels,updated_at)
+			VALUES($1,$2,$3,$4,$5,NOW()) ON CONFLICT(tenant_id) DO UPDATE SET
+			enabled=EXCLUDED.enabled,from_private_messages=EXCLUDED.from_private_messages,
+			from_groups=EXCLUDED.from_groups,from_channels=EXCLUDED.from_channels,updated_at=NOW()`,
+			tenantID,settings.Enabled,settings.FromPrivateMessages,settings.FromGroups,settings.FromChannels)
+		return err
+	})
+	return settings,err
+}
 
 type GroupLinkItem struct {
 	ID int64 `json:"id"`
