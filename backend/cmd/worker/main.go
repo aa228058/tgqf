@@ -56,7 +56,7 @@ func main() {
 	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
-	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64) {
+	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool) {
 		if message == nil || message.Chat == nil { return }
 		chatType := ""
 		replyToOwn := false
@@ -65,9 +65,6 @@ func main() {
 			chatType = "private"
 		case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum:
 			chatType = "group"
-			if message.ReplyToID > 0 && message.ReplyToMessage != nil {
-				replyToOwn = message.ReplyToMessage.Out || message.ReplyToMessage.FromID == ownUserID
-			}
 		case types.ChatTypeBot, types.ChatTypeChannel:
 			return
 		default:
