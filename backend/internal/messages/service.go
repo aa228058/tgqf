@@ -3,10 +3,10 @@ package messages
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
-	"strings"
+	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
