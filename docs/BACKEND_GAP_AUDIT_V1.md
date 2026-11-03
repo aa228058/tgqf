@@ -23,7 +23,7 @@
 3. **群组目录仍是 tenant_message_chats 租户级表**，不是全系统共享公共群组总库；也没有全局群组实体、来源归并和租户贡献关系。
 4. **消息实时接口是 SSE，不是 WebSocket**；当前有收件箱/文字回复，不等于通用任务中心。
 5. 未发现完整关键词规则引擎、命中后的私聊/群组自动动作编排、媒体动作、原生联系人卡片、真实语音通话链路。
-6. 自动加群已支持公开用户名/公开链接的 MTProto 执行，私密邀请链接、审批回调仍未完成；Session 文件上传导入已支持 JSON/CSV/TXT（最多 20 条），批量手机号登录、批量资料修改仍缺失。
+6. 自动加群已支持公开用户名/公开链接的 MTProto 执行，私密邀请链接、审批回调仍未完成；Session 文件上传导入已支持 JSON/CSV/TXT（最多 20 条），批量手机号登录仍缺失；姓名/简介批量资料修改已有后端任务执行第一阶段，头像上传尚未实现。
 7. 前端目前仍需独立开发完整管理页面；本审计不修改前端。
 
 ## 2. 按模块核对
@@ -38,7 +38,7 @@
 | device-manager | 创建账号时写入 telegram_device_profiles | 部分实现 | Manager.Start/StartQR 仍直接 DeviceProfile(accountID) 重新生成，未读取数据库 profile |
 | 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页、CSV 导出、批量 Session 导入 | 第一阶段已实现 | 标签、批量选择、断开/重连 API 未形成完整集合；批量导入当前接收最多 20 条 JSON 记录，非文件上传 |
 | 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
-| 批量资料修改 | 未发现相关路由/服务 | 未实现 | 头像、姓名、简介的单/批量修改和逐账号任务结果 |
+| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile、账号资料任务 API 与 Worker | 第一阶段已实现，待 CI/在线验收 | 支持每批最多 20 个账号分别设置姓名/简介，逐账号状态、错误、重试、暂停/人工恢复；头像上传尚未实现 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
@@ -64,7 +64,7 @@
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
 - [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
 - P1-04 账号标签/搜索/分页/批量操作/导出/断开重连。
-- P1-05 批量头像/姓名/简介修改接入统一任务执行底座。
+- [x] P1-05 第一阶段：姓名/简介资料修改已进入逐账号任务队列，批次 ID 统一，Worker 调用 MTGo UpdateProfile，逐账号记录成功/失败、普通错误退避重试、FloodWait 精确等待；租户停用/到期时暂停，恢复后需人工显式恢复。头像上传仍待专项实现。
 
 ### P1 — 全局公共群组总库
 - [x] P1-06 第一阶段：新增 `public_groups`，按 Telegram chat type + chat ID 去重，维护全局资料。
