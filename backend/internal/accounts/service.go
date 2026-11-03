@@ -37,7 +37,7 @@ func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session str
 func nullBytes(v []byte)any{if len(v)==0{return nil};return v}
 func(s *Service)List(ctx context.Context,tenantID string)([]Account,error){
  out:=[]Account{}
- err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
  return out,err
 }
 
@@ -67,7 +67,7 @@ func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListO
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM telegram_accounts WHERE "+filter,tenantID,opts.Query,opts.GroupName,opts.Status).Scan(&total);err!=nil{return err}
 		rows,err:=tx.QueryContext(ctx,"SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE "+filter+" ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6",tenantID,opts.Query,opts.GroupName,opts.Status,opts.Limit,opts.Offset)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)}
+		for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)}
 		return rows.Err()
 	})
 	return out,total,err
@@ -319,7 +319,7 @@ func (s *Service) CreatePending(ctx context.Context, tenantID, group string, pro
  if err=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM telegram_accounts WHERE tenant_id=$1`,tenantID).Scan(&count);err!=nil{return Account{},err}
  if count>=limit{return Account{},fmt.Errorf("account limit reached (%d)",limit)}
  var a Account
- err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,proxy_ciphertext,proxy_id) VALUES($1,NULL,'',$2,'pending',$3,CASE WHEN $3::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,'',display_name,group_name,tags,status,false,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,group,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+ err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,proxy_ciphertext,proxy_id) VALUES($1,NULL,'',$2,'pending',$3,CASE WHEN $3::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,'',display_name,group_name,tags,status,false,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,group,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
  if err!=nil{return Account{},err}
  if err=insertDeviceProfile(ctx,tx,tenantID,a.ID);err!=nil{return Account{},err}
  if err=tx.Commit();err!=nil{return Account{},err}
