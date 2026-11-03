@@ -142,12 +142,16 @@ func CheckProxy(ctx context.Context, host string, port int) error {
 }
 
 func (s *Service) CheckProxy(ctx context.Context,tenantID,proxyID string)error{
-	var host string;var port int
+	var protocol,host,username string
+	var port int
+	var passwordCipher []byte
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		return tx.QueryRowContext(ctx,`SELECT host,port FROM tenant_proxies WHERE tenant_id=$1 AND id=$2`,tenantID,proxyID).Scan(&host,&port)
+		return tx.QueryRowContext(ctx,`SELECT protocol,host,port,username,password_ciphertext FROM tenant_proxies WHERE tenant_id=$1 AND id=$2`,tenantID,proxyID).Scan(&protocol,&host,&port,&username,&passwordCipher)
 	})
 	if errors.Is(err,sql.ErrNoRows){return errors.New("proxy not found")};if err!=nil{return err}
-	return CheckProxy(ctx,host,port)
+	password:=""
+	if len(passwordCipher)>0 { plain,err:=decrypt(passwordCipher);if err!=nil{return fmt.Errorf("decrypt proxy credentials: %w",err)};password=string(plain) }
+	return checkProxyTunnel(ctx,protocol,host,port,username,password,"149.154.167.51:443")
 }
 
 func (s *Service) LoadProxyJSON(ctx context.Context,tx *sql.Tx,tenantID,proxyID string)(string,error){
