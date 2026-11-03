@@ -79,3 +79,16 @@ func (h *Handler) updateProxy(w http.ResponseWriter,r *http.Request) {
 	}
 	writeJSON(w,http.StatusOK,map[string]any{"proxy":item})
 }
+
+
+func (h *Handler) setDefaultProxy(w http.ResponseWriter,r *http.Request) {
+	var input bindProxyRequest
+	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
+	u:=auth.UserFromContext(r.Context())
+	id:=strings.TrimSpace(input.ProxyID)
+	if err:=h.service.SetDefaultProxy(r.Context(),u.TenantID,id);err!=nil{
+		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return}
+		writeError(w,http.StatusBadRequest,"could not set default proxy");return
+	}
+	writeJSON(w,http.StatusOK,map[string]string{"proxy_id":id})
+}
