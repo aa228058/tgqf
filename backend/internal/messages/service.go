@@ -591,21 +591,31 @@ func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phon
 	return job,err
 }
 
+func normalizeIdempotencyKey(key string) (string,error) {
+	key=strings.TrimSpace(key)
+	if key=="" { return "",nil }
+	if len(key)<8 || len(key)>128 || strings.ContainsAny(key,"\\r\\n\\x00") {
+		return "",errors.New("Idempotency-Key must contain 8-128 non-control characters")
+	}
+	return key,nil
+}
+
+func replyRequestHash(messageID,textBody string) string {
+	sum:=sha256.Sum256([]byte(strings.Join([]string{"message_reply",messageID,textBody},"\\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody string, idempotencyKeys ...string) (ReplyJob,error) {
 	textBody=strings.TrimSpace(textBody)
 	if !validUUID(messageID) || textBody=="" || len([]rune(textBody))>4096 {
 		return ReplyJob{},errors.New("reply text must contain 1-4096 characters and message id must be valid")
 	}
 	key:=""
-	if len(idempotencyKeys)>0 { key=strings.TrimSpace(idempotencyKeys[0]) }
-	if key!="" && (len(key)<8 || len(key)>128 || strings.ContainsAny(key,"\\r\\n\\x00")) {
-		return ReplyJob{},errors.New("Idempotency-Key must contain 8-128 non-control characters")
-	}
-	requestHash:=hex.EncodeToString(sha256.New().Sum(nil))
-	if key!="" {
-		sum:=sha256.Sum256([]byte(strings.Join([]string{"message_reply",messageID,textBody},"\\x00")))
-		requestHash=hex.EncodeToString(sum[:])
-	}
+	if len(idempotencyKeys)>0 { key=idempotencyKeys[0] }
+	var err error
+	if key,err=normalizeIdempotencyKey(key);err!=nil { return ReplyJob{},err }
+	requestHash:=""
+	if key!="" { requestHash=replyRequestHash(messageID,textBody) }
 	var job ReplyJob
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
