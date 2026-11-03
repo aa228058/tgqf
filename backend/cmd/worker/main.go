@@ -125,8 +125,10 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 	for id, account := range allowed {
 		if manager.IsConnected(id) {
 			delete(reconnects, id)
-			if err := accountsService.ClearRuntimeReconnectState(ctx, account.TenantID, id); err != nil {
-				logger.Warn("clear Telegram reconnect state", "account_id", id, "error", err)
+			if account.ReconnectAttempts > 0 {
+				if err := accountsService.ClearRuntimeReconnectState(ctx, account.TenantID, id); err != nil {
+					logger.Warn("clear Telegram reconnect state", "account_id", id, "error", err)
+				}
 			}
 		} else {
 			state, exists := reconnects[id]
