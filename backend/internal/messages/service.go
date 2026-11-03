@@ -18,6 +18,10 @@ type Incoming struct {
 	MessageID int64
 	ChatType string
 	ChatTitle string
+	ChatUsername string
+	ChatMemberCount int
+	ChatVerified bool
+	ChatPhotoID string
 	SenderID int64
 	ReplyToMessageID int64
 	ReplyToOwnMessage bool
@@ -118,6 +122,17 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		if !exists{return errors.New("account not found")}
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
+		_,err=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,photo_id,last_seen_at,updated_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+			ON CONFLICT(tenant_id,telegram_account_id,chat_id) DO UPDATE SET
+			chat_title=COALESCE(NULLIF(EXCLUDED.chat_title,''),tenant_message_chats.chat_title),
+			chat_type=EXCLUDED.chat_type,
+			username=COALESCE(NULLIF(EXCLUDED.username,''),tenant_message_chats.username),
+			member_count=GREATEST(EXCLUDED.member_count,tenant_message_chats.member_count),
+			is_verified=tenant_message_chats.is_verified OR EXCLUDED.is_verified,
+			photo_id=COALESCE(NULLIF(EXCLUDED.photo_id,''),tenant_message_chats.photo_id),
+			last_seen_at=NOW(),updated_at=NOW()`,tenantID,in.AccountID,in.ChatID,strings.TrimSpace(in.ChatTitle),in.ChatType,strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified,strings.TrimSpace(in.ChatPhotoID))
+		if err!=nil{return err}
 		_,err=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
 			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,in.MessageDate)
 		if err==nil { collected=true }
@@ -203,6 +218,10 @@ type ChatSummary struct {
 	UnprocessedCount int `json:"unprocessed_count"`
 	LastMessage string `json:"last_message"`
 	LastMessageDate time.Time `json:"last_message_date"`
+	ChatUsername string `json:"chat_username"`
+	MemberCount int `json:"member_count"`
+	IsVerified bool `json:"is_verified"`
+	PhotoID string `json:"photo_id,omitempty"`
 }
 
 func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int)([]ChatSummary,int,error){
@@ -210,9 +229,16 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 	out:=[]ChatSummary{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(DISTINCT (telegram_account_id,chat_id)) FROM unified_messages WHERE tenant_id=$1",tenantID).Scan(&total);err!=nil{return err}
-		query:="SELECT g.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),g.chat_id,g.chat_title,g.chat_type,g.unprocessed_count,COALESCE(latest.message_text,''),g.last_message_date FROM (SELECT telegram_account_id,chat_id,MAX(chat_title) AS chat_title,MAX(chat_type) AS chat_type,COUNT(*) FILTER (WHERE processed_at IS NULL) AS unprocessed_count,MAX(message_date) AS last_message_date FROM unified_messages WHERE tenant_id=$1 GROUP BY telegram_account_id,chat_id) g JOIN telegram_accounts a ON a.tenant_id=$1 AND a.id=g.telegram_account_id LEFT JOIN LATERAL (SELECT message_text FROM unified_messages m2 WHERE m2.tenant_id=$1 AND m2.telegram_account_id=g.telegram_account_id AND m2.chat_id=g.chat_id ORDER BY m2.message_date DESC,m2.id DESC LIMIT 1) latest ON TRUE ORDER BY g.last_message_date DESC LIMIT $2 OFFSET $3"
+		query:=`SELECT g.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),g.chat_id,
+			COALESCE(NULLIF(cm.chat_title,''),g.chat_title),g.chat_type,g.unprocessed_count,COALESCE(latest.message_text,''),g.last_message_date,
+			COALESCE(cm.username,''),COALESCE(cm.member_count,0),COALESCE(cm.is_verified,FALSE),COALESCE(cm.photo_id,'')
+			FROM (SELECT telegram_account_id,chat_id,MAX(chat_title) AS chat_title,MAX(chat_type) AS chat_type,COUNT(*) FILTER (WHERE processed_at IS NULL) AS unprocessed_count,MAX(message_date) AS last_message_date FROM unified_messages WHERE tenant_id=$1 GROUP BY telegram_account_id,chat_id) g
+			JOIN telegram_accounts a ON a.tenant_id=$1 AND a.id=g.telegram_account_id
+			LEFT JOIN tenant_message_chats cm ON cm.tenant_id=$1 AND cm.telegram_account_id=g.telegram_account_id AND cm.chat_id=g.chat_id
+			LEFT JOIN LATERAL (SELECT message_text FROM unified_messages m2 WHERE m2.tenant_id=$1 AND m2.telegram_account_id=g.telegram_account_id AND m2.chat_id=g.chat_id ORDER BY m2.message_date DESC,m2.id DESC LIMIT 1) latest ON TRUE
+			ORDER BY g.last_message_date DESC LIMIT $2 OFFSET $3`
 		rows,err:=tx.QueryContext(ctx,query,tenantID,limit,offset);if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var item ChatSummary;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.ChatTitle,&item.ChatType,&item.UnprocessedCount,&item.LastMessage,&item.LastMessageDate);err!=nil{return err};out=append(out,item)}
+		for rows.Next(){var item ChatSummary;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.ChatTitle,&item.ChatType,&item.UnprocessedCount,&item.LastMessage,&item.LastMessageDate,&item.ChatUsername,&item.MemberCount,&item.IsVerified,&item.PhotoID);err!=nil{return err};out=append(out,item)}
 		return rows.Err()
 	})
 	return out,total,err
