@@ -59,3 +59,17 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - PATCH /api/v1/accounts/{id}/proxy：绑定代理，传入 proxy_id；传空字符串解除绑定。绑定关系和代理数据均按租户隔离。
 
 代理密码单独使用 SESSION_ENCRYPTION_KEY 进行 AES-256-GCM 加密。Worker 在租户作用域内读取绑定代理并在内存中解密；账号旧版内嵌代理配置仍兼容。账号列表只返回 has_proxy，不返回凭据。
+
+## 跨账号消息汇总 API
+
+消息由独立 Telegram Worker 通过 MTGo 新消息事件接收，并在写入数据库前执行两层过滤：
+1. 固定规则：只收普通私聊的对方来信；群组/超级群/论坛只收明确回复当前账号本人消息的内容；排除机器人私聊、广播频道、自己发出的消息和其他事件。
+2. 租户可配置规则：启停汇总、选择账号、选择群组/聊天 ID、启用文字或媒体、关键词匹配。未配置时默认收集所有账号的符合固定规则的文字和媒体消息。过滤在入库前执行，不是只隐藏列表结果。
+
+接口（租户 Bearer Token）：
+- GET /api/v1/messages：默认只返回未处理消息；支持 limit、offset、include_processed=true。
+- PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
+- GET /api/v1/messages/settings：读取当前租户收集条件。
+- PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
+
+消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id，供后续点击消息跳转原聊天并回复。当前版本提供收集、筛选、分页和已处理状态；发送回复 API、群组资料/头像同步和历史消息回填仍需后续实现。
