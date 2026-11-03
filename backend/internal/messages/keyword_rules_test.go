@@ -134,3 +134,22 @@ func TestNormalizeKeywordRuleReplyAction(t *testing.T) {
 	_,err=normalizeKeywordRule(KeywordRule{Name:"too long",MatchMode:"any",Keywords:[]string{"hello"},ReplyText:strings.Repeat("x",4097)})
 	if err==nil {t.Fatal("reply action longer than Telegram message limit accepted")}
 }
+
+func TestKeywordRuleGroupedORAndANDExpressions(t *testing.T) {
+	rule,err:=normalizeKeywordRule(KeywordRule{
+		Name:"grouped",MatchMode:"any",GroupOperator:"all",
+		KeywordGroups:[][]string{{"alpha","beta"},{"gamma"}},
+	})
+	if err!=nil {t.Fatalf("grouped rule rejected: %v",err)}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"alpha and gamma"});!ok {t.Fatal("AND of matching OR groups should pass")}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"alpha only"});ok {t.Fatal("AND group should fail when one group is absent")}
+	rule.GroupOperator="any"
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"beta only"});!ok {t.Fatal("OR between groups should pass when one group matches")}
+}
+
+func TestNormalizeKeywordRuleRejectsInvalidGroups(t *testing.T) {
+	_,err:=normalizeKeywordRule(KeywordRule{Name:"empty group",MatchMode:"any",KeywordGroups:[][]string{{}}})
+	if err==nil {t.Fatal("empty keyword group accepted")}
+	_,err=normalizeKeywordRule(KeywordRule{Name:"bad operator",MatchMode:"any",Keywords:[]string{"x"},GroupOperator:"xor"})
+	if err==nil {t.Fatal("unsupported group operator accepted")}
+}
