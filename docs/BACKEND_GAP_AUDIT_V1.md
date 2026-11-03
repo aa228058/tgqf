@@ -347,3 +347,16 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] 当前仍采用领取时固定 lease，而非执行中续租；若将来延长 RPC 超时或允许多步骤任务耗时超过 5 分钟，必须引入带 fencing token 的 lease renewal，并确保旧 Worker 无法续租或写回。
 - [ ] 仍需多 Worker/PostgreSQL 集成测试，覆盖 lease 到期、重领、慢 RPC 和任务完成写回；按项目约定暂不运行全量 Go test/vet/build。
 - 本轮仅调整数据库 claim SQL 的 lease 时长，不改变 Telegram 发送频率、FloodWait 规则或每轮 claim=1 的串行安全策略。
+
+
+## 25. 2026-11-04 批量手机号登录编排（增量）
+
+- [x] 新增 POST /api/v1/accounts/phone/bulk/start：一次接收 1-20 个手机号，先整体校验数量、手机号格式、重复号码、分组和代理 JSON，再逐账号创建 pending 记录、读取持久化 device profile/代理配置并调用 MTGo StartPhoneLogin。
+- [x] 批次采用逐账号部分成功语义：一个号码被 Telegram 拒绝或账号额度不足，不会抹掉其他已成功发出的 OTP challenge；响应逐项返回账号记录、发送状态、投递类型及重发等待秒数，不返回 Session/代理凭据。
+- [x] 新增 POST /api/v1/accounts/phone/bulk/verify：逐项提交 account_id + OTP 或 2FA password；只允许二者恰好提供一个，调用 MTGo VerifyPhoneCode / VerifyPhonePassword，支持逐账号返回 two_factor_required，成功后复用加密 Session 持久化。
+- [x] 新增 POST /api/v1/accounts/phone/bulk/cancel：只允许取消当前租户仍处于 pending 的账号；先取消 MTGo challenge，再删除对应 pending account，不会按传入 ID 跨租户操作。
+- [x] 所有批量入口限制最多 20 项，拒绝重复手机号/账号 ID；OTP 与 2FA 密码不会回显，批量接口不接受或返回 Session。
+- [x] 增加批量手机号、代理 JSON、重复账号、OTP/2FA 二选一等输入校验单测。
+- [ ] 仍需最新 HEAD 统一 Go test/vet/API build；按项目约定暂不提前运行全量 CI。
+- [ ] OTP challenge 与 MTGo pending client 仍只存在 API 进程内存，进程重启后必须重新发起登录；没有持久化 OTP、2FA 密码或 Telegram challenge。需真实号码、真实 Telegram、服务重启及账号额度场景验收。
+- [ ] 当前每个账号仍使用现有单账号 verify/2FA API 兼容路径；批量接口是逐账号结果，不是 Telegram 端原子批处理。
