@@ -68,3 +68,32 @@ func TestNormalizeBulkRuntimeActionInput(t *testing.T) {
 	if _, _, err := normalizeBulkRuntimeActionInput(nil, "disconnect"); err == nil { t.Fatal("empty account selection accepted") }
 	if _, _, err := normalizeBulkRuntimeActionInput([]string{id, id}, "disconnect"); err == nil { t.Fatal("duplicate account IDs accepted") }
 }
+
+func TestNormalizeBulkPhoneStart(t *testing.T) {
+	valid:=bulkPhoneStartRequest{Accounts:[]bulkPhoneStartItem{
+		{Phone:"+15551234567",GroupName:" work "},
+		{Phone:"447700900123"},
+	}}
+	got,err:=normalizeBulkPhoneStart(valid)
+	if err!=nil { t.Fatal(err) }
+	if got.Accounts[0].Phone!="+15551234567" || got.Accounts[0].GroupName!="work" { t.Fatalf("unexpected normalized batch: %#v",got) }
+	cases:=[]bulkPhoneStartRequest{
+		{},
+		{Accounts:make([]bulkPhoneStartItem,21)},
+		{Accounts:[]bulkPhoneStartItem{{Phone:"+15551234567"},{Phone:"15551234567"}}},
+		{Accounts:[]bulkPhoneStartItem{{Phone:"abcde"}}},
+		{Accounts:[]bulkPhoneStartItem{{Phone:"1234"}}},
+		{Accounts:[]bulkPhoneStartItem{{Phone:"+1+5551234567"}}},
+		{Accounts:[]bulkPhoneStartItem{{Phone:"+15551234567",Proxy:[]byte("[]")}}},
+	}
+	for i,input:=range cases { if _,err:=normalizeBulkPhoneStart(input);err==nil { t.Errorf("case %d unexpectedly accepted",i) } }
+}
+
+func TestNormalizeBulkPhoneAccountIDs(t *testing.T) {
+	id:="11111111-1111-4111-8111-111111111111"
+	got,err:=normalizeBulkPhoneAccountIDs([]string{" "+id+" "})
+	if err!=nil || len(got)!=1 || got[0]!=id { t.Fatalf("unexpected result %#v, %v",got,err) }
+	for _,ids:=range [][]string{nil, {id,id}, {"bad"}, make([]string,21)} {
+		if _,err:=normalizeBulkPhoneAccountIDs(ids);err==nil { t.Errorf("invalid IDs accepted: %#v",ids) }
+	}
+}
