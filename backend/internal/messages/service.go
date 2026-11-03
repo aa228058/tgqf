@@ -29,6 +29,7 @@ type MessageCreatedEvent struct {
  ChatID int64 `json:"chat_id"`
  MessageID int64 `json:"message_id"`
  CreatedAt time.Time `json:"created_at"`
+	LeaseUntil time.Time `json:"-"`
 }
 
 func (s *Service) publishCreated(ctx context.Context, tenantID string, in Incoming) {
@@ -616,14 +617,14 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				), claimed AS (
 				UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
 				FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
-				RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at
+				RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at,j.lease_until
 				), scheduled AS (
 				UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
 				FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
 				) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
 			if err!=nil{return err}
 			defer rows.Close()
-			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt);err!=nil{return err};jobs=append(jobs,job)}
+			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
 			return rows.Err()
 		})
 		if err!=nil{return nil,err}
@@ -656,7 +657,7 @@ func (s *Service) ResumeReply(ctx context.Context, tenantID, jobID string) error
 func (s *Service) PauseReply(ctx context.Context, job ReplyJob, reason string) error {
 	reason=strings.TrimSpace(reason);if reason==""{reason="tenant inactive; manual review required"};if len(reason)>500{reason=reason[:500]}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
+		_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,reason,job.LeaseUntil)
 		return err
 	})
 }
@@ -664,7 +665,7 @@ func (s *Service) PauseReply(ctx context.Context, job ReplyJob, reason string) e
 func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessageID int64) error {
 	if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,telegramMessageID)
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,telegramMessageID,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
 }
@@ -695,7 +696,7 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		if floodWait>0 { if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err} }
-		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,message,delay)
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,delay,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
 }
@@ -712,7 +713,7 @@ func (s *Service) GetReply(ctx context.Context,tenantID,jobID string)(ReplyJob,e
 func (s *Service) ReleaseReply(ctx context.Context,job ReplyJob,delay time.Duration) error {
 	if delay<5*time.Second {delay=5*time.Second};if delay>5*time.Minute{delay=5*time.Minute}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='pending',attempts=GREATEST(attempts-1,0),available_at=NOW()+($3 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,int(delay.Seconds()))
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='pending',attempts=GREATEST(attempts-1,0),available_at=NOW()+($3 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,int(delay.Seconds()),job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
 }
