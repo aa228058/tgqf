@@ -220,18 +220,19 @@ func profileUpdateRetry(attempts int)(string,time.Duration) {
 }
 
 func (s *Service) FailProfileUpdate(ctx context.Context,job ProfileUpdateJob,cause error,floodWait time.Duration)error {
-	message:="profile update failed";if cause!=nil{message=cause.Error()};if len(message)>1000{message=message[:1000]}
-	status:="pending";delay:=floodWait;attempts:=job.Attempts
-	if floodWait<=0{status,delay=profileUpdateRetry(job.Attempts);attempts++}
-	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		seconds:=int64(delay/time.Second);if delay%time.Second!=0{seconds++};if seconds<1{seconds=1}
-		if floodWait>0 {
-			if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
-		}
-		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status=$3,attempts=$4,lease_until=NULL,next_run_at=NOW()+($5 * INTERVAL '1 second'),last_error=$6,updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$7`,job.TenantID,job.ID,status,attempts,seconds,message,job.LeaseUntil)
-		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
-	})
+    message:="profile update failed";if cause!=nil{message=cause.Error()};if len(message)>1000{message=message[:1000]}
+    status:="pending";delay:=floodWait;attempts:=job.Attempts
+    if floodWait<=0{status,delay=profileUpdateRetry(job.Attempts);attempts++}
+    return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        seconds:=int64(delay/time.Second);if delay%time.Second!=0{seconds++};if seconds<1{seconds=1}
+        res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status=$3,attempts=$4,lease_until=NULL,next_run_at=NOW()+($5 * INTERVAL '1 second'),last_error=$6,updated_at=NOW()
+            WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$7`,job.TenantID,job.ID,status,attempts,seconds,message,job.LeaseUntil)
+        if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")}
+        if floodWait>0 {
+            if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
+        }
+        return nil
+    })
 }
 
 func (s *Service) RetryProfileUpdate(ctx context.Context,tenantID,id string)error {
