@@ -128,11 +128,10 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
 }
 
 func lockJoinTaskParent(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
-    var exists bool
-    err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenant_join_tasks WHERE tenant_id=$1 AND id=$2 FOR UPDATE)`, tenantID, taskID).Scan(&exists)
-    if err != nil { return err }
-    if !exists { return errors.New("join task not found") }
-    return nil
+    var lockedID string
+    err := tx.QueryRowContext(ctx, `SELECT id::text FROM tenant_join_tasks WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, taskID).Scan(&lockedID)
+    if errors.Is(err, sql.ErrNoRows) { return errors.New("join task not found") }
+    return err
 }
 
 func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string)error {
