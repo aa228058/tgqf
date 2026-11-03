@@ -346,8 +346,10 @@ func (m *Manager) UpdateProfilePhoto(ctx context.Context, accountID string, phot
 	m.mu.RUnlock()
 	if client==nil || !client.IsConnected() { return errors.New("Telegram account is not connected") }
 	if fileName=="" { fileName="profile.jpg" }
-	input:=telegram.Reader(bytes.NewReader(photo),fileName,int64(len(photo)))
-	if err:=client.SetProfilePhoto(ctx,input);err!=nil{return fmt.Errorf("update Telegram profile photo: %w",err)}
+	uploaded,err:=client.UploadFile(ctx,bytes.NewReader(photo),fileName,int64(len(photo)),nil)
+	if err!=nil{return fmt.Errorf("upload Telegram profile photo: %w",err)}
+	if uploaded==nil || uploaded.File==nil { return errors.New("Telegram avatar upload returned no input file") }
+	if err:=client.SetProfilePhoto(ctx,uploaded.File);err!=nil{return fmt.Errorf("update Telegram profile photo: %w",err)}
 	return nil
 }
 
