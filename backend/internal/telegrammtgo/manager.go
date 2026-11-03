@@ -319,6 +319,24 @@ func (m *Manager) ManagedAccountIDs() []string {
 	return ids
 }
 
+
+ // JoinChat performs one explicitly authorized public username or public link join.
+ // Private invite hashes are intentionally not accepted by this worker path.
+ func (m *Manager) JoinChat(ctx context.Context,accountID,link string)(int64,error) {
+     link=strings.TrimSpace(link)
+     if link==""||strings.Contains(link,"+")||strings.Contains(link,"joinchat/") {
+         return 0,errors.New("only public Telegram usernames and links are supported by this join executor")
+     }
+     m.mu.RLock()
+     client:=m.clients[accountID]
+     m.mu.RUnlock()
+     if client==nil||!client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
+     chat,err:=client.JoinChat(ctx,link)
+     if err!=nil{return 0,fmt.Errorf("join Telegram chat: %w",err)}
+     if chat==nil||chat.ID==0{return 0,errors.New("Telegram returned no joined chat identity")}
+     return chat.ID,nil
+ }
+
 func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
 	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {
 		return 0,errors.New("invalid Telegram reply message id")
