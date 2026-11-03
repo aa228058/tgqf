@@ -115,7 +115,25 @@ func main() {
 		}
 	}()
 	logger.Info("Telegram account worker started", "worker_id", workerID, "hostname", hostname)
-	lastHeartbeat := time.Now()
+	// Heartbeats run independently from queue processing. Telegram RPCs can
+	// legitimately take longer than one heartbeat interval; they must not make
+	// a live worker look stale merely because the main loop is busy.
+	go func() {
+		heartbeatTicker := time.NewTicker(10 * time.Second)
+		defer heartbeatTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+				heartbeatCtx, cancelHeartbeat := context.WithTimeout(ctx, 3*time.Second)
+				if err := recordWorkerHeartbeat(heartbeatCtx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
+					logger.Error("persist worker heartbeat", "worker_id", workerID, "error", err)
+				}
+				cancelHeartbeat()
+			}
+		}
+	}()
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
@@ -123,14 +141,6 @@ func main() {
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
-		if time.Since(lastHeartbeat) >= 10*time.Second {
-			heartbeatCtx, cancelHeartbeat := context.WithTimeout(ctx, 3*time.Second)
-			if err := recordWorkerHeartbeat(heartbeatCtx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
-				logger.Error("persist worker heartbeat", "worker_id", workerID, "error", err)
-			}
-			cancelHeartbeat()
-			lastHeartbeat = time.Now()
-		}
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
