@@ -47,3 +47,12 @@ func TestScheduleReconnect(t *testing.T) {
 		t.Fatalf("retry deadline was not in the future")
 	}
 }
+
+func TestGenerateRandomTelegramUsername(t *testing.T) {
+	for i:=0;i<100;i++ {
+		username,err:=generateRandomTelegramUsername()
+		if err!=nil { t.Fatal(err) }
+		if len(username)!=12 || username[:2]!="tg" { t.Fatalf("invalid generated username %q",username) }
+		for _,ch:=range username { if !((ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')) { t.Fatalf("invalid character in username %q",username) } }
+	}
+}
