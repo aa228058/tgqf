@@ -15,7 +15,7 @@ import (
 
     "github.com/aa228058/tgqf/backend/internal/auth"
     tgconv "github.com/mtgo-labs/session-converter"
-    _ "github.com/mtgo-labs/storage/sqlite"
+    _ "modernc.org/sqlite"
 )
 
 const maxSessionImportFileBytes = 1 << 20
