@@ -30,7 +30,9 @@ func checkProxyTunnel(ctx context.Context, protocol, host string, port int, user
 		return fmt.Errorf("proxy TCP connection failed: %w", err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+	deadline:=time.Now().Add(8*time.Second)
+	if contextDeadline,ok:=ctx.Deadline();ok && contextDeadline.Before(deadline){deadline=contextDeadline}
+	_ = conn.SetDeadline(deadline)
 
 	var rw io.ReadWriter = conn
 	if protocol == "https" {
