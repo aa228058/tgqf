@@ -22,6 +22,7 @@ type Handler struct{service *Service;auth *auth.Handler;telegram *telegrammtgo.M
 type createRequest struct{Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Session string `json:"session"`;Proxy json.RawMessage `json:"proxy"`}
 type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
+type bulkGroupRequest struct{AccountIDs []string `json:"account_ids"`;GroupName string `json:"group_name"`}
 type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
@@ -40,6 +41,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelProfileUpdate)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
+ m.Handle("PATCH /api/v1/accounts/group",h.auth.Authenticated(http.HandlerFunc(h.setGroupBatch)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
  m.Handle("GET /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.listProxies)))
  m.Handle("POST /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.createProxy)))
@@ -243,4 +245,13 @@ func (h *Handler) saveUsernameGenerationSettings(w http.ResponseWriter,r *http.R
 	saved,err:=h.service.SaveUsernameGenerationSettings(r.Context(),user.TenantID,settings)
 	if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
 	writeJSON(w,http.StatusOK,map[string]any{"settings":saved})
+}
+
+func (h *Handler) setGroupBatch(w http.ResponseWriter, r *http.Request) {
+	var input bulkGroupRequest
+	if !decode(w, r, &input) { writeError(w, http.StatusBadRequest, "invalid request body"); return }
+	user := auth.UserFromContext(r.Context())
+	count, err := h.service.SetGroupBatch(r.Context(), user.TenantID, input.AccountIDs, input.GroupName)
+	if err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
+	writeJSON(w, http.StatusOK, map[string]any{"updated": count, "group_name": strings.TrimSpace(input.GroupName)})
 }
