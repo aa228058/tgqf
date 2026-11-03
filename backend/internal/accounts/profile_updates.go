@@ -261,3 +261,7 @@ func (s *Service) PauseInactiveProfileUpdateJobs(ctx context.Context) error {
  for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND j.status IN ('pending','processing') AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
  return nil
 }
+
+func NormalizeUsernameGenerationSettingsForWorker(settings UsernameGenerationSettings)(UsernameGenerationSettings,error) {
+	return normalizeUsernameGenerationSettings(settings)
+}
