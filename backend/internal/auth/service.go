@@ -77,9 +77,14 @@ func (s *Service) ListWorkerInstances(ctx context.Context, limit int) ([]WorkerI
 	for rows.Next() {
 		var item WorkerInstance
 		if err := rows.Scan(&item.InstanceID,&item.Hostname,&item.ProcessID,&item.Status,&item.HeartbeatAt,&item.StartedAt,&item.StoppedAt); err != nil { return nil, err }
-		item.Stale = item.Status == "running" && now.Sub(item.HeartbeatAt) > 45*time.Second
+		item.Stale = workerHeartbeatIsStale(item.Status, item.HeartbeatAt, now)
 		if item.Stale { item.Status = "stale" }
 		items = append(items,item)
 	}
 	return items, rows.Err()
+}
+
+
+func workerHeartbeatIsStale(status string, heartbeatAt, now time.Time) bool {
+	return status == "running" && now.Sub(heartbeatAt) > 45*time.Second
 }
