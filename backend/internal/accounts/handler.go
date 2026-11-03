@@ -23,6 +23,7 @@ type createRequest struct{Phone string `json:"phone"`;DisplayName string `json:"
 type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
 type bulkGroupRequest struct{AccountIDs []string `json:"account_ids"`;GroupName string `json:"group_name"`}
+type bulkRuntimeActionRequest struct{AccountIDs []string `json:"account_ids"`;Action string `json:"action"`}
 type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
 type phoneStartRequest struct{Phone string `json:"phone"`;GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
 type phoneCodeRequest struct{Code string `json:"code"`}
@@ -46,6 +47,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/group",h.auth.Authenticated(http.HandlerFunc(h.setGroupBatch)))
  m.Handle("PATCH /api/v1/accounts/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxyBatch)))
+ m.Handle("POST /api/v1/accounts/bulk-action",h.auth.Authenticated(http.HandlerFunc(h.bulkRuntimeAction)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
  m.Handle("GET /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.listProxies)))
  m.Handle("POST /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.createProxy)))
@@ -304,4 +306,19 @@ func (h *Handler) verifyPhonePassword(w http.ResponseWriter,r *http.Request) {
 	_=h.telegram.Stop(id)
 	if err!=nil{writeError(w,409,"Telegram authorization succeeded but account details could not be saved");return}
 	writeJSON(w,200,map[string]any{"status":"authorized","account":account,"telegram_user":map[string]any{"user_id":result.UserID,"username":result.Username,"first_name":result.FirstName}})
+}
+
+
+func (h *Handler) bulkRuntimeAction(w http.ResponseWriter, r *http.Request) {
+	var input bulkRuntimeActionRequest
+	if !decode(w, r, &input) { writeError(w, http.StatusBadRequest, "invalid request body"); return }
+	user := auth.UserFromContext(r.Context())
+	changed, err := h.service.ApplyBulkRuntimeAction(r.Context(), user.TenantID, input.AccountIDs, input.Action)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") { status = http.StatusNotFound }
+		if strings.Contains(err.Error(), "cannot be") || strings.Contains(err.Error(), "no saved") { status = http.StatusConflict }
+		writeError(w, status, err.Error()); return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"action": strings.ToLower(strings.TrimSpace(input.Action)), "requested": len(input.AccountIDs), "changed": changed, "status": map[string]string{"disconnect":"disconnected", "reconnect":"authorized"}[strings.ToLower(strings.TrimSpace(input.Action))]})
 }
