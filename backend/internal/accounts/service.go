@@ -44,6 +44,31 @@ func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withT
 func(s *Service)SetGroup(ctx context.Context,tenantID,id,group string)error{group=strings.TrimSpace(group);if len(group)>80{return errors.New("group name must be at most 80 characters")};return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,id,group);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func withTenantTx(ctx context.Context,db *sql.DB,tenantID string,fn func(*sql.Tx)error)error{if tenantID==""{return errors.New("tenant scope is required")};tx,err:=db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback();if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return err};if err=fn(tx);err!=nil{return err};return tx.Commit()}
 
+
+func insertDeviceProfileIfIncomplete(ctx context.Context,tx *sql.Tx,tenantID,accountID string)error{
+	profile:=device.IOS.Generate(accountID)
+	profile.LangCode=envValue("DEFAULT_LANG_CODE",profile.LangCode)
+	profile.SystemLangCode=envValue("DEFAULT_SYSTEM_LANG_CODE",profile.SystemLangCode)
+	profile.LangPack=envValue("DEFAULT_LANG_PACK",profile.LangPack)
+	profile.AppVersion=envValue("TELEGRAM_APP_VERSION",profile.AppVersion)
+	if profile.DeviceModel==""||profile.SystemVersion==""||profile.AppVersion==""{return errors.New("device-manager returned an incomplete iOS profile")}
+	_,err:=tx.ExecContext(ctx,`INSERT INTO telegram_device_profiles(tenant_id,telegram_account_id,platform,device_model,system_version,app_version,lang_code,system_lang_code,lang_pack,generation_seed,package_id)
+		VALUES($1,$2,'ios',$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT(telegram_account_id) DO UPDATE SET
+		 device_model=CASE WHEN telegram_device_profiles.device_model='' THEN EXCLUDED.device_model ELSE telegram_device_profiles.device_model END,
+		 system_version=CASE WHEN telegram_device_profiles.system_version='' THEN EXCLUDED.system_version ELSE telegram_device_profiles.system_version END,
+		 app_version=CASE WHEN telegram_device_profiles.app_version='' THEN EXCLUDED.app_version ELSE telegram_device_profiles.app_version END,
+		 lang_code=CASE WHEN telegram_device_profiles.lang_code='' THEN EXCLUDED.lang_code ELSE telegram_device_profiles.lang_code END,
+		 system_lang_code=CASE WHEN telegram_device_profiles.system_lang_code='' THEN EXCLUDED.system_lang_code ELSE telegram_device_profiles.system_lang_code END,
+		 lang_pack=CASE WHEN telegram_device_profiles.lang_pack='' THEN EXCLUDED.lang_pack ELSE telegram_device_profiles.lang_pack END,
+		 package_id=CASE WHEN telegram_device_profiles.package_id='' THEN EXCLUDED.package_id ELSE telegram_device_profiles.package_id END,
+		 updated_at=NOW()
+		 WHERE telegram_device_profiles.tenant_id=EXCLUDED.tenant_id
+		 AND (telegram_device_profiles.device_model='' OR telegram_device_profiles.system_version='' OR telegram_device_profiles.app_version='')`,
+		tenantID,accountID,profile.DeviceModel,profile.SystemVersion,profile.AppVersion,profile.LangCode,profile.SystemLangCode,profile.LangPack,accountID,profile.PackageID)
+	return err
+}
+
 func insertDeviceProfile(ctx context.Context,tx *sql.Tx,tenantID,accountID string)error{
  profile:=device.IOS.Generate(accountID)
  profile.LangCode=envValue("DEFAULT_LANG_CODE",profile.LangCode)
@@ -82,7 +107,22 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 	var out []RuntimeAccount
 	for _, tenantID := range tenantIDs {
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-			accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
+		// Backfill legacy accounts from the same stable device-manager generator.
+		// Only incomplete/missing rows are repaired; complete saved identities stay unchanged.
+		missingRows, err := tx.QueryContext(ctx, `SELECT a.id::text
+			FROM telegram_accounts a
+			LEFT JOIN telegram_device_profiles dp ON dp.tenant_id=a.tenant_id AND dp.telegram_account_id=a.id
+			WHERE a.tenant_id=$1 AND a.status IN ('pending','authorized','error')
+			AND a.session_ciphertext IS NOT NULL
+			AND (dp.telegram_account_id IS NULL OR dp.device_model='' OR dp.system_version='' OR dp.app_version='')`, tenantID)
+		if err != nil { return err }
+		var repairIDs []string
+		for missingRows.Next() { var id string; if err:=missingRows.Scan(&id);err!=nil{missingRows.Close();return err};repairIDs=append(repairIDs,id) }
+		if err:=missingRows.Err();err!=nil{missingRows.Close();return err};missingRows.Close()
+		for _, accountID := range repairIDs {
+			if err:=insertDeviceProfileIfIncomplete(ctx,tx,tenantID,accountID);err!=nil{return fmt.Errorf("repair device profile for account %s: %w",accountID,err)}
+		}
+		accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
 				p.protocol,p.host,p.port,p.username,p.password_ciphertext,
                 COALESCE(dp.device_model,''),COALESCE(dp.system_version,''),COALESCE(dp.app_version,''),
                 COALESCE(dp.lang_code,''),COALESCE(dp.system_lang_code,''),COALESCE(dp.lang_pack,''),COALESCE(dp.package_id,''),
