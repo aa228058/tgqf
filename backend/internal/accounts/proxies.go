@@ -20,6 +20,7 @@ type Proxy struct {
 	Port int `json:"port"`
 	Username string `json:"username"`
 	HasPassword bool `json:"has_password"`
+	IsDefault bool `json:"is_default"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -88,9 +89,9 @@ func (s *Service) CreateProxy(ctx context.Context, tenantID string, input ProxyI
 	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `INSERT INTO tenant_proxies(tenant_id,name,protocol,host,port,username,password_ciphertext)
 			VALUES($1,$2,$3,$4,$5,$6,$7)
-			RETURNING id::text,name,protocol,host,port,username,password_ciphertext IS NOT NULL,created_at,updated_at`,
+			RETURNING id::text,name,protocol,host,port,username,password_ciphertext IS NOT NULL,is_default,created_at,updated_at`,
 			tenantID,input.Name,input.Protocol,input.Host,input.Port,input.Username,nullBytes(passwordCipher)).
-			Scan(&result.ID,&result.Name,&result.Protocol,&result.Host,&result.Port,&result.Username,&result.HasPassword,&result.CreatedAt,&result.UpdatedAt)
+			Scan(&result.ID,&result.Name,&result.Protocol,&result.Host,&result.Port,&result.Username,&result.HasPassword,&result.IsDefault,&result.CreatedAt,&result.UpdatedAt)
 	})
 	if err != nil { return Proxy{}, fmt.Errorf("create proxy: %w", err) }
 	return result,nil
@@ -99,9 +100,9 @@ func (s *Service) CreateProxy(ctx context.Context, tenantID string, input ProxyI
 func (s *Service) ListProxies(ctx context.Context, tenantID string) ([]Proxy,error) {
 	out:=[]Proxy{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,protocol,host,port,username,password_ciphertext IS NOT NULL,created_at,updated_at FROM tenant_proxies WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID)
+		rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,protocol,host,port,username,password_ciphertext IS NOT NULL,is_default,created_at,updated_at FROM tenant_proxies WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var p Proxy;if err:=rows.Scan(&p.ID,&p.Name,&p.Protocol,&p.Host,&p.Port,&p.Username,&p.HasPassword,&p.CreatedAt,&p.UpdatedAt);err!=nil{return err};out=append(out,p)}
+		for rows.Next(){var p Proxy;if err:=rows.Scan(&p.ID,&p.Name,&p.Protocol,&p.Host,&p.Port,&p.Username,&p.HasPassword,&p.IsDefault,&p.CreatedAt,&p.UpdatedAt);err!=nil{return err};out=append(out,p)}
 		return rows.Err()
 	})
 	return out,err
@@ -178,4 +179,19 @@ func (s *Service) UpdateProxy(ctx context.Context,tenantID,proxyID string,input 
 	})
 	if err!=nil{return Proxy{},err}
 	return result,nil
+}
+
+
+func (s *Service) SetDefaultProxy(ctx context.Context,tenantID,proxyID string)error{
+	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		if proxyID!="" {
+			res,err:=tx.ExecContext(ctx,`UPDATE tenant_proxies SET is_default=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND is_default=TRUE`,tenantID)
+			if err!=nil{return err};_ = res
+			res,err=tx.ExecContext(ctx,`UPDATE tenant_proxies SET is_default=TRUE,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,proxyID)
+			if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("proxy not found")}
+		}else{
+			if _,err:=tx.ExecContext(ctx,`UPDATE tenant_proxies SET is_default=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND is_default=TRUE`,tenantID);err!=nil{return err}
+		}
+		return nil
+	})
 }
