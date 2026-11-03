@@ -18,9 +18,9 @@
 - 租户级聊天/群组观察数据。
 
 关键阻塞和规格冲突：
-1. **历史消息回填正在运行**：Worker 每 5 分钟对已知聊天调用 GetChatHistory 并写入消息表，直接违反 V1 “只监听新消息、不扫描或回溯历史”。
-2. **设备资料虽然落库，但 Worker 启动 MTGo client 时重新按 account ID 生成 profile，没有读取已持久化 profile**；这会忽略数据库中实际保存的资料/配置，不能满足“使用持久化 profile”的严格要求。
-3. **群组目录仍是 tenant_message_chats 租户级表**，不是全系统共享公共群组总库；也没有全局群组实体、来源归并和租户贡献关系。
+1. **历史消息回填已移除**：Worker 不再定时调用 GetChatHistory；保留实时新消息事件。P0-04 的实时采集边界测试仍需补齐。
+2. **设备资料持久化接入已完成核心实现**：Worker 启动/重连和 QR 登录均读取数据库 profile 并应用到 MTGo；旧账号缺失资料会幂等补齐，仍需真实账号重启/重连验收。
+3. **全局公共群组总库第一阶段已实现**：public_groups 全局实体、来源与租户贡献统计、实时入库和共享目录查询已接入；资料纠错审核及人工合并审计也已实现。
 4. **消息实时接口是 SSE，不是 WebSocket**；当前有收件箱/文字回复，不等于通用任务中心。
 5. 未发现完整关键词规则引擎、命中后的私聊/群组自动动作编排、媒体动作、原生联系人卡片、真实语音通话链路。
 6. 自动加群已支持公开用户名/公开链接的 MTProto 执行，私密邀请链接、审批回调仍未完成；Session 文件上传导入已支持 JSON/CSV/TXT（最多 20 条），批量手机号登录仍缺失；姓名/简介批量资料修改已有后端任务执行第一阶段，头像上传尚未实现。
@@ -35,7 +35,7 @@
 | MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | 手机验证码/2FA、批量登录等缺失；Session 文件导入支持 JSON/CSV/TXT，传统 Telethon SQLite .session 文件不兼容 MTGo 格式 |
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
-| device-manager | 创建账号时写入 telegram_device_profiles | 部分实现 | Manager.Start/StartQR 仍直接 DeviceProfile(accountID) 重新生成，未读取数据库 profile |
+| device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
 | 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页、CSV 导出、批量 Session 导入 | 第一阶段已实现 | 标签、批量选择、断开/重连 API 未形成完整集合；批量导入当前接收最多 20 条 JSON 记录，非文件上传 |
 | 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
 | 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile、账号资料任务 API 与 Worker | 第一阶段已实现，待 CI/在线验收 | 支持每批最多 20 个账号分别设置姓名/简介，逐账号状态、错误、重试、暂停/人工恢复；头像上传尚未实现 |
