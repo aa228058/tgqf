@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestNegotiateSOCKS5WithUsernamePassword(t *testing.T) {
@@ -58,6 +59,8 @@ func TestNegotiateHTTPConnectSendsBasicCredentials(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	_ = server.SetDeadline(time.Now().Add(3 * time.Second))
 	done := make(chan error, 1)
 	go func() {
 		req, err := http.ReadRequest(bufio.NewReader(server))
@@ -80,7 +83,7 @@ func TestNegotiateHTTPConnectLeavesTunnelUsable(t *testing.T) {
 		req, err := http.ReadRequest(bufio.NewReader(server))
 		if err != nil { done <- err; return }
 		if req.Method != http.MethodConnect { done <- fmt.Errorf("unexpected method %s", req.Method); return }
-		if _, err := io.WriteString(server, "HTTP/1.1 200 Connection Established\\r\\n\\r\\n"); err != nil { done <- err; return }
+		if _, err := io.WriteString(server, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil { done <- err; return }
 		payload := make([]byte, 4)
 		if _, err := io.ReadFull(server, payload); err != nil { done <- err; return }
 		if string(payload) != "ping" { done <- fmt.Errorf("unexpected tunnel payload %q", payload); return }
