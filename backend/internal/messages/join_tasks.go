@@ -207,6 +207,7 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
 func (s *Service) RetryJoinTask(ctx context.Context, tenantID, id string) error {
 	if !validUUID(id) { return errors.New("join task not found") }
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		if err := lockJoinTaskParent(ctx, tx, tenantID, id); err != nil { return err }
 		result, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts ja
 			SET status='queued', attempts=0, available_at=NOW(), lease_until=NULL,
 				last_error='', updated_at=NOW()
