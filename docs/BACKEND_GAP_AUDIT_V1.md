@@ -292,3 +292,13 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] migration `0035_profile_update_cancellation.sql` 放开 cancelled 状态；列表状态筛选可查询 cancelled。
 - [ ] 当前提交的 Go test、vet、API build 正在运行；需以最新 head SHA 的最终 CI 结果为准。
 - [ ] 尚未在真实数据库验证迁移、跨队列并发锁竞争和多 Worker 场景；需后续集成测试。
+
+
+## 20. 2026-11-04 Worker 心跳与异常退出监控（增量）
+
+- [x] 新增 migration `0038_worker_heartbeat.sql`，持久化 worker instance、主机名、PID、启动时间、最近心跳和停止时间。
+- [x] Worker 启动时登记实例，每 10 秒更新心跳；收到正常退出信号后标记 stopped。
+- [x] 新增超级管理员接口 `GET /api/v1/admin/workers`，展示 Worker 实例、最近心跳及运行状态。
+- [x] 心跳超过 45 秒未更新的 running 实例标记为 stale；正常 stopped 实例不误报 stale。
+- [x] 增加 stale 判定单元测试。
+- [ ] 需在最新 HEAD 统一执行 Go test、vet、API/Worker build，并验证 migration、异常杀进程和多实例部署；当前未声称运行验收通过。
