@@ -1,6 +1,6 @@
 # Go Backend
 
-TG账号管理系统 API。需要 Go 1.23+、PostgreSQL 和 Redis。设置 DATABASE_URL、REDIS_URL 后，在 backend 目录执行 go mod tidy，再运行 go run ./cmd/api。
+TG账号管理系统 API。需要 Go 1.23+、PostgreSQL 和 Redis。复制仓库根目录 `.env.example` 为 `.env`，填写数据库、Redis、管理员初始化和加密密钥等配置；不要提交 `.env`。本地运行前执行 `set -a; source ./.env; set +a`，再进入 backend 目录执行 `go mod tidy` 和 `go run ./cmd/api`。部署时应通过平台 Secret 或容器 env_file 注入同一组变量。
 
 ## 超级管理员初始化
 首次启动前设置 SUPER_ADMIN_USERNAME 和至少 16 字节的 SUPER_ADMIN_PASSWORD。数据库中没有超级管理员时，服务会创建一个；已有超级管理员时不会覆盖。初始化后建议从部署环境移除这两个环境变量。
