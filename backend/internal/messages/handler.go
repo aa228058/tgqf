@@ -36,6 +36,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
 	mux.Handle("GET /api/v1/tasks/summary",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskSummary)))
 	mux.Handle("POST /api/v1/tasks/{type}/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskAction)))
+	mux.Handle("POST /api/v1/tasks/bulk/{type}/{action}",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskBulkAction)))
 	h.groupCorrectionRoutes(mux)
 	mux.Handle("GET /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
 	mux.Handle("POST /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
@@ -64,6 +65,40 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
 	mux.Handle("POST /api/v1/message-replies/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeReply)))
 }
+
+func (h *Handler) unifiedTaskBulkAction(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	taskType, action := r.PathValue("type"), r.PathValue("action")
+	var body struct { IDs []string `json:"ids"` }
+	if err := decodeMessageJSON(w, r, 1<<20, &body); err != nil {
+		messageJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bulk task body"})
+		return
+	}
+	ids, err := normalizeBulkTaskIDs(taskType, action, body.IDs)
+	if err != nil {
+		messageJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	results := make([]BulkTaskActionResult, 0, len(ids))
+	succeeded := 0
+	for _, id := range ids {
+		result := BulkTaskActionResult{ID: id}
+		if err := h.service.ChangeUnifiedTaskStatus(r.Context(), user.TenantID, taskType, id, action); err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Success = true
+			succeeded++
+		}
+		results = append(results, result)
+	}
+	status := http.StatusOK
+	if succeeded != len(ids) { status = http.StatusMultiStatus }
+	messageJSON(w, status, map[string]any{
+		"type": taskType, "action": action, "total": len(ids),
+		"succeeded": succeeded, "failed": len(ids)-succeeded, "results": results,
+	})
+}
+
 func (h *Handler) unifiedTaskSummary(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	summary, err := h.service.GetUnifiedTaskSummary(r.Context(), user.TenantID)
