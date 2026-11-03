@@ -31,7 +31,7 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 		case "cancel":
 			return s.CancelJoinTask(ctx, tenantID, parentID)
 		case "retry":
-			return errors.New("retry is managed at the join-task level")
+			return s.RetryJoinTask(ctx, tenantID, parentID)
 		}
 	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
