@@ -6,6 +6,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/mtgo-labs/mtgo v0.22.0
+	github.com/gotd/td v0.163.0
 	github.com/mtgo-labs/device-manager v0.3.0
 	golang.org/x/crypto v0.57.0
 )
