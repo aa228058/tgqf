@@ -40,6 +40,32 @@ func(s *Service)List(ctx context.Context,tenantID string)([]Account,error){
  err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
  return out,err
 }
+
+type AccountListOptions struct {
+	Query string
+	GroupName string
+	Status string
+	Limit int
+	Offset int
+}
+
+func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListOptions)([]Account,int,error){
+	opts.Query=strings.TrimSpace(opts.Query);opts.GroupName=strings.TrimSpace(opts.GroupName);opts.Status=strings.ToLower(strings.TrimSpace(opts.Status))
+	if len(opts.Query)>120||len(opts.GroupName)>80{return nil,0,errors.New("invalid account filter")}
+	switch opts.Status {case "","pending","authorized","error","disconnected":default:return nil,0,errors.New("invalid account status filter")}
+	if opts.Limit<1||opts.Limit>100{opts.Limit=50};if opts.Offset<0{opts.Offset=0}
+	out:=[]Account{};total:=0
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		filter:="tenant_id=$1 AND ($2='' OR phone ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') AND ($3='' OR group_name=$3) AND ($4='' OR status=$4)"
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM telegram_accounts WHERE "+filter,tenantID,opts.Query,opts.GroupName,opts.Status).Scan(&total);err!=nil{return err}
+		rows,err:=tx.QueryContext(ctx,"SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE "+filter+" ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6",tenantID,opts.Query,opts.GroupName,opts.Status,opts.Limit,opts.Offset)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)}
+		return rows.Err()
+	})
+	return out,total,err
+}
+
 func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,tenantID,id);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func(s *Service)SetGroup(ctx context.Context,tenantID,id,group string)error{group=strings.TrimSpace(group);if len(group)>80{return errors.New("group name must be at most 80 characters")};return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,id,group);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func withTenantTx(ctx context.Context,db *sql.DB,tenantID string,fn func(*sql.Tx)error)error{if tenantID==""{return errors.New("tenant scope is required")};tx,err:=db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback();if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return err};if err=fn(tx);err!=nil{return err};return tx.Commit()}
