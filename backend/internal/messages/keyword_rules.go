@@ -104,6 +104,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.SenderUsernames,err=normalizeFilters(rule.SenderUsernames);if err!=nil{return rule,err}
     rule.SenderNames,err=normalizeFilters(rule.SenderNames);if err!=nil{return rule,err}
     seenSender:=map[int64]bool{};for _,id:=range rule.SenderIDs{if id==0||seenSender[id]{return rule,fmt.Errorf("%w: invalid or duplicate sender id",ErrInvalidKeywordRule)};seenSender[id]=true}
+    if len(rule.KeywordGroups)>0 && len(rule.Keywords)>0 {return rule,fmt.Errorf("%w: use keywords or keyword_groups, not both",ErrInvalidKeywordRule)}
     if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 && len(rule.MediaTypes)==0 {return rule,fmt.Errorf("%w: provide keywords, keyword groups, or at least one media type",ErrInvalidKeywordRule)}
     return rule,nil
 }
@@ -123,7 +124,7 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if !rule.CaseSensitive {text=strings.ToLower(text)}
     if textPresent {for _,term:=range excluded {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){return nil,false}}}
     matched:=[]string{}
-    if len(rule.Keywords)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
+    if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
     if !textPresent {return nil,false}
     if len(rule.KeywordGroups)>0 {
         groupMatches:=make([]bool,0,len(rule.KeywordGroups))
