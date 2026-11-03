@@ -41,7 +41,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.Name = strings.TrimSpace(rule.Name)
     rule.MatchMode = strings.ToLower(strings.TrimSpace(rule.MatchMode))
     if len(rule.Name)==0 || len(rule.Name)>80 { return rule, fmt.Errorf("%w: name must be 1-80 characters",ErrInvalidKeywordRule) }
-    if rule.MatchMode!="any" && rule.MatchMode!="all" && rule.MatchMode!="regex" { return rule, fmt.Errorf("%w: match_mode must be any, all, or regex",ErrInvalidKeywordRule) }
+    if rule.MatchMode!="any" && rule.MatchMode!="all" && rule.MatchMode!="exact" && rule.MatchMode!="regex" { return rule, fmt.Errorf("%w: match_mode must be any, all, exact, or regex",ErrInvalidKeywordRule) }
     if len(rule.Keywords)==0 || len(rule.Keywords)>20 || len(rule.ExcludeTerms)>20 { return rule, fmt.Errorf("%w: provide 1-20 keywords and at most 20 exclude terms",ErrInvalidKeywordRule) }
     normalizeTerms:=func(items []string, allowRegex bool)([]string,error){
         out:=make([]string,0,len(items));seen:=map[string]bool{}
@@ -78,6 +78,9 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     switch rule.MatchMode {
     case "any":
         for _,term:=range terms {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){matched=append(matched,term)}}
+        return matched,len(matched)>0
+    case "exact":
+        for _,term:=range terms {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if text==needle{matched=append(matched,term)}}
         return matched,len(matched)>0
     case "all":
         for _,term:=range terms {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if !strings.Contains(text,needle){return nil,false};matched=append(matched,term)}
