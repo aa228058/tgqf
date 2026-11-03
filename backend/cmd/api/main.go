@@ -23,7 +23,7 @@ func main(){
  cfg,err:=config.Load();if err!=nil{logger.Error("load configuration","error",err);os.Exit(1)}
  rootCtx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
  var store *storage.Store;var authService *auth.Service;var accountService *accounts.Service;var messageService *messages.Service
- if cfg.DatabaseURL!=""{store,err=storage.Open(rootCtx,cfg.DatabaseURL,cfg.RedisURL);if err!=nil{logger.Error("initialize storage","error",err);os.Exit(1)};defer store.Close();authService=auth.New(store.DB);accountService=accounts.New(store.DB);messageService=messages.New(store.DB)
+ if cfg.DatabaseURL!=""{store,err=storage.Open(rootCtx,cfg.DatabaseURL,cfg.RedisURL);if err!=nil{logger.Error("initialize storage","error",err);os.Exit(1)};defer store.Close();authService=auth.New(store.DB);accountService=accounts.New(store.DB);messageService=messages.New(store.DB,store.Redis)
   if cfg.SuperAdminUsername!=""{if err=authService.EnsureSuperAdmin(rootCtx,cfg.SuperAdminUsername,cfg.SuperAdminPassword);err!=nil{logger.Error("initialize super admin","error",err);os.Exit(1)}}
  }else{logger.Warn("database and Redis are not configured; readiness and authentication are unavailable")}
  var telegramManager *telegrammtgo.Manager
