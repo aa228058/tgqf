@@ -200,3 +200,11 @@ func (s *Service) ResumeProfileUpdate(ctx context.Context,tenantID,id string)err
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("paused profile update job or authorized account not found")};return nil
 	})
 }
+
+func (s *Service) PauseInactiveProfileUpdateJobs(ctx context.Context) error {
+ rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants`); if err!=nil{return err}
+ var ids []string; for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return err};ids=append(ids,id)}
+ if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
+ for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND j.status IN ('pending','processing') AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
+ return nil
+}
