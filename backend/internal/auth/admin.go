@@ -49,6 +49,23 @@ func (s *Service) ListTenants(ctx context.Context,limit int)([]TenantInfo,error)
  if limit<1||limit>500{limit=100};rows,err:=s.db.QueryContext(ctx,`SELECT id::text,name,status,account_limit,expires_at,created_at FROM tenants ORDER BY created_at DESC LIMIT $1`,limit);if err!=nil{return nil,err};defer rows.Close()
  out:=[]TenantInfo{};for rows.Next(){var x TenantInfo;if err:=rows.Scan(&x.ID,&x.Name,&x.Status,&x.AccountLimit,&x.ExpiresAt,&x.CreatedAt);err!=nil{return nil,err};out=append(out,x)};return out,rows.Err()
 }
-func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{if status!="active"&&status!="disabled"{return errors.New("status must be active or disabled")};res,err:=s.db.ExecContext(ctx,`UPDATE tenants SET status=$2,updated_at=NOW() WHERE id=$1`,id,status);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")};return nil}
+func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{
+ if status!="active"&&status!="disabled"{return errors.New("status must be active or disabled")}
+ tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+ res,err:=tx.ExecContext(ctx,`UPDATE tenants SET status=$2,updated_at=NOW() WHERE id=$1`,id,status);if err!=nil{return err}
+ n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")}
+ if status=="disabled" {
+  if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant disabled; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,id);err!=nil{return err}
+ }
+ return tx.Commit()
+}
 func (s *Service) SetTenantAccountLimit(ctx context.Context,id string,limit int)error{if limit<1||limit>10000{return errors.New("account_limit must be 1-10000")};res,err:=s.db.ExecContext(ctx,`UPDATE tenants SET account_limit=$2,updated_at=NOW() WHERE id=$1`,id,limit);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")};return nil}
-func (s *Service) SetTenantExpiry(ctx context.Context,id string,expiry time.Time)error{res,err:=s.db.ExecContext(ctx,`UPDATE tenants SET expires_at=$2,status=CASE WHEN status='disabled' THEN status ELSE 'active' END,updated_at=NOW() WHERE id=$1`,id,expiry);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return fmt.Errorf("tenant not found")};return nil}
+func (s *Service) SetTenantExpiry(ctx context.Context,id string,expiry time.Time)error{
+ tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+ res,err:=tx.ExecContext(ctx,`UPDATE tenants SET expires_at=$2,status=CASE WHEN status='disabled' THEN status ELSE 'active' END,updated_at=NOW() WHERE id=$1`,id,expiry);if err!=nil{return err}
+ n,_:=res.RowsAffected();if n==0{return fmt.Errorf("tenant not found")}
+ if !expiry.After(time.Now()) {
+  if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant expired; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,id);err!=nil{return err}
+ }
+ return tx.Commit()
+}
