@@ -10,6 +10,10 @@ import (
  "strings"
  "time"
  "context"
+ "bytes"
+ "image"
+ _ "image/jpeg"
+ _ "image/png"
  "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 
  "github.com/aa228058/tgqf/backend/internal/auth"
@@ -28,6 +32,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/import-file",h.auth.Authenticated(http.HandlerFunc(h.importFile)))
  m.Handle("GET /api/v1/accounts/username-generation-settings",h.auth.Authenticated(http.HandlerFunc(h.getUsernameGenerationSettings)))
  m.Handle("PUT /api/v1/accounts/username-generation-settings",h.auth.Authenticated(http.HandlerFunc(h.saveUsernameGenerationSettings)))
+ m.Handle("POST /api/v1/accounts/profile-updates/photo",h.auth.Authenticated(http.HandlerFunc(h.createProfilePhotoUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
@@ -125,6 +130,43 @@ func (h *Handler) cancelQR(w http.ResponseWriter,r *http.Request) {
 }
 
 type profileUpdateBatchRequest struct { Accounts []ProfileUpdateInput `json:"accounts"` }
+
+
+func (h *Handler) createProfilePhotoUpdates(w http.ResponseWriter,r *http.Request) {
+	const maxPhotoBytes=5<<20
+	r.Body=http.MaxBytesReader(w,r.Body,maxPhotoBytes+(64<<10))
+	if err:=r.ParseMultipartForm(1<<20);err!=nil { writeError(w,http.StatusBadRequest,"invalid multipart upload or request exceeds size limit");return }
+	if r.MultipartForm!=nil { defer r.MultipartForm.RemoveAll() }
+	accountIDsRaw:=strings.TrimSpace(r.FormValue("account_ids"))
+	var accountIDs []string
+	if accountIDsRaw=="" || json.Unmarshal([]byte(accountIDsRaw),&accountIDs)!=nil || len(accountIDs)<1 || len(accountIDs)>20 {
+		writeError(w,http.StatusBadRequest,"account_ids must be a JSON array containing 1-20 account IDs");return
+	}
+	file,header,err:=r.FormFile("photo")
+	if err!=nil { writeError(w,http.StatusBadRequest,"photo file is required");return }
+	defer file.Close()
+	if header.Size<=0 || header.Size>maxPhotoBytes { writeError(w,http.StatusBadRequest,"photo must be between 1 byte and 5 MiB");return }
+	data,err:=io.ReadAll(io.LimitReader(file,maxPhotoBytes+1))
+	if err!=nil || len(data)==0 || len(data)>maxPhotoBytes { writeError(w,http.StatusBadRequest,"invalid photo or photo exceeds 5 MiB");return }
+	cfg,format,err:=image.DecodeConfig(bytes.NewReader(data))
+	if err!=nil || (format!="jpeg" && format!="png") { writeError(w,http.StatusBadRequest,"photo must be a valid JPEG or PNG image");return }
+	if cfg.Width<1 || cfg.Height<1 || cfg.Width>4096 || cfg.Height>4096 || int64(cfg.Width)*int64(cfg.Height)>16_000_000 {
+		writeError(w,http.StatusBadRequest,"photo dimensions must not exceed 4096x4096 or 16 megapixels");return
+	}
+	inputs:=make([]ProfileUpdateInput,0,len(accountIDs))
+	for _,id:=range accountIDs { inputs=append(inputs,ProfileUpdateInput{AccountID:id,PhotoData:data}) }
+	user:=auth.UserFromContext(r.Context())
+	jobs,err:=h.service.CreateProfileUpdateBatch(r.Context(),user.TenantID,user.ID,inputs)
+	if err!=nil {
+		status:=http.StatusBadRequest
+		if strings.Contains(err.Error(),"already active") { status=http.StatusConflict }
+		if strings.Contains(err.Error(),"inactive") { status=http.StatusForbidden }
+		writeError(w,status,err.Error());return
+	}
+	batchID:=""
+	if len(jobs)>0 { batchID=jobs[0].BatchID }
+	writeJSON(w,http.StatusAccepted,map[string]any{"batch_id":batchID,"jobs":jobs,"photo_format":format})
+}
 
 func (h *Handler) createProfileUpdates(w http.ResponseWriter,r *http.Request) {
 	var body profileUpdateBatchRequest
