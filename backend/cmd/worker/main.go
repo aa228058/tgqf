@@ -307,7 +307,7 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			}
 			if updateErr==nil && len(job.PhotoData)>0 {
 				fileName:="profile.jpg"
-				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\\x89PNG\\r\\n\\x1a\\n" { fileName="profile.png" }
+				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r\n\x1a\n" { fileName="profile.png" }
 				updateErr=manager.UpdateProfilePhoto(updateCtx,job.AccountID,job.PhotoData,fileName)
 			}
 			if updateErr==nil && job.GenerateUsername {
