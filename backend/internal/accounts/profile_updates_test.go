@@ -41,3 +41,13 @@ func TestNormalizeUsernameGenerationSettings(t *testing.T) {
 	}
 	for i,value:=range cases{if _,err:=normalizeUsernameGenerationSettings(value);err==nil{t.Errorf("case %d should be rejected",i)}}
 }
+
+func TestNormalizeProfileUpdateAllowsAvatarOnly(t *testing.T) {
+	id:="123e4567-e89b-12d3-a456-426614174000"
+	got,err:=normalizeProfileUpdate(ProfileUpdateInput{AccountID:id,PhotoData:[]byte{1,2,3}})
+	if err!=nil { t.Fatal(err) }
+	if len(got.PhotoData)!=3 { t.Fatalf("avatar payload was not preserved: %d",len(got.PhotoData)) }
+	if _,err:=normalizeProfileUpdate(ProfileUpdateInput{AccountID:id,PhotoData:make([]byte,(5<<20)+1)});err==nil {
+		t.Fatal("expected oversized avatar to be rejected")
+	}
+}
