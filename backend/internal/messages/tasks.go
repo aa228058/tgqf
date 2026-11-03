@@ -20,6 +20,10 @@ type UnifiedTask struct {
 	ScheduledAt time.Time `json:"scheduled_at"`
 	LeaseUntil *time.Time `json:"lease_until,omitempty"`
 	LastError string `json:"last_error,omitempty"`
+	CanPause bool `json:"can_pause"`
+	CanResume bool `json:"can_resume"`
+	CanRetry bool `json:"can_retry"`
+	CanCancel bool `json:"can_cancel"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -130,9 +134,32 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 				&item.LeaseUntil, &item.LastError, &item.CreatedAt, &item.UpdatedAt); err != nil {
 				return err
 			}
+			item.CanPause, item.CanResume, item.CanRetry, item.CanCancel = unifiedTaskActions(item.Type, item.Status)
 			items = append(items, item)
 		}
 		return rows.Err()
 	})
 	return items, total, err
+}
+
+
+// unifiedTaskActions mirrors the state transitions accepted by
+// ChangeUnifiedTaskStatus. It lets clients render only actions that can
+// succeed for the task's current queue state.
+func unifiedTaskActions(taskType, status string) (pause, resume, retry, cancel bool) {
+	switch taskType {
+	case "message_reply", "keyword_action":
+		return status == "pending" || status == "failed",
+			status == "paused", status == "failed",
+			status == "pending" || status == "paused" || status == "failed"
+	case "profile_update":
+		return status == "pending", status == "paused", status == "failed",
+			status == "pending" || status == "paused"
+	case "group_join":
+		return status == "queued" || status == "processing",
+			status == "paused", status == "failed",
+			status == "queued" || status == "paused" || status == "processing" || status == "request_pending"
+	default:
+		return false, false, false, false
+	}
 }
