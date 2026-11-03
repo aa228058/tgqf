@@ -13,6 +13,9 @@ func TestUnifiedTaskControlRejectsInvalidInputBeforeDatabaseAccess(t *testing.T)
 	if err := service.ChangeUnifiedTaskStatus(context.Background(), "tenant", "message_reply", "id", "execute"); err == nil {
 		t.Fatal("expected unsupported action to be rejected")
 	}
+	if err := service.ChangeUnifiedTaskStatus(context.Background(), "tenant", "group_join", "not-a-row-id", "cancel"); err == nil {
+		t.Fatal("expected malformed group-join child ID to be rejected before database access")
+	}
 }
 
 
