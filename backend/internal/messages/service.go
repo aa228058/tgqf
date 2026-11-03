@@ -171,6 +171,29 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 			is_verified=tenant_message_chats.is_verified OR EXCLUDED.is_verified,
 			last_seen_at=NOW(),updated_at=NOW()`,tenantID,in.AccountID,in.ChatID,strings.TrimSpace(in.ChatTitle),in.ChatType,strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified)
 		if err!=nil{return err}
+		if in.ChatType=="group" || in.ChatType=="channel" {
+			var groupID int64
+			err=tx.QueryRowContext(ctx,`INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,first_seen_at,last_seen_at,updated_at)
+				VALUES($1,$2,$3,$4,GREATEST($5,0),$6,NOW(),NOW(),NOW())
+				ON CONFLICT(chat_type,telegram_chat_id) DO UPDATE SET
+				 title=COALESCE(NULLIF(EXCLUDED.title,''),public_groups.title),
+				 username=COALESCE(NULLIF(EXCLUDED.username,''),public_groups.username),
+				 member_count=GREATEST(public_groups.member_count,EXCLUDED.member_count),
+				 is_verified=public_groups.is_verified OR EXCLUDED.is_verified,
+				 last_seen_at=NOW(),updated_at=NOW()
+				RETURNING id`,in.ChatID,in.ChatType,strings.TrimSpace(in.ChatTitle),strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified).Scan(&groupID)
+			if err!=nil{return err}
+			_,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count)
+				VALUES($1,$2,$3,$4,NOW(),NOW(),1)
+				ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET last_seen_at=NOW(),discovery_count=public_group_sources.discovery_count+1`,
+				groupID,tenantID,in.AccountID,in.ChatID)
+			if err!=nil{return err}
+			_,err=tx.ExecContext(ctx,`INSERT INTO tenant_group_contributions(tenant_id,group_id,first_contributed_at,last_contributed_at,contribution_count)
+				VALUES($1,$2,NOW(),NOW(),1)
+				ON CONFLICT(tenant_id,group_id) DO UPDATE SET last_contributed_at=NOW(),contribution_count=tenant_group_contributions.contribution_count+1`,
+				tenantID,groupID)
+			if err!=nil{return err}
+		}
 		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
@@ -291,17 +314,16 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 var ErrInvalidGroupLibraryQuery = errors.New("invalid group library query")
 
 type GroupLibraryItem struct {
-	AccountID string `json:"account_id"`
-	AccountName string `json:"account_name"`
 	ChatID int64 `json:"chat_id"`
 	Title string `json:"title"`
 	ChatType string `json:"chat_type"`
 	Username string `json:"username"`
 	MemberCount int `json:"member_count"`
 	IsVerified bool `json:"is_verified"`
+	SourceCount int `json:"source_count"`
+	ContributorCount int `json:"contributor_count"`
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
-
 
 func normalizeGroupLibraryFilters(chatType, query string) (string, string, error) {
 	chatType = strings.ToLower(strings.TrimSpace(chatType))
@@ -313,6 +335,8 @@ func normalizeGroupLibraryFilters(chatType, query string) (string, string, error
 	return chatType, query, nil
 }
 
+// ListGroupLibrary returns the shared system catalogue. Tenant identity is
+// retained for authorization context, but the catalogue itself is global.
 func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, query string, limit, offset int) ([]GroupLibraryItem, int, error) {
 	if limit < 1 || limit > 100 { limit = 50 }
 	if offset < 0 { offset = 0 }
@@ -321,29 +345,19 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 	items := []GroupLibraryItem{}
 	total := 0
 	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		filter := "cm.tenant_id=$1 AND cm.chat_type IN ('group','channel')"
-		args := []any{tenantID}
-		if chatType != "" { args = append(args, chatType); filter += " AND cm.chat_type=$" + strconv.Itoa(len(args)) }
-		if query != "" {
-			args = append(args, "%"+query+"%")
-			filter += " AND (cm.chat_title ILIKE $" + strconv.Itoa(len(args)) + " OR cm.username ILIKE $" + strconv.Itoa(len(args)) + ")"
-		}
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tenant_message_chats cm WHERE "+filter, args...).Scan(&total); err != nil { return err }
-		args = append(args, limit, offset)
-		limitArg, offsetArg := strconv.Itoa(len(args)-1), strconv.Itoa(len(args))
-		rows, err := tx.QueryContext(ctx, `SELECT cm.telegram_account_id::text,
-			COALESCE(NULLIF(a.display_name,''),a.phone,''),cm.chat_id,cm.chat_title,cm.chat_type,
-			cm.username,cm.member_count,cm.is_verified,cm.last_seen_at
-			FROM tenant_message_chats cm
-			JOIN telegram_accounts a ON a.tenant_id=cm.tenant_id AND a.id=cm.telegram_account_id
-			WHERE `+filter+` ORDER BY cm.last_seen_at DESC,cm.chat_title ASC,cm.telegram_account_id ASC,cm.chat_id ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg, args...)
-		if err != nil { return err }
-		defer rows.Close()
-		for rows.Next() {
-			var item GroupLibraryItem
-			if err := rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.LastSeenAt); err != nil { return err }
-			items = append(items,item)
-		}
+		filter := "1=1"
+		args := []any{}
+		if chatType != "" { args=append(args,chatType);filter+=" AND g.chat_type=$"+strconv.Itoa(len(args)) }
+		if query != "" { args=append(args,"%"+query+"%");n:=strconv.Itoa(len(args));filter+=" AND (g.title ILIKE $"+n+" OR g.username ILIKE $"+n+")" }
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+filter,args...).Scan(&total);err!=nil{return err}
+		args=append(args,limit,offset);limitArg:=strconv.Itoa(len(args)-1);offsetArg:=strconv.Itoa(len(args))
+		rows,err:=tx.QueryContext(ctx,`SELECT g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
+			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),
+			g.last_seen_at
+			FROM public_groups g WHERE `+filter+` ORDER BY g.last_seen_at DESC,g.title ASC,g.id ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg,args...)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
 	})
 	return items,total,err
