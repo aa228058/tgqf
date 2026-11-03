@@ -44,7 +44,7 @@ type Manager struct {
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
 // The manager mutex is never held while waiting for this per-entry mutex.
-type pendingPhone struct { mu sync.Mutex; client *telegram.Client; phone string; phoneCodeHash string }
+type pendingPhone struct { mu sync.Mutex; client *telegram.Client; phone string; phoneCodeHash string; expiresAt time.Time }
 type PhoneCodeResult struct { NeedsPassword bool; Timeout int; DeliveryType string }
 type PhoneAuthResult struct { UserID int64; Username string; FirstName string; Phone string; SessionString string }
 type pendingQR struct {
@@ -532,7 +532,7 @@ func (m *Manager) StartPhoneLogin(ctx context.Context, accountID, phone, proxyJS
 	client,err:=telegram.NewClient(m.cfg.APIID,m.cfg.APIHash,&cfg);if err!=nil{return PhoneCodeResult{},fmt.Errorf("create MTGo phone client: %w",err)}
 	if err=client.Connect(m.cfg.ConnectTimeout);err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("connect MTGo phone client: %w",err)}
 	sent,err:=client.SendCode(ctx,phone);if err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("request Telegram login code: %w",err)}
-	entry:=&pendingPhone{client:client,phone:phone,phoneCodeHash:sent.PhoneCodeHash}
+	entry:=&pendingPhone{client:client,phone:phone,phoneCodeHash:sent.PhoneCodeHash,expiresAt:time.Now().Add(10*time.Minute)}
 	m.mu.Lock()
 	if _,ok:=m.clients[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account client is already managed")}
 	if _,ok:=m.pendingQR[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account QR login is already pending")}
@@ -549,6 +549,7 @@ func (m *Manager) VerifyPhoneCode(ctx context.Context, accountID, code string) (
 	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
 	if entry==nil{return PhoneAuthResult{},false,errors.New("no pending phone login")}
 	entry.mu.Lock();defer entry.mu.Unlock()
+	if time.Now().After(entry.expiresAt) { m.mu.Lock(); if m.pendingPhone[accountID]==entry { delete(m.pendingPhone,accountID) }; m.mu.Unlock(); _=entry.client.Disconnect(); return PhoneAuthResult{},false,errors.New("phone login challenge expired; start login again") }
 	if strings.TrimSpace(code)==""||len(code)>32{return PhoneAuthResult{},false,errors.New("invalid verification code")}
 	user,err:=entry.client.SignIn(ctx,entry.phone,entry.phoneCodeHash,strings.TrimSpace(code))
 	if errors.Is(err,telegram.Err2FARequired){return PhoneAuthResult{},true,nil}
@@ -560,6 +561,7 @@ func (m *Manager) VerifyPhonePassword(ctx context.Context, accountID, password s
 	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
 	if entry==nil{return PhoneAuthResult{},errors.New("no pending phone login")}
 	entry.mu.Lock();defer entry.mu.Unlock()
+	if time.Now().After(entry.expiresAt) { m.mu.Lock(); if m.pendingPhone[accountID]==entry { delete(m.pendingPhone,accountID) }; m.mu.Unlock(); _=entry.client.Disconnect(); return PhoneAuthResult{},errors.New("phone login challenge expired; start login again") }
 	if strings.TrimSpace(password)==""||len(password)>1024{return PhoneAuthResult{},errors.New("invalid two-factor password")}
 	user,err:=entry.client.CheckPassword(ctx,password)
 	if err!=nil{return PhoneAuthResult{},fmt.Errorf("verify Telegram two-factor password: %w",err)}
