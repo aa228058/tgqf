@@ -12,6 +12,7 @@ func TestNormalizeKeywordRule(t *testing.T) {
     if _,err:=normalizeKeywordRule(KeywordRule{Name:"bad",MatchMode:"regex",Keywords:[]string{"("}});err==nil{t.Fatal("invalid regex accepted")}
     if _,err:=normalizeKeywordRule(KeywordRule{Name:"bad",MatchMode:"all",Keywords:[]string{strings.Repeat("x",257)}});err==nil{t.Fatal("oversized keyword accepted")}
     if _,err:=normalizeKeywordRule(KeywordRule{Name:"bad",MatchMode:"or",Keywords:[]string{"x"}});err==nil{t.Fatal("unsupported mode accepted")}
+    if _,err:=normalizeKeywordRule(KeywordRule{Name:"exact",MatchMode:"exact",Keywords:[]string{"x"}});err!=nil{t.Fatalf("exact mode rejected: %v",err)}
 }
 
 func TestKeywordRuleMatchesModesAndExclusions(t *testing.T) {
@@ -26,6 +27,26 @@ func TestKeywordRuleMatchesModesAndExclusions(t *testing.T) {
     any.ExcludeTerms=[]string{"telegram"};if _,ok:=keywordRuleMatches(any,base);ok{t.Fatal("excluded message matched")}
     if _,ok:=keywordRuleMatches(any,Incoming{ChatType:"private",Text:base.Text,IsOutgoing:true});ok{t.Fatal("outgoing message matched")}
     if _,ok:=keywordRuleMatches(any,Incoming{ChatType:"channel",Text:base.Text});ok{t.Fatal("unselected chat type matched")}
+}
+
+func TestKeywordRuleExactMatch(t *testing.T) {
+	rule := KeywordRule{MatchMode:"exact", Keywords:[]string{"hello world"}, ChatTypes:[]string{"private"}}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"HELLO WORLD"});!ok {
+		t.Fatal("exact match should honor default case-insensitive behavior")
+	}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"hello world!"});ok {
+		t.Fatal("exact match must reject text with additional characters")
+	}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"prefix hello world"});ok {
+		t.Fatal("exact match must reject partial-message matches")
+	}
+	rule.CaseSensitive=true
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"HELLO WORLD"});ok {
+		t.Fatal("case-sensitive exact match unexpectedly ignored case")
+	}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"hello world"});!ok {
+		t.Fatal("case-sensitive exact match should match identical text")
+	}
 }
 
 func TestKeywordRuleCaseSensitivity(t *testing.T) {
