@@ -105,6 +105,19 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.SenderUsernames,err=normalizeFilters(rule.SenderUsernames);if err!=nil{return rule,err}
     rule.SenderNames,err=normalizeFilters(rule.SenderNames);if err!=nil{return rule,err}
     seenSender:=map[int64]bool{};for _,id:=range rule.SenderIDs{if id==0||seenSender[id]{return rule,fmt.Errorf("%w: invalid or duplicate sender id",ErrInvalidKeywordRule)};seenSender[id]=true}
+    rule.ReplyText=strings.TrimSpace(rule.ReplyText)
+    if len([]rune(rule.ReplyText))>4096{return rule,fmt.Errorf("%w: reply text exceeds Telegram's 4096 character limit",ErrInvalidKeywordRule)}
+    if rule.ReplyTextByChatType==nil {rule.ReplyTextByChatType=map[string]string{}}
+    normalizedReplies:=make(map[string]string,len(rule.ReplyTextByChatType))
+    for chatType,reply:=range rule.ReplyTextByChatType {
+        chatType=strings.ToLower(strings.TrimSpace(chatType))
+        if chatType!="private"&&chatType!="group" {return rule,fmt.Errorf("%w: reply_text_by_chat_type supports only private and group",ErrInvalidKeywordRule)}
+        if _,exists:=normalizedReplies[chatType];exists {return rule,fmt.Errorf("%w: duplicate chat-specific reply type",ErrInvalidKeywordRule)}
+        reply=strings.TrimSpace(reply)
+        if len([]rune(reply))>4096{return rule,fmt.Errorf("%w: chat-specific reply exceeds Telegram's 4096 character limit",ErrInvalidKeywordRule)}
+        normalizedReplies[chatType]=reply
+    }
+    rule.ReplyTextByChatType=normalizedReplies
     if len(rule.KeywordGroups)>0 && len(rule.Keywords)>0 {return rule,fmt.Errorf("%w: use keywords or keyword_groups, not both",ErrInvalidKeywordRule)}
     if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 && len(rule.MediaTypes)==0 {return rule,fmt.Errorf("%w: provide keywords, keyword groups, or at least one media type",ErrInvalidKeywordRule)}
     return rule,nil
