@@ -34,6 +34,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
+	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
@@ -141,4 +142,16 @@ func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
    flusher.Flush()
   }
  }
+}
+
+func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, total, err := h.service.ListGroupLibrary(r.Context(), user.TenantID, r.URL.Query().Get("chat_type"), r.URL.Query().Get("q"), limit, offset)
+	if err != nil {
+		messageJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	messageJSON(w, http.StatusOK, map[string]any{"groups": items, "total": total, "limit": normalizeLimit(limit), "offset": max(0, offset)})
 }
