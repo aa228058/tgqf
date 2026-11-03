@@ -337,6 +337,21 @@ func (m *Manager) ManagedAccountIDs() []string {
      return chat.ID,nil
  }
 
+// UpdateProfile applies an explicitly queued first/last name and bio update.
+func (m *Manager) UpdateProfile(ctx context.Context, accountID, firstName, lastName, about string) error {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return errors.New("Telegram account is not connected")
+	}
+	_, err := client.UpdateProfile(ctx, firstName, lastName, about)
+	if err != nil {
+		return fmt.Errorf("update Telegram profile: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
 	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {
 		return 0,errors.New("invalid Telegram reply message id")
