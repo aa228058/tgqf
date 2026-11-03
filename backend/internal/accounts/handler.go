@@ -23,6 +23,8 @@ type Handler struct{service *Service;auth *auth.Handler;telegram *telegrammtgo.M
 type createRequest struct{Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Session string `json:"session"`;Proxy json.RawMessage `json:"proxy"`}
 type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
+type accountTagsRequest struct{Tags []string `json:"tags"`}
+type bulkAccountTagsRequest struct{AccountIDs []string `json:"account_ids"`;Tags []string `json:"tags"`}
 type bulkGroupRequest struct{AccountIDs []string `json:"account_ids"`;GroupName string `json:"group_name"`}
 type bulkRuntimeActionRequest struct{AccountIDs []string `json:"account_ids"`;Action string `json:"action"`}
 type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
@@ -54,6 +56,8 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("DELETE /api/v1/accounts/bulk",h.auth.Authenticated(http.HandlerFunc(h.deleteBatch)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
+ m.Handle("PATCH /api/v1/accounts/{id}/tags",h.auth.Authenticated(http.HandlerFunc(h.setAccountTags)))
+ m.Handle("PATCH /api/v1/accounts/tags",h.auth.Authenticated(http.HandlerFunc(h.setAccountTagsBatch)))
  m.Handle("PATCH /api/v1/accounts/group",h.auth.Authenticated(http.HandlerFunc(h.setGroupBatch)))
  m.Handle("PATCH /api/v1/accounts/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxyBatch)))
  m.Handle("POST /api/v1/accounts/bulk-action",h.auth.Authenticated(http.HandlerFunc(h.bulkRuntimeAction)))
@@ -126,6 +130,21 @@ func(h *Handler)deleteBatch(w http.ResponseWriter,r *http.Request) {
 
 func(h *Handler)delete(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());id:=strings.TrimSpace(r.PathValue("id"));if !validAccountUUID(id){writeError(w,http.StatusBadRequest,"invalid account ID");return};if err:=h.service.Delete(r.Context(),u.TenantID,id);err!=nil{if strings.Contains(err.Error(),"not found"){writeError(w,http.StatusNotFound,"account not found")}else{writeError(w,http.StatusInternalServerError,"failed to delete account")};return};if h.telegram!=nil{if err:=h.telegram.Stop(id);err!=nil{writeJSON(w,http.StatusAccepted,map[string]string{"status":"deleted_runtime_cleanup_pending"});return}};w.WriteHeader(http.StatusNoContent)}
 func(h *Handler)setGroup(w http.ResponseWriter,r *http.Request){var q groupRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());if err:=h.service.SetGroup(r.Context(),u.TenantID,r.PathValue("id"),q.GroupName);err!=nil{if strings.Contains(err.Error(),"account not found"){writeError(w,404,"account not found");return};writeError(w,400,err.Error());return};writeJSON(w,200,map[string]string{"group_name":strings.TrimSpace(q.GroupName)})}
+
+func(h *Handler)setAccountTags(w http.ResponseWriter,r *http.Request){
+	var q accountTagsRequest;if !decode(w,r,&q){writeError(w,http.StatusBadRequest,"invalid tags request");return}
+	u:=auth.UserFromContext(r.Context());id:=strings.TrimSpace(r.PathValue("id"))
+	if !validAccountUUID(id){writeError(w,http.StatusBadRequest,"invalid account ID");return}
+	if err:=h.service.SetAccountTags(r.Context(),u.TenantID,id,q.Tags);err!=nil{if strings.Contains(err.Error(),"account not found"){writeError(w,http.StatusNotFound,err.Error());return};writeError(w,http.StatusBadRequest,err.Error());return}
+	tags,_:=normalizeAccountTags(q.Tags);writeJSON(w,http.StatusOK,map[string]any{"tags":tags})
+}
+
+func(h *Handler)setAccountTagsBatch(w http.ResponseWriter,r *http.Request){
+	var q bulkAccountTagsRequest;if !decode(w,r,&q){writeError(w,http.StatusBadRequest,"invalid bulk tags request");return}
+	u:=auth.UserFromContext(r.Context());count,err:=h.service.SetAccountTagsBatch(r.Context(),u.TenantID,q.AccountIDs,q.Tags)
+	if err!=nil{status:=http.StatusBadRequest;if strings.Contains(err.Error(),"not found"){status=http.StatusNotFound};writeError(w,status,err.Error());return}
+	tags,_:=normalizeAccountTags(q.Tags);writeJSON(w,http.StatusOK,map[string]any{"updated":count,"tags":tags})
+}
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{
  r.Body=http.MaxBytesReader(w,r.Body,1<<20)
  d:=json.NewDecoder(r.Body)
