@@ -27,3 +27,13 @@ TG账号管理系统 API。需要 Go 1.23+、PostgreSQL 和 Redis。设置 DATAB
 
 ## 安全边界
 Telegram Session 和代理凭据必须加密存储，不得通过普通 API 返回。生产环境必须使用 HTTPS 和密钥管理。业务查询必须从认证上下文取得 tenant_id，不能信任客户端传入。当前仍需补充限流、审计、租户数据访问层和自动化测试，不能直接视为公网生产就绪。
+
+## Telegram 账号 API（基础版）
+所有接口使用租户 Bearer Token，并从认证上下文确定租户，不接受客户端指定 tenant_id。
+- POST /api/v1/accounts：导入单个账号，字段 phone、display_name、group_name、session、proxy。Session 与代理 JSON 使用 AES-256-GCM 加密后保存；新导入账号状态为 pending，待后续 MTProto Worker 验证连接。
+- GET /api/v1/accounts：列出当前租户账号，不返回 Session 或代理密文。
+- PATCH /api/v1/accounts/{id}/group：修改账号分组。
+- DELETE /api/v1/accounts/{id}：删除当前租户账号。
+
+账号创建时在事务中锁定租户行并检查 account_limit，避免并发请求突破上限。账号读写通过事务级 tenant scope 配合 PostgreSQL RLS。
+生产环境必须设置 SESSION_ENCRYPTION_KEY：生成 32 字节随机密钥并以 Base64 或 64 位十六进制字符串配置。密钥应放入密钥管理服务或受保护的部署 Secret，不能提交到仓库。密钥轮换需先实现版本化解密迁移，不能直接替换旧密钥。

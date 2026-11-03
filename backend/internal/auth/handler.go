@@ -45,3 +45,6 @@ func(h *Handler)rateLimit(w http.ResponseWriter,r *http.Request,scope string,lim
  if !allowed{w.Header().Set("Retry-After",strconv.Itoa(int(window.Seconds())));writeJSON(w,http.StatusTooManyRequests,map[string]string{"error":"too many requests; try again later"});return false}
  return true
 }
+
+func(h *Handler)Authenticated(next http.Handler)http.Handler{return h.requireAuth(next)}
+func UserFromContext(ctx context.Context)User{u,_:=ctx.Value(userKey).(User);return u}
