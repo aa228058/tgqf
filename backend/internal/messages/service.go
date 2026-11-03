@@ -32,7 +32,7 @@ type Message struct {
 	AccountName string `json:"account_name"`
 	ChatID int64 `json:"chat_id"`
 	MessageID int64 `json:"message_id"`
-	ChatType string `json:"chat_type"``
+	ChatType string `json:"chat_type"`
 	ChatTitle string `json:"chat_title"`
 	SenderID int64 `json:"sender_id"`
 	ReplyToMessageID int64 `json:"reply_to_message_id,omitempty"`
