@@ -2,6 +2,8 @@ ALTER TABLE tenant_keyword_rules
     ADD COLUMN IF NOT EXISTS reply_text TEXT NOT NULL DEFAULT ''
         CHECK (length(reply_text) <= 4096);
 
+CREATE UNIQUE INDEX IF NOT EXISTS tenant_keyword_matches_tenant_id_id_uq ON tenant_keyword_matches(tenant_id,id);
+
 CREATE TABLE IF NOT EXISTS keyword_action_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -18,8 +20,8 @@ CREATE TABLE IF NOT EXISTS keyword_action_jobs (
     last_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (keyword_match_id)
-      REFERENCES tenant_keyword_matches(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, keyword_match_id)
+      REFERENCES tenant_keyword_matches(tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, telegram_account_id)
       REFERENCES telegram_accounts(tenant_id, id) ON DELETE CASCADE
 );
