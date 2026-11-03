@@ -67,7 +67,7 @@ type RuntimeAccount struct {
 // LoadAuthorizedRuntimeAccounts loads active tenants first, then reads each
 // tenant's accounts under its own RLS-scoped transaction.
 func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeAccount, error) {
-	rows, err := s.db.QueryContext(ctx, \`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()\`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()`)
 	if err != nil { return nil, err }
 	var tenantIDs []string
 	for rows.Next() { var id string; if err := rows.Scan(&id); err != nil { rows.Close(); return nil, err }; tenantIDs = append(tenantIDs, id) }
@@ -77,7 +77,7 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 	var out []RuntimeAccount
 	for _, tenantID := range tenantIDs {
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-			accountRows, err := tx.QueryContext(ctx, \`SELECT id::text,session_ciphertext,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND status IN ('authorized','error') AND session_ciphertext IS NOT NULL\`, tenantID)
+			accountRows, err := tx.QueryContext(ctx, `SELECT id::text,session_ciphertext,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND status IN ('authorized','error') AND session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
 			for accountRows.Next() {
@@ -102,7 +102,7 @@ func (s *Service) SaveRuntimeSession(ctx context.Context, tenantID, accountID, s
 	if strings.TrimSpace(session) == "" { return errors.New("session is required") }
 	ciphertext, err := encrypt([]byte(session)); if err != nil { return err }
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, \`UPDATE telegram_accounts SET session_ciphertext=$3,session_key_version=1,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='authorized'\`, tenantID, accountID, ciphertext)
+		result, err := tx.ExecContext(ctx, `UPDATE telegram_accounts SET session_ciphertext=$3,session_key_version=1,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='authorized'`, tenantID, accountID, ciphertext)
 		if err != nil { return err }; n, _ := result.RowsAffected(); if n == 0 { return errors.New("authorized account not found") }; return nil
 	})
 }
@@ -112,7 +112,7 @@ func (s *Service) SetRuntimeStatus(ctx context.Context, tenantID, accountID, sta
 	switch status { case "authorized", "disconnected", "error": default: return errors.New("invalid account runtime status") }
 	if len(lastError) > 500 { lastError = lastError[:500] }
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, \`UPDATE telegram_accounts SET status=$3,last_error=$4,updated_at=NOW() WHERE tenant_id=$1 AND id=$2\`, tenantID, accountID, status, lastError)
+		result, err := tx.ExecContext(ctx, `UPDATE telegram_accounts SET status=$3,last_error=$4,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`, tenantID, accountID, status, lastError)
 		if err != nil { return err }; n, _ := result.RowsAffected(); if n == 0 { return errors.New("account not found") }; return nil
 	})
 }
