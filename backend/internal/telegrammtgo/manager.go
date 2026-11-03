@@ -300,7 +300,6 @@ func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, e
 	if m.pendingQR[accountID] != entry { m.mu.Unlock(); return QRAuthResult{}, errors.New("QR login was cancelled") }
 	delete(m.pendingQR, accountID)
 	m.clients[accountID] = entry.client
-	m.voice[accountID] = newVoiceCallBridge(entry.client, accountID, m.incomingVoiceHandler)
 	m.mu.Unlock()
 	return QRAuthResult{SessionString:sessionString,UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone},nil
 }
