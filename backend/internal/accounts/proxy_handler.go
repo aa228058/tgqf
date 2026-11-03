@@ -49,7 +49,7 @@ func (h *Handler) bindProxy(w http.ResponseWriter,r *http.Request) {
 	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
 	u:=auth.UserFromContext(r.Context())
 	if err:=h.service.BindProxy(r.Context(),u.TenantID,r.PathValue("id"),strings.TrimSpace(input.ProxyID));err!=nil{
-		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.Status404NotFound,err.Error());return}
+		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return}
 		writeError(w,http.StatusBadRequest,err.Error());return
 	}
 	writeJSON(w,http.StatusOK,map[string]string{"proxy_id":input.ProxyID})
