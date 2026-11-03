@@ -221,3 +221,57 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
     }
     return nil
 }
+
+
+type KeywordActionJob struct {
+    ID string
+    TenantID string
+    AccountID string
+    ChatID int64
+    ReplyToMessageID int64
+    Text string
+    Attempts int
+}
+
+func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]KeywordActionJob,error) {
+    if limit<1||limit>50 {limit=20}
+    rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY id`)
+    if err!=nil{return nil,err}
+    var tenants []string
+    for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
+    if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close()
+    jobs:=[]KeywordActionJob{}
+    for _,tenantID:=range tenants {
+        if len(jobs)>=limit {break}
+        err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+            remaining:=limit-len(jobs);if remaining>5{remaining=5}
+            picked,err:=tx.QueryContext(ctx,`WITH picked AS (
+                SELECT id FROM keyword_action_jobs WHERE tenant_id=$1 AND
+                ((status='pending' AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW()))
+                ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
+            ) UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
+            FROM picked WHERE j.id=picked.id
+            RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts`,tenantID,remaining)
+            if err!=nil{return err};defer picked.Close()
+            for picked.Next(){var job KeywordActionJob;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts);err!=nil{return err};jobs=append(jobs,job)}
+            return picked.Err()
+        });if err!=nil{return nil,err}
+    }
+    return jobs,nil
+}
+
+func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration) error {
+    return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if sendErr==nil {
+            if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,telegramMessageID)
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+        }
+        message:=sendErr.Error();if len(message)>500{message=message[:500]}
+        delay:=time.Duration(job.Attempts*30)*time.Second;if delay<30*time.Second{delay=30*time.Second};if delay>15*time.Minute{delay=15*time.Minute}
+        status:="pending";if job.Attempts>=5&&floodWait<=0{status="failed"}
+        if floodWait>0{delay=floodWait+time.Second}
+        result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,message,int64(delay.Seconds()))
+        if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+    })
+}
