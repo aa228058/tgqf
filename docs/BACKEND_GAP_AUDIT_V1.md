@@ -38,7 +38,7 @@
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
 | 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页、CSV 导出、批量 Session 导入 | 第一阶段已实现 | 标签、批量选择、断开/重连 API 未形成完整集合；批量导入当前接收最多 20 条 JSON 记录，非文件上传 |
 | 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
-| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile、账号资料任务 API 与 Worker | 第一阶段已实现，待 CI/在线验收 | 支持每批最多 20 个账号分别设置姓名/简介，逐账号状态、错误、重试、暂停/人工恢复；头像上传尚未实现 |
+| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile、账号资料任务 API 与 Worker | 第一阶段已实现，待 CI/在线验收 | 支持每批最多 20 个账号分别设置姓名/简介及随机用户名，并可独立启用随机用户名；撞名时最多重新生成 8 次，成功用户名写入逐账号结果；支持状态、错误、重试、暂停/人工恢复；头像上传尚未实现 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
@@ -97,7 +97,7 @@
 - `GET /api/v1/accounts/export.csv`（复用账号筛选条件；CSV 字段公式注入防护；不导出 Session/代理密钥）
 - `POST /api/v1/accounts/import`（单次最多 20 个 JSON Session 记录，逐条结果；Session 仍按账号独立加密保存）
 - `POST /api/v1/accounts/import-file`（multipart 文件上传，支持 JSON/CSV/TXT；单文件最大 1 MiB、最多 20 条；Session 按账号独立加密，响应不包含 Session）
-- `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，返回统一 batch_id 和逐账号任务）
+- `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，并通过 `generate_username: true` 启用随机用户名；用户名冲突自动重新生成最多 8 次，返回统一 batch_id 和逐账号任务）
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`（失败任务重试、暂停任务人工恢复）
 - `PATCH /api/v1/accounts/{id}/group`
