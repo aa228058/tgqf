@@ -102,6 +102,7 @@ func main() {
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
+		processKeywordActionJobs(ctx, messageService, manager, logger)
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
@@ -232,6 +233,35 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 		}
 		logger.Info("Telegram reply sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
 	}
+}
+
+
+func processKeywordActionJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
+    jobs,err:=service.ClaimKeywordActionJobs(ctx,20)
+    if err!=nil {logger.Error("claim keyword action jobs","error",err);return}
+    for _,job:=range jobs {
+        if ctx.Err()!=nil{return}
+        if !service.TenantCanOperate(ctx,job.TenantID) {
+            sendErr:=errors.New("tenant inactive; action paused")
+            _=service.FinishKeywordAction(ctx,job,0,sendErr,0)
+            continue
+        }
+        if !manager.IsConnected(job.AccountID) {
+            _=service.FinishKeywordAction(ctx,job,0,errors.New("Telegram account offline"),0)
+            continue
+        }
+        sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
+        telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+        cancel()
+        floodWait,_:=tgerr.AsFloodWait(sendErr)
+        if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait);err!=nil {
+            logger.Error("persist keyword action result","job_id",job.ID,"error",err)
+            continue
+        }
+        if sendErr!=nil {logger.Warn("keyword action send failed","job_id",job.ID,"account_id",job.AccountID,"error",sendErr)} else {
+            logger.Info("keyword action sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
+        }
+    }
 }
 
 func processJoinTasks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
