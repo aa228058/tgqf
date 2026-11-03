@@ -62,7 +62,7 @@ func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListO
 	var err error
 	opts,err=normalizeAccountListOptions(opts);if err!=nil{return nil,0,err}
 	out:=[]Account{};total:=0
-	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:="tenant_id=$1 AND ($2='' OR phone ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') AND ($3='' OR group_name=$3) AND ($4='' OR status=$4)"
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM telegram_accounts WHERE "+filter,tenantID,opts.Query,opts.GroupName,opts.Status).Scan(&total);err!=nil{return err}
 		rows,err:=tx.QueryContext(ctx,"SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE "+filter+" ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6",tenantID,opts.Query,opts.GroupName,opts.Status,opts.Limit,opts.Offset)
