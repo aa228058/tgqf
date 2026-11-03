@@ -243,7 +243,7 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
         if ctx.Err()!=nil{return}
         if !service.TenantCanOperate(ctx,job.TenantID) {
             sendErr:=errors.New("tenant inactive; action paused")
-            _=service.FinishKeywordAction(ctx,job,0,sendErr,0)
+            if err:=service.PauseKeywordAction(ctx,job,"tenant inactive; manual review required");err!=nil{logger.Error("pause keyword action for inactive tenant","job_id",job.ID,"error",err)}
             continue
         }
         if !manager.IsConnected(job.AccountID) {
