@@ -76,4 +76,4 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - POST /api/v1/messages/{id}/reply：提交对该条汇总消息的回复，字段 text，返回 202 和 reply job ID；实际发送由独立 Worker 执行。
 - GET /api/v1/message-replies/{id}：查询回复任务状态（pending、processing、sent、failed）、尝试次数和 Telegram 返回的消息 ID。
 
-消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料缓存已接入实时消息Worker 每 5 分钟对每个在线账号最近活跃的最多 20 个已知聊天回查最近 50 条消息，补齐短暂断线期间遗漏的记录；仍未发现过的新聊天不会自动枚举，完整历史导入需后续单独实现。历史回填复用相同固定规则和租户筛选，群组只收明确回复当前账号本人消息的内容。
+消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料缓存已接入实时消息。Worker 每 5 分钟对每个在线账号最近活跃的最多 20 个已知聊天回查最近 50 条消息，补齐短暂断线期间遗漏的记录；仍未发现过的新聊天不会自动枚举，完整历史导入需后续单独实现。历史回填复用相同固定规则和租户筛选，群组只收明确回复当前账号本人消息的内容。
