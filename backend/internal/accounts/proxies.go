@@ -46,10 +46,34 @@ func validateProxyInput(input ProxyInput) (ProxyInput, error) {
 	default:
 		return input, errors.New("proxy protocol must be socks5, socks4, http or https")
 	}
-	if strings.ContainsAny(input.Host, " /\\\t\r\n") {
-		return input, errors.New("proxy host must be a hostname or IP address")
+	if !validProxyHost(input.Host) {
+		return input, errors.New("proxy host must be a valid hostname or IP address")
 	}
 	return input, nil
+}
+
+func validProxyHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, " /\\\\\\t\\r\\n:@") {
+		return false
+	}
+	name := strings.TrimSuffix(host, ".")
+	if name == "" {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *Service) CreateProxy(ctx context.Context, tenantID string, input ProxyInput) (Proxy, error) {
