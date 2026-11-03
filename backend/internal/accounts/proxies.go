@@ -199,3 +199,30 @@ func (s *Service) SetDefaultProxy(ctx context.Context,tenantID,proxyID string)er
 		return nil
 	})
 }
+
+
+// BindProxyBatch atomically binds or clears a tenant proxy for up to 100 accounts.
+func (s *Service) BindProxyBatch(ctx context.Context, tenantID string, ids []string, proxyID string) (int,error) {
+	ids,_,err:=normalizeBulkGroupInput(ids,"")
+	if err!=nil{return 0,err}
+	proxyID=strings.TrimSpace(proxyID)
+	if len(proxyID)>0 && (len(proxyID)!=36 || proxyID[8]!='-' || proxyID[13]!='-' || proxyID[18]!='-' || proxyID[23]!='-') {return 0,errors.New("invalid proxy id")}
+	updated:=0
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		if proxyID!="" {
+			var exists bool
+			if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenant_proxies WHERE tenant_id=$1 AND id=$2::uuid)`,tenantID,proxyID).Scan(&exists);err!=nil{return err}
+			if !exists{return errors.New("proxy not found")}
+		}
+		for _,id:=range ids {
+			res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET proxy_id=NULLIF($3,'')::uuid,proxy_ciphertext=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid`,tenantID,id,proxyID)
+			if err!=nil{return err}
+			n,err:=res.RowsAffected();if err!=nil{return err}
+			if n!=1{return errors.New("one or more accounts were not found in this tenant")}
+			updated+=int(n)
+		}
+		return nil
+	})
+	if err!=nil{return 0,err}
+	return updated,nil
+}
