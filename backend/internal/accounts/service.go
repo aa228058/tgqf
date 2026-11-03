@@ -83,9 +83,12 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 			accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
 				p.protocol,p.host,p.port,p.username,p.password_ciphertext,
+                COALESCE(dp.device_model,''),COALESCE(dp.system_version,''),COALESCE(dp.app_version,''),
+                COALESCE(dp.lang_code,''),COALESCE(dp.system_lang_code,''),COALESCE(dp.lang_pack,''),COALESCE(dp.package_id,''),
 				COALESCE(rt.reconnect_attempts,0),rt.reconnect_at
 				FROM telegram_accounts a
 				LEFT JOIN tenant_proxies p ON p.tenant_id=a.tenant_id AND p.id=a.proxy_id
+                LEFT JOIN telegram_device_profiles dp ON dp.tenant_id=a.tenant_id AND dp.telegram_account_id=a.id
 				LEFT JOIN telegram_account_runtime rt ON rt.tenant_id=a.tenant_id AND rt.account_id=a.id
 				WHERE a.tenant_id=$1 AND a.status IN ('pending','authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
@@ -94,10 +97,18 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 				var item RuntimeAccount
 				var sessionCipher, proxyCipher, proxyPasswordCipher []byte
 				var protocol, host, username sql.NullString
+                var deviceModel, systemVersion, appVersion, langCode, systemLangCode, langPack, packageID sql.NullString
 				var port sql.NullInt64
 				var reconnectAt sql.NullTime
 				item.TenantID = tenantID
-				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher,&item.ReconnectAttempts,&reconnectAt); err != nil { return err }
+				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher,
+                    &deviceModel,&systemVersion,&appVersion,&langCode,&systemLangCode,&langPack,&packageID,
+                    &item.ReconnectAttempts,&reconnectAt); err != nil { return err }
+                if !deviceModel.Valid || !systemVersion.Valid || !appVersion.Valid {
+                    return fmt.Errorf("persisted device profile missing or incomplete for account %s", item.ID)
+                }
+                item.DeviceProfile = device.Profile{DeviceModel:deviceModel.String,SystemVersion:systemVersion.String,AppVersion:appVersion.String,
+                    LangCode:langCode.String,SystemLangCode:systemLangCode.String,LangPack:langPack.String,PackageID:packageID.String}
 				plain, err := decrypt(sessionCipher); if err != nil { return fmt.Errorf("decrypt session for account %s: %w", item.ID, err) }
 				item.Session = string(plain)
 				if reconnectAt.Valid { item.ReconnectAt = reconnectAt.Time }
@@ -116,6 +127,23 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 		if err != nil { return nil, err }
 	}
 	return out, nil
+}
+
+// LoadDeviceProfile reads the account's persisted device identity under tenant scope.
+func (s *Service) LoadDeviceProfile(ctx context.Context, tenantID, accountID string) (device.Profile, error) {
+    var profile device.Profile
+    err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+        err := tx.QueryRowContext(ctx, `SELECT device_model,system_version,app_version,lang_code,system_lang_code,lang_pack,package_id
+            FROM telegram_device_profiles WHERE tenant_id=$1 AND telegram_account_id=$2`, tenantID, accountID).
+            Scan(&profile.DeviceModel,&profile.SystemVersion,&profile.AppVersion,&profile.LangCode,&profile.SystemLangCode,&profile.LangPack,&profile.PackageID)
+        if errors.Is(err, sql.ErrNoRows) { return fmt.Errorf("persisted device profile not found for account %s", accountID) }
+        if err != nil { return err }
+        if profile.DeviceModel=="" || profile.SystemVersion=="" || profile.AppVersion=="" {
+            return fmt.Errorf("persisted device profile is incomplete for account %s", accountID)
+        }
+        return nil
+    })
+    return profile, err
 }
 
 // SaveRuntimeSession encrypts a refreshed session before updating its row.
