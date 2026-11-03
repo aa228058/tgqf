@@ -140,12 +140,20 @@ func (h *Handler) importFile(w http.ResponseWriter,r *http.Request) {
     h.importAccounts(w,r,records)
 }
 
+func validateImportedSession(value string) error {
+    value=strings.TrimSpace(value)
+    if value==""||len(value)>65536{return errors.New("invalid session string length")}
+    if _,_,err:=tgconv.Decode(value);err!=nil{return errors.New("unsupported or invalid Telegram session format")}
+    return nil
+}
+
 func (h *Handler) importAccounts(w http.ResponseWriter,r *http.Request,records []createRequest) {
     if len(records)==0||len(records)>20{writeError(w,http.StatusBadRequest,"import must contain between 1 and 20 accounts");return}
     u:=auth.UserFromContext(r.Context())
     type itemResult struct{Index int `json:"index"`;Account *Account `json:"account,omitempty"`;Error string `json:"error,omitempty"`}
     results:=make([]itemResult,0,len(records));success:=0
     for i,item:=range records {
+        if err:=validateImportedSession(item.Session);err!=nil{results=append(results,itemResult{Index:i,Error:err.Error()});continue}
         account,err:=h.service.Create(r.Context(),u.TenantID,item.Phone,item.DisplayName,item.GroupName,item.Session,item.Proxy)
         if err!=nil {
             message:="account import failed"
