@@ -26,6 +26,8 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
  m.Handle("POST /api/v1/accounts/import",h.auth.Authenticated(http.HandlerFunc(h.importBatch)))
  m.Handle("POST /api/v1/accounts/import-file",h.auth.Authenticated(http.HandlerFunc(h.importFile)))
+ m.Handle("GET /api/v1/accounts/username-generation-settings",h.auth.Authenticated(http.HandlerFunc(h.getUsernameGenerationSettings)))
+ m.Handle("PUT /api/v1/accounts/username-generation-settings",h.auth.Authenticated(http.HandlerFunc(h.saveUsernameGenerationSettings)))
  m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
@@ -169,4 +171,20 @@ func (h *Handler) resumeProfileUpdate(w http.ResponseWriter,r *http.Request) {
 		writeError(w,status,err.Error());return
 	}
 	writeJSON(w,http.StatusOK,map[string]string{"status":"pending"})
+}
+
+func (h *Handler) getUsernameGenerationSettings(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	settings,err:=h.service.GetUsernameGenerationSettings(r.Context(),user.TenantID)
+	if err!=nil { writeError(w,http.StatusInternalServerError,"failed to load username generation settings");return }
+	writeJSON(w,http.StatusOK,map[string]any{"settings":settings})
+}
+
+func (h *Handler) saveUsernameGenerationSettings(w http.ResponseWriter,r *http.Request) {
+	var settings UsernameGenerationSettings
+	if !decode(w,r,&settings) { writeError(w,http.StatusBadRequest,"invalid username generation settings");return }
+	user:=auth.UserFromContext(r.Context())
+	saved,err:=h.service.SaveUsernameGenerationSettings(r.Context(),user.TenantID,settings)
+	if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+	writeJSON(w,http.StatusOK,map[string]any{"settings":saved})
 }
