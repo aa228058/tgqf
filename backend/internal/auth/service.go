@@ -6,6 +6,7 @@ import (
  "crypto/sha256"
  "database/sql"
  "encoding/base64"
+ "encoding/json"
  "errors"
  "strings"
  "time"
@@ -24,3 +25,26 @@ func(s *Service)Activate(ctx context.Context,tenantID,code string)(time.Time,err
 func(s *Service)Logout(ctx context.Context,sid string)error{_,err:=s.db.ExecContext(ctx,`UPDATE auth_sessions SET revoked_at=NOW() WHERE id=$1 AND revoked_at IS NULL`,sid);return err}
 func(s *Service)ChangePassword(ctx context.Context,uid,current,next,sid string)error{if len(next)<10||len(next)>72{return errors.New("new password must be 10-72 bytes")};var old string;if err:=s.db.QueryRowContext(ctx,`SELECT password_hash FROM users WHERE id=$1`,uid).Scan(&old);err!=nil{return err};if bcrypt.CompareHashAndPassword([]byte(old),[]byte(current))!=nil{return ErrInvalidCredentials};hash,err:=bcrypt.GenerateFromPassword([]byte(next),bcrypt.DefaultCost);if err!=nil{return err};tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback();if _,err=tx.ExecContext(ctx,`UPDATE users SET password_hash=$2,password_changed_at=NOW() WHERE id=$1`,uid,string(hash));err!=nil{return err};if _,err=tx.ExecContext(ctx,`UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL`,uid,sid);err!=nil{return err};return tx.Commit()}
 func randomToken()(string,error){b:=make([]byte,32);if _,err:=rand.Read(b);err!=nil{return "",err};return base64.RawURLEncoding.EncodeToString(b),nil};func tokenHash(t string)[]byte{sum:=sha256.Sum256([]byte(t));return sum[:]};func safeLabel(v string)string{v=strings.TrimSpace(v);if len(v)>100{v=v[:100]};return v}
+
+func (s *Service) AllowRequest(ctx context.Context, scope, remote string, limit int, window time.Duration) (bool,error) {
+ if strings.TrimSpace(remote)=="" { remote="unknown" }
+ key:=sha256.Sum256([]byte(scope+"\\x00"+remote))
+ seconds:=int64(window.Seconds());if seconds<1{seconds=1}
+ var attempts int
+ err:=s.db.QueryRowContext(ctx,`
+ INSERT INTO request_rate_limits(key_hash,window_started_at,attempts,updated_at)
+ VALUES($1,NOW(),1,NOW())
+ ON CONFLICT(key_hash) DO UPDATE SET
+ attempts=CASE WHEN request_rate_limits.window_started_at <= NOW()-($2 * INTERVAL '1 second') THEN 1 ELSE request_rate_limits.attempts+1 END,
+ window_started_at=CASE WHEN request_rate_limits.window_started_at <= NOW()-($2 * INTERVAL '1 second') THEN NOW() ELSE request_rate_limits.window_started_at END,
+ updated_at=NOW()
+ RETURNING attempts`,key[:],seconds).Scan(&attempts)
+ if err!=nil{return false,err};return attempts<=limit,nil
+}
+func (s *Service) Audit(ctx context.Context, tenantID, actorID, action, resourceType, resourceID string, details any) error {
+ raw,err:=json.Marshal(details);if err!=nil{return err}
+ var tenant any
+ if tenantID!="" { tenant=tenantID }
+ _,err=s.db.ExecContext(ctx,`INSERT INTO audit_logs(tenant_id,actor_user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,tenant,actorID,action,resourceType,resourceID,string(raw))
+ return err
+}
