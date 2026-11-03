@@ -43,7 +43,7 @@
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 第一阶段已实现 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；状态默认 pending；租户可分别开关私聊、群组、频道来源；在线验证与自动关联群组资料仍待补齐 |
-| 自动加群 | tenant_join_tasks、tenant_join_task_accounts、任务 API | 基础任务生命周期已实现；Telegram 加群执行未启用 | 支持显式授权、租户内账号分配、目标链接来源校验、草稿/排队/暂停/恢复/取消及申请状态字段；已核实 MTGo v0.22.0 提供 Client.JoinChat；但其当前实现未处理邀请链接返回的 request-needed 结果，申请审批状态与 FloodWait 安全调度尚未接入，因此执行器保持关闭 |
+| 自动加群 | tenant_join_tasks、tenant_join_task_accounts、任务 API | 基础任务生命周期已实现；Telegram 加群执行未启用 | 支持显式授权、租户内账号分配、目标链接来源校验、草稿/排队/暂停/恢复/取消及申请状态字段；已核实 MTGo v0.22.0 提供 Client.JoinChat；但其当前实现未处理邀请链接返回的 request-needed 结果，申请审批状态与 FloodWait 安全调度尚未接入；数据库已预留 attempts/available_at/lease_until 调度字段，因此执行器保持关闭 |
 | 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/regex、排除词、聊天类型、大小写；只记录命中，不触发自动动作；规则启停和命中分页 API 已提供 |
 | 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
