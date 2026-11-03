@@ -191,6 +191,12 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 	if err!=nil { logger.Error("claim Telegram reply jobs","error",err);return }
 	for _,job:=range jobs {
 		if ctx.Err()!=nil{return}
+		// A tenant may expire or be disabled after a job was claimed. Recheck
+		// immediately before any Telegram side effect and freeze the job.
+		if !service.TenantCanOperate(ctx,job.TenantID) {
+			if err:=service.PauseReply(ctx,job,"tenant inactive; manual review required");err!=nil { logger.Error("pause reply for inactive tenant","job_id",job.ID,"error",err) }
+			continue
+		}
 		if !manager.IsConnected(job.AccountID) {
 			if err:=service.ReleaseReply(ctx,job,30*time.Second);err!=nil { logger.Error("release reply for offline Telegram account","job_id",job.ID,"error",err) }
 			continue
