@@ -301,7 +301,10 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 				continue
 			}
 			updateCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
-			updateErr:=manager.UpdateProfile(updateCtx,job.AccountID,job.FirstName,job.LastName,job.About)
+			var updateErr error
+			if job.FirstName!="" || job.LastName!="" || job.About!="" {
+				updateErr=manager.UpdateProfile(updateCtx,job.AccountID,job.FirstName,job.LastName,job.About)
+			}
 			if updateErr==nil && job.GenerateUsername {
 				var username string
 				for attempt:=0;attempt<8;attempt++ {
