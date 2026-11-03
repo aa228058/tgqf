@@ -30,6 +30,7 @@ type KeywordRule struct {
     SenderIDs []int64 `json:"sender_ids"`
     SenderUsernames []string `json:"sender_usernames"`
     SenderNames []string `json:"sender_names"`
+    ReplyText string `json:"reply_text"`
     CaseSensitive bool `json:"case_sensitive"`
     Enabled bool `json:"enabled"`
     CreatedAt time.Time `json:"created_at"`
