@@ -45,6 +45,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/group",h.auth.Authenticated(http.HandlerFunc(h.setGroupBatch)))
+ m.Handle("PATCH /api/v1/accounts/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxyBatch)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
  m.Handle("GET /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.listProxies)))
  m.Handle("POST /api/v1/proxies",h.auth.Authenticated(http.HandlerFunc(h.createProxy)))
