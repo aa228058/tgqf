@@ -33,6 +33,8 @@ func parseSQLiteSession(data []byte) (string,string,error) {
     defer db.Close()
     db.SetMaxOpenConns(1)
     if _,err=db.Exec("PRAGMA query_only=ON");err!=nil{return "","",errors.New("could not open SQLite session read-only")}
+    var integrity string
+    if err=db.QueryRow("PRAGMA quick_check(1)").Scan(&integrity);err!=nil||integrity!="ok"{return "","",errors.New("SQLite session database failed integrity check")}
     var table string
     if err=db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").Scan(&table);err!=nil{return "","",errors.New("SQLite file does not contain a sessions table")}
     columns,err:=db.Query("PRAGMA table_info(sessions)")
@@ -43,6 +45,7 @@ func parseSQLiteSession(data []byte) (string,string,error) {
 
     telethon:=available["dc_id"]&&available["server_address"]&&available["port"]&&available["auth_key"]
     pyrogram:=available["dc_id"]&&available["api_id"]&&available["test_mode"]&&available["auth_key"]&&available["user_id"]&&available["is_bot"]
+    if telethon&&pyrogram{return "","",errors.New("SQLite sessions schema is ambiguous; expected a Telethon or Pyrogram database")}
     if !telethon&&!pyrogram{return "","",errors.New("SQLite file is not a supported Telethon or Pyrogram session schema")}
 
     if telethon {
