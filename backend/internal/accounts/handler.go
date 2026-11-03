@@ -32,6 +32,7 @@ type phonePasswordRequest struct{Password string `json:"password"`}
 type bulkPhoneStartItem struct { Phone string `json:"phone"`; GroupName string `json:"group_name"`; Proxy json.RawMessage `json:"proxy"` }
 type bulkPhoneStartRequest struct { Accounts []bulkPhoneStartItem `json:"accounts"` }
 type bulkPhoneCancelRequest struct { AccountIDs []string `json:"account_ids"` }
+type bulkDeleteAccountsRequest struct { AccountIDs []string `json:"account_ids"` }
 type bulkPhoneVerifyItem struct { AccountID string `json:"account_id"`; Code string `json:"code"`; Password string `json:"password"` }
 type bulkPhoneVerifyRequest struct { Accounts []bulkPhoneVerifyItem `json:"accounts"` }
 type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account `json:"account,omitempty"`; Status string `json:"status"`; DeliveryType string `json:"delivery_type,omitempty"`; ResendAfterSeconds int `json:"resend_after_seconds,omitempty"`; Error string `json:"error,omitempty"` }
@@ -50,6 +51,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelProfileUpdate)))
+ m.Handle("DELETE /api/v1/accounts/bulk",h.auth.Authenticated(http.HandlerFunc(h.deleteBatch)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/group",h.auth.Authenticated(http.HandlerFunc(h.setGroupBatch)))
@@ -97,6 +99,31 @@ func(h *Handler)importBatch(w http.ResponseWriter,r *http.Request){
 }
 
 func(h *Handler)create(w http.ResponseWriter,r *http.Request){var q createRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());a,err:=h.service.Create(r.Context(),u.TenantID,q.Phone,q.DisplayName,q.GroupName,q.Session,q.Proxy);if err!=nil{if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error());return};if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){writeError(w,503,"session encryption is not configured");return};writeError(w,400,err.Error());return};writeJSON(w,201,map[string]any{"account":a})}
+func normalizeBulkDeleteAccountIDs(ids []string)([]string,error) {
+	if len(ids)<1||len(ids)>100{return nil,errors.New("account deletion requires 1-100 account IDs")}
+	out:=make([]string,0,len(ids));seen:=map[string]bool{}
+	for _,id:=range ids{id=strings.TrimSpace(id);if !validAccountUUID(id)||seen[id]{return nil,errors.New("invalid or duplicate account ID")};seen[id]=true;out=append(out,id)}
+	return out,nil
+}
+
+func(h *Handler)deleteBatch(w http.ResponseWriter,r *http.Request) {
+	var input bulkDeleteAccountsRequest
+	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid bulk delete request");return}
+	ids,err:=normalizeBulkDeleteAccountIDs(input.AccountIDs)
+	if err!=nil{writeError(w,http.StatusBadRequest,err.Error());return}
+	u:=auth.UserFromContext(r.Context())
+	deleted,err:=h.service.DeleteBatch(r.Context(),u.TenantID,ids)
+	if err!=nil {
+		status:=http.StatusConflict
+		if strings.Contains(err.Error(),"invalid")||strings.Contains(err.Error(),"requires") {status=http.StatusBadRequest}
+		if strings.Contains(err.Error(),"not found") {status=http.StatusNotFound}
+		writeError(w,status,err.Error());return
+	}
+	stopped:=0;cleanupErrors:=0
+	if h.telegram!=nil {for _,id:=range deleted {if stopErr:=h.telegram.Stop(id);stopErr!=nil{cleanupErrors++}else{stopped++}}}
+	writeJSON(w,http.StatusOK,map[string]any{"deleted":len(deleted),"account_ids":deleted,"runtime_clients_stopped":stopped,"runtime_cleanup_errors":cleanupErrors})
+}
+
 func(h *Handler)delete(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());id:=r.PathValue("id");items,err:=h.service.List(r.Context(),u.TenantID);if err!=nil{writeError(w,500,"failed to verify account");return};found:=false;for _,a:=range items{if a.ID==id{found=true;break}};if !found{writeError(w,404,"account not found");return};if h.telegram!=nil{if err:=h.telegram.Stop(id);err!=nil{writeError(w,502,"could not stop account Telegram client");return}};if err:=h.service.Delete(r.Context(),u.TenantID,id);err!=nil{writeError(w,404,"account not found");return};w.WriteHeader(204)}
 func(h *Handler)setGroup(w http.ResponseWriter,r *http.Request){var q groupRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());if err:=h.service.SetGroup(r.Context(),u.TenantID,r.PathValue("id"),q.GroupName);err!=nil{if strings.Contains(err.Error(),"account not found"){writeError(w,404,"account not found");return};writeError(w,400,err.Error());return};writeJSON(w,200,map[string]string{"group_name":strings.TrimSpace(q.GroupName)})}
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{
