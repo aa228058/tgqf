@@ -364,6 +364,34 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 }
 
 
+type GroupSource struct {
+	AccountID string `json:"account_id"`
+	AccountName string `json:"account_name"`
+	ChatID int64 `json:"chat_id"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	DiscoveryCount int64 `json:"discovery_count"`
+}
+
+func (s *Service) ListGroupSources(ctx context.Context, tenantID string, groupID int64) ([]GroupSource,error) {
+	if groupID<=0 { return nil,ErrInvalidGroupLibraryQuery }
+	items:=[]GroupSource{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		rows,err:=tx.QueryContext(ctx,`SELECT src.telegram_account_id::text,
+			COALESCE(NULLIF(a.display_name,''),a.phone,''),src.source_chat_id,
+			src.first_seen_at,src.last_seen_at,src.discovery_count
+			FROM public_group_sources src
+			JOIN telegram_accounts a ON a.tenant_id=src.tenant_id AND a.id=src.telegram_account_id
+			WHERE src.tenant_id=$1 AND src.group_id=$2
+			ORDER BY src.last_seen_at DESC,src.telegram_account_id`,tenantID,groupID)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item GroupSource;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.FirstSeenAt,&item.LastSeenAt,&item.DiscoveryCount);err!=nil{return err};items=append(items,item)}
+		return rows.Err()
+	})
+	return items,err
+}
+
+
 var ErrNoReplyJob = errors.New("no pending reply job")
 
 type ReplyJob struct {
