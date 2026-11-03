@@ -77,7 +77,7 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 	var out []RuntimeAccount
 	for _, tenantID := range tenantIDs {
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-			accountRows, err := tx.QueryContext(ctx, \`SELECT id::text,session_ciphertext,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND status='authorized' AND session_ciphertext IS NOT NULL\`, tenantID)
+			accountRows, err := tx.QueryContext(ctx, \`SELECT id::text,session_ciphertext,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND status IN ('authorized','error') AND session_ciphertext IS NOT NULL\`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
 			for accountRows.Next() {

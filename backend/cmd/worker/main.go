@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -65,4 +64,3 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 	return nil
 }
 
-var _ = errors.Is
