@@ -1,8 +1,11 @@
 package accounts
 
 import (
+    "database/sql"
+    "os"
     "strings"
     "testing"
+    tgconv "github.com/mtgo-labs/session-converter"
 )
 
 func TestParseAccountImportFileCSV(t *testing.T) {
@@ -38,4 +41,39 @@ func TestParseAccountImportFileRejectsMoreThanTwentyRecords(t *testing.T) {
     input.WriteString("phone,session\n")
     for i:=0;i<21;i++{input.WriteString("+15550000000,SESSION\n")}
     if _,err:=parseAccountImportFile("accounts.csv",[]byte(input.String()));err==nil{t.Fatal("expected account count limit error")}
+}
+
+func makeTelethonSessionSQLite(t *testing.T, rows int) []byte {
+    t.Helper()
+    tmp,err:=os.CreateTemp(t.TempDir(),"telethon-*.session")
+    if err!=nil{t.Fatal(err)}
+    path:=tmp.Name()
+    if err:=tmp.Close();err!=nil{t.Fatal(err)}
+    db,err:=sql.Open("sqlite",path)
+    if err!=nil{t.Fatal(err)}
+    if _,err=db.Exec(`CREATE TABLE sessions (dc_id INTEGER, server_address TEXT, port INTEGER, auth_key BLOB, takeout_id INTEGER)`);err!=nil{t.Fatal(err)}
+    key:=make([]byte,256);for i:=range key{key[i]=byte(i+1)}
+    for i:=0;i<rows;i++{if _,err=db.Exec(`INSERT INTO sessions(dc_id,server_address,port,auth_key) VALUES(?,?,?,?)`,4,"149.154.167.50",443,key);err!=nil{t.Fatal(err)}}
+    if err:=db.Close();err!=nil{t.Fatal(err)}
+    data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+    return data
+}
+
+func TestParseTelethonSQLiteSession(t *testing.T) {
+    encoded,err:=parseTelethonSQLiteSession(makeTelethonSessionSQLite(t,1))
+    if err!=nil{t.Fatal(err)}
+    decoded,format,err:=tgconv.Decode(encoded)
+    if err!=nil{t.Fatal(err)}
+    if format!=tgconv.FormatTelethon||decoded.DCID!=4||decoded.ServerAddress!="149.154.167.50"||decoded.Port!=443||len(decoded.AuthKey)!=256{t.Fatalf("unexpected decoded Telethon session: format=%s session=%+v",format,decoded)}
+}
+
+func TestParseTelethonSQLiteSessionRejectsInvalidDatabases(t *testing.T) {
+    if _,err:=parseTelethonSQLiteSession([]byte("not sqlite"));err==nil{t.Fatal("expected invalid SQLite rejection")}
+    if _,err:=parseTelethonSQLiteSession(makeTelethonSessionSQLite(t,2));err==nil{t.Fatal("expected multi-session database rejection")}
+}
+
+func TestParseAccountImportFileTelethonSession(t *testing.T) {
+    records,err:=parseAccountImportFile("account.session",makeTelethonSessionSQLite(t,1))
+    if err!=nil{t.Fatal(err)}
+    if len(records)!=1||records[0].Session==""||records[0].Phone!=""{t.Fatalf("unexpected imported record: %+v",records)}
 }
