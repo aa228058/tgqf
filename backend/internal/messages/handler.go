@@ -157,7 +157,7 @@ func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
 	var body struct{Text string `json:"text"`}
 	if err:=decodeMessageJSON(w,r,16<<10,&body);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid reply body"});return}
 	user:=auth.UserFromContext(r.Context())
-	job,err:=h.service.CreateReply(r.Context(),user.TenantID,r.PathValue("id"),body.Text)
+	job,err:=h.service.CreateReply(r.Context(),user.TenantID,r.PathValue("id"),body.Text,r.Header.Get("Idempotency-Key"))
 	if err!=nil{
 		status:=http.StatusBadRequest
 		if err.Error()=="message not found"{status=http.StatusNotFound}
