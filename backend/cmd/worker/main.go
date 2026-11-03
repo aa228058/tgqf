@@ -18,8 +18,8 @@ import (
 )
 
 type reconnectState struct {
-	attempts int
-	nextTry time.Time
+ attempts int
+ nextTry time.Time
 }
 
 func reconnectDelay(attempt int) time.Duration {
@@ -75,7 +75,9 @@ func main() {
 		if textBody == "" { textBody = message.Caption }
 		mediaType := ""
 		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
-		_, err := messageService.Ingest(ctx, tenantValue.(string), messages.Incoming{
+		ingestCtx, cancelIngest := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelIngest()
+		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
 			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, SenderID: message.FromID,
@@ -123,13 +125,23 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 	for id, account := range allowed {
 		if manager.IsConnected(id) {
 			delete(reconnects, id)
+			if err := accountsService.ClearRuntimeReconnectState(ctx, account.TenantID, id); err != nil {
+				logger.Warn("clear Telegram reconnect state", "account_id", id, "error", err)
+			}
 		} else {
-			state := reconnects[id]
+			state, exists := reconnects[id]
+			if !exists && account.ReconnectAttempts > 0 {
+				state = reconnectState{attempts: account.ReconnectAttempts, nextTry: account.ReconnectAt}
+				reconnects[id] = state
+			}
 			if now.Before(state.nextTry) { continue }
 			_ = manager.Stop(id)
 			if err := manager.Start(id, account.Session, account.ProxyJSON); err != nil {
 				delay := scheduleReconnect(&state, now)
 				reconnects[id] = state
+				if persistErr := accountsService.SaveRuntimeReconnectState(ctx, account.TenantID, id, state.attempts, state.nextTry); persistErr != nil {
+					logger.Error("persist Telegram reconnect state", "account_id", id, "error", persistErr)
+				}
 				statusSynced[id] = false
 				logger.Warn("Telegram account connection failed; retry scheduled", "account_id", id, "attempt", state.attempts, "retry_in", delay.String(), "error", err)
 				if statusErr := accountsService.SetRuntimeStatus(ctx, account.TenantID, id, "error", err.Error()); statusErr != nil {
@@ -138,6 +150,9 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 				continue
 			}
 			delete(reconnects, id)
+			if clearErr := accountsService.ClearRuntimeReconnectState(ctx, account.TenantID, id); clearErr != nil {
+				logger.Warn("clear Telegram reconnect state", "account_id", id, "error", clearErr)
+			}
 			lastSavedSessions[id] = account.Session
 			logger.Info("Telegram account connected", "account_id", id)
 		}
