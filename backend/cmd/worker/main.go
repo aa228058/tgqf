@@ -103,6 +103,7 @@ func main() {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
+		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
 		select {
 		case <-ctx.Done(): return
@@ -274,6 +275,28 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
             logger.Info("Telegram group joined","task_id",job.TaskID,"account_id",job.AccountID,"chat_id",chatID)
         }
     }
+}
+
+func processJoinApprovalSync(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
+	tenantSet:=map[string]bool{}
+	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
+	for tenantID:=range tenantSet {
+		jobs,err:=service.ListPendingJoinApprovals(ctx,tenantID,50)
+		if err!=nil {logger.Error("list pending Telegram join approvals","tenant_id",tenantID,"error",err);continue}
+		for _,job:=range jobs {
+			if ctx.Err()!=nil{return}
+			if job.ChatID==0 || !manager.IsConnected(job.AccountID) {continue}
+			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+			memberStatus,checkErr:=manager.CheckOwnChatMembership(checkCtx,job.AccountID,job.ChatID)
+			cancel()
+			if checkErr!=nil {
+				if wait,ok:=tgerr.AsFloodWait(checkErr);ok {logger.Warn("Telegram approval sync FloodWait; deferring checks","account_id",job.AccountID,"wait",wait.String());continue}
+				logger.Warn("check Telegram join approval","task_id",job.TaskID,"account_id",job.AccountID,"error",checkErr)
+				continue
+			}
+			if err:=service.SyncJoinApproval(ctx,job,strings.ToLower(memberStatus));err!=nil {logger.Error("persist Telegram join approval status","task_id",job.TaskID,"account_id",job.AccountID,"error",err)}
+		}
+	}
 }
 
 func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Service, messageService *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
