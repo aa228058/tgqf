@@ -1,0 +1,24 @@
+package messages
+
+import "testing"
+
+func TestShouldCollect(t *testing.T) {
+	tests:=[]struct{name,chatType string;outgoing,replyToOwn,want bool}{
+		{"incoming private","private",false,false,true},
+		{"outgoing private","private",true,false,false},
+		{"incoming group without reply","group",false,false,false},
+		{"incoming group reply to own","group",false,true,true},
+		{"outgoing group reply","group",true,true,false},
+		{"broadcast channel","channel",false,true,false},
+		{"bot peer","bot",false,false,false},
+		{"unknown peer","unknown",false,true,false},
+	}
+	for _,tt:=range tests{t.Run(tt.name,func(t *testing.T){if got:=ShouldCollect(tt.chatType,tt.outgoing,tt.replyToOwn);got!=tt.want{t.Fatalf("ShouldCollect()=%v want %v",got,tt.want)}})}
+}
+
+func TestValidUUID(t *testing.T) {
+	if !validUUID("8f14e45f-ea3e-4e3d-9c2d-5a9f6b8a1234"){t.Fatal("valid UUID rejected")}
+	for _,value:=range []string{"","not-a-uuid","8f14e45f-ea3e-4e3d-9c2d-5a9f6b8a1234x","8f14e45f_ea3e_4e3d_9c2d_5a9f6b8a1234"}{
+		if validUUID(value){t.Errorf("invalid UUID accepted: %q",value)}
+	}
+}
