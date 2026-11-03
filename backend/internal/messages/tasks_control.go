@@ -41,6 +41,8 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 			switch action {
 			case "pause":
 				query = `UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','failed')`
+			case "cancel":
+				query = `UPDATE message_reply_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused','failed')`
 			case "resume", "retry":
 				status := "paused"
 				if action == "retry" { status = "failed" }
@@ -59,7 +61,7 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 				result, err := tx.ExecContext(ctx, query, tenantID, id, status)
 				return checkTaskRows(result, err)
 			case "cancel":
-				return errors.New("cancellation is not supported by the keyword action queue")
+				query = `UPDATE keyword_action_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused','failed')`
 			}
 		case "profile_update":
 			switch action {
