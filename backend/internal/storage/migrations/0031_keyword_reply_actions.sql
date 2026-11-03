@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS keyword_action_jobs (
     chat_id BIGINT NOT NULL,
     reply_to_message_id BIGINT NOT NULL,
     message_text TEXT NOT NULL CHECK (length(message_text) BETWEEN 1 AND 4096),
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','sent','failed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','sent','failed','paused')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     lease_until TIMESTAMPTZ,
@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS keyword_action_jobs (
     last_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (tenant_id, keyword_match_id)
-      REFERENCES tenant_keyword_matches(tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (keyword_match_id)
+      REFERENCES tenant_keyword_matches(id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, telegram_account_id)
       REFERENCES telegram_accounts(tenant_id, id) ON DELETE CASCADE
 );
