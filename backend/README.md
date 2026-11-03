@@ -47,3 +47,15 @@ Telegram connectivity is standardized on `github.com/mtgo-labs/mtgo`; device ide
 ## Go verification
 
 GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds the API using Go 1.26.2. The workflow is the source of truth for dependency resolution and compilation status.
+
+## 账号代理管理 API
+
+代理统一归属账号管理模块，所有接口均使用租户 Bearer Token；租户 ID 只从认证上下文取得。
+- GET /api/v1/proxies：列出当前租户代理，不返回密码或密文。
+- POST /api/v1/proxies：创建代理，字段 name、protocol（socks5/socks4/http/https）、host、port、username、password。
+- PUT /api/v1/proxies/{id}：更新代理配置；password 为空时保留原密码。
+- DELETE /api/v1/proxies/{id}：删除未绑定账号的代理；仍有账号使用时返回 409。
+- POST /api/v1/proxies/{id}/check：执行最多 4 秒的 TCP 端点连通性检查。该检查只确认目标端口可建立 TCP 连接，不代表代理认证或 Telegram 登录验证成功。
+- PATCH /api/v1/accounts/{id}/proxy：绑定代理，传入 proxy_id；传空字符串解除绑定。绑定关系和代理数据均按租户隔离。
+
+代理密码单独使用 SESSION_ENCRYPTION_KEY 进行 AES-256-GCM 加密。Worker 在租户作用域内读取绑定代理并在内存中解密；账号旧版内嵌代理配置仍兼容。账号列表只返回 has_proxy，不返回凭据。
