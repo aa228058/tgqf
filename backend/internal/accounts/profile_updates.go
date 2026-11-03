@@ -194,7 +194,7 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 func (s *Service) CompleteProfileUpdate(ctx context.Context,job ProfileUpdateJob)error {
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='completed',applied_username=$3,lease_until=NULL,last_error='',updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until IS NOT NULL`,job.TenantID,job.ID,job.AppliedUsername)
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,job.AppliedUsername,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
 }
@@ -205,7 +205,7 @@ func (s *Service) RescheduleProfileUpdate(ctx context.Context,job ProfileUpdateJ
 	message:="";if cause!=nil{message=cause.Error()};if len(message)>1000{message=message[:1000]}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='pending',lease_until=NULL,next_run_at=NOW()+($3 * INTERVAL '1 second'),last_error=$4,updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,int64(delay.Seconds()),message)
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,int64(delay.Seconds()),message,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
 }
@@ -229,7 +229,7 @@ func (s *Service) FailProfileUpdate(ctx context.Context,job ProfileUpdateJob,cau
 			if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
 		}
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status=$3,attempts=$4,lease_until=NULL,next_run_at=NOW()+($5 * INTERVAL '1 second'),last_error=$6,updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,attempts,seconds,message)
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$7`,job.TenantID,job.ID,status,attempts,seconds,message,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
 }
@@ -260,7 +260,7 @@ func (s *Service) PauseProfileUpdate(ctx context.Context,job ProfileUpdateJob,re
 	if len(reason)>1000{reason=reason[:1000]}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,reason,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
 }
