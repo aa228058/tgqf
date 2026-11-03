@@ -1,6 +1,10 @@
 package messages
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestShouldCollect(t *testing.T) {
 	tests:=[]struct{name,chatType string;outgoing,replyToOwn,want bool}{
