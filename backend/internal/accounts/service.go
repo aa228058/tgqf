@@ -73,6 +73,28 @@ func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListO
 	return out,total,err
 }
 
+func (s *Service) DeleteBatch(ctx context.Context,tenantID string,accountIDs []string)([]string,error) {
+	ids,err:=normalizeBulkDeleteAccountIDs(accountIDs)
+	if err!=nil{return nil,err}
+	deleted:=make([]string,0,len(ids))
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		rows,err:=tx.QueryContext(ctx,`SELECT id::text FROM telegram_accounts WHERE tenant_id=$1 AND id=ANY($2::uuid[]) FOR UPDATE`,tenantID,ids)
+		if err!=nil{return err}
+		found:=make(map[string]bool,len(ids))
+		for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return err};found[id]=true}
+		if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
+		if len(found)!=len(ids){return errors.New("one or more accounts were not found in this tenant; no accounts were deleted")}
+		res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=ANY($2::uuid[])`,tenantID,ids)
+		if err!=nil{return err}
+		n,err:=res.RowsAffected();if err!=nil{return err}
+		if int(n)!=len(ids){return errors.New("account delete count changed during transaction")}
+		deleted=append(deleted,ids...)
+		return nil
+	})
+	if err!=nil{return nil,err}
+	return deleted,nil
+}
+
 func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,tenantID,id);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func(s *Service)SetGroup(ctx context.Context,tenantID,id,group string)error{group=strings.TrimSpace(group);if len(group)>80{return errors.New("group name must be at most 80 characters")};return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,id,group);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func withTenantTx(ctx context.Context,db *sql.DB,tenantID string,fn func(*sql.Tx)error)error{if tenantID==""{return errors.New("tenant scope is required")};tx,err:=db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback();if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return err};if err=fn(tx);err!=nil{return err};return tx.Commit()}
