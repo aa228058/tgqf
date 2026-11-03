@@ -134,3 +134,24 @@ func (s *Service) LoadProxyJSON(ctx context.Context,tx *sql.Tx,tenantID,proxyID 
 	data,err:=json.Marshal(map[string]any{"protocol":protocol,"addr":net.JoinHostPort(host,strconv.Itoa(port)),"username":username,"password":password})
 	return string(data),err
 }
+
+func (s *Service) UpdateProxy(ctx context.Context,tenantID,proxyID string,input ProxyInput)(Proxy,error){
+	input,err:=validateProxyInput(input)
+	if err!=nil{return Proxy{},err}
+	var passwordCipher []byte
+	if input.Password!=""{
+		passwordCipher,err=encrypt([]byte(input.Password))
+		if err!=nil{return Proxy{},err}
+	}
+	var result Proxy
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		return tx.QueryRowContext(ctx,`UPDATE tenant_proxies SET name=$3,protocol=$4,host=$5,port=$6,username=$7,
+			password_ciphertext=CASE WHEN $8 THEN $9 ELSE password_ciphertext END,updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2
+			RETURNING id::text,name,protocol,host,port,username,password_ciphertext IS NOT NULL,created_at,updated_at`,
+			tenantID,proxyID,input.Name,input.Protocol,input.Host,input.Port,input.Username,input.Password!="",nullBytes(passwordCipher)).
+			Scan(&result.ID,&result.Name,&result.Protocol,&result.Host,&result.Port,&result.Username,&result.HasPassword,&result.CreatedAt,&result.UpdatedAt)
+	})
+	if err!=nil{return Proxy{},err}
+	return result,nil
+}
