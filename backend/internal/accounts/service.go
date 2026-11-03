@@ -64,6 +64,7 @@ type RuntimeAccount struct {
  ID string
  Session string
  ProxyJSON string
+ DeviceProfile device.Profile
  ReconnectAttempts int
  ReconnectAt time.Time
 }
@@ -127,6 +128,23 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 		if err != nil { return nil, err }
 	}
 	return out, nil
+}
+
+// LoadDeviceProfile reads the account's persisted device identity under tenant scope.
+func (s *Service) LoadDeviceProfile(ctx context.Context, tenantID, accountID string) (device.Profile, error) {
+    var profile device.Profile
+    err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+        err := tx.QueryRowContext(ctx, `SELECT device_model,system_version,app_version,lang_code,system_lang_code,lang_pack,package_id
+            FROM telegram_device_profiles WHERE tenant_id=$1 AND telegram_account_id=$2`, tenantID, accountID).
+            Scan(&profile.DeviceModel,&profile.SystemVersion,&profile.AppVersion,&profile.LangCode,&profile.SystemLangCode,&profile.LangPack,&profile.PackageID)
+        if errors.Is(err, sql.ErrNoRows) { return fmt.Errorf("persisted device profile not found for account %s", accountID) }
+        if err != nil { return err }
+        if profile.DeviceModel=="" || profile.SystemVersion=="" || profile.AppVersion=="" {
+            return fmt.Errorf("persisted device profile is incomplete for account %s", accountID)
+        }
+        return nil
+    })
+    return profile, err
 }
 
 // LoadDeviceProfile reads the account's persisted device identity under tenant scope.
