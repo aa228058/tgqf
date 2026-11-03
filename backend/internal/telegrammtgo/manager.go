@@ -335,6 +335,36 @@ func (m *Manager) GetChatHistory(ctx context.Context, accountID string, chatID i
 	return client.GetChatHistory(ctx, chatID, limit, 0)
 }
 
+// IsRepliesToOwnMessages verifies a batch of historical reply targets with one
+// Telegram lookup. Missing targets are intentionally treated as non-matches.
+func (m *Manager) IsRepliesToOwnMessages(ctx context.Context, accountID string, chatID int64, replyToIDs []int32) map[int32]bool {
+	matched := make(map[int32]bool)
+	if len(replyToIDs) == 0 { return matched }
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() { return matched }
+	me := client.Me()
+	if me == nil { return matched }
+	unique := make([]int32, 0, len(replyToIDs))
+	seen := make(map[int32]struct{}, len(replyToIDs))
+	for _, id := range replyToIDs {
+		if id <= 0 { continue }
+		if _, ok := seen[id]; ok { continue }
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 { return matched }
+	originals, err := client.GetMessages(ctx, chatID, unique)
+	if err != nil { return matched }
+	for _, original := range originals {
+		if original != nil && original.ID > 0 && (original.Out || original.FromID == me.ID) {
+			matched[original.ID] = true
+		}
+	}
+	return matched
+}
+
 // IsReplyToOwnMessage verifies the historical reply target against the
 // authenticated account. A failed lookup is treated as not matching.
 func (m *Manager) IsReplyToOwnMessage(ctx context.Context, accountID string, chatID int64, replyToID int32) bool {
