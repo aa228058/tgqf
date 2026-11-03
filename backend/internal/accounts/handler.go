@@ -24,6 +24,9 @@ type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
 type bulkGroupRequest struct{AccountIDs []string `json:"account_ids"`;GroupName string `json:"group_name"`}
 type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
+type phoneStartRequest struct{Phone string `json:"phone"`;GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
+type phoneCodeRequest struct{Code string `json:"code"`}
+type phonePasswordRequest struct{Password string `json:"password"`}
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
@@ -49,7 +52,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("PUT /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateProxy)))
  m.Handle("DELETE /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.deleteProxy)))
  m.Handle("POST /api/v1/proxies/{id}/check",h.auth.Authenticated(http.HandlerFunc(h.checkProxy)))
- if h.telegram!=nil { m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
+ if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
 }
 
 func safeCSVCell(value string) string {
@@ -254,4 +257,49 @@ func (h *Handler) setGroupBatch(w http.ResponseWriter, r *http.Request) {
 	count, err := h.service.SetGroupBatch(r.Context(), user.TenantID, input.AccountIDs, input.GroupName)
 	if err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
 	writeJSON(w, http.StatusOK, map[string]any{"updated": count, "group_name": strings.TrimSpace(input.GroupName)})
+}
+
+
+func (h *Handler) startPhoneLogin(w http.ResponseWriter,r *http.Request) {
+	var q phoneStartRequest
+	if !decode(w,r,&q) { writeError(w,400,"invalid request body");return }
+	u:=auth.UserFromContext(r.Context())
+	a,err:=h.service.CreatePending(r.Context(),u.TenantID,q.GroupName,q.Proxy)
+	if err!=nil {if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error())}else{writeError(w,400,err.Error())};return}
+	profile,err:=h.service.LoadDeviceProfile(r.Context(),u.TenantID,a.ID)
+	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,500,"could not load persisted device profile");return}
+	proxyJSON,err:=h.service.LoadPendingProxyJSON(r.Context(),u.TenantID,a.ID)
+	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,500,"could not load account proxy configuration");return}
+	result,err:=h.telegram.StartPhoneLogin(r.Context(),a.ID,q.Phone,proxyJSON,profile)
+	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram phone login");return}
+	writeJSON(w,201,map[string]any{"account":a,"status":"code_sent","delivery_type":result.DeliveryType,"resend_after_seconds":result.Timeout})
+}
+
+func (h *Handler) verifyPhoneCode(w http.ResponseWriter,r *http.Request) {
+	var q phoneCodeRequest
+	if !decode(w,r,&q){writeError(w,400,"invalid request body");return}
+	u:=auth.UserFromContext(r.Context());id:=r.PathValue("id")
+	pending,err:=h.service.IsPending(r.Context(),u.TenantID,id)
+	if err!=nil{writeError(w,500,"failed to verify pending account");return};if !pending{writeError(w,404,"pending account not found");return}
+	result,needsPassword,err:=h.telegram.VerifyPhoneCode(r.Context(),id,q.Code)
+	if err!=nil{writeError(w,400,err.Error());return}
+	if needsPassword{writeJSON(w,202,map[string]any{"status":"two_factor_required"});return}
+	account,err:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,result.FirstName,result.SessionString)
+	_=h.telegram.Stop(id)
+	if err!=nil{writeError(w,409,"Telegram authorization succeeded but account details could not be saved");return}
+	writeJSON(w,200,map[string]any{"status":"authorized","account":account,"telegram_user":map[string]any{"user_id":result.UserID,"username":result.Username,"first_name":result.FirstName}})
+}
+
+func (h *Handler) verifyPhonePassword(w http.ResponseWriter,r *http.Request) {
+	var q phonePasswordRequest
+	if !decode(w,r,&q){writeError(w,400,"invalid request body");return}
+	u:=auth.UserFromContext(r.Context());id:=r.PathValue("id")
+	pending,err:=h.service.IsPending(r.Context(),u.TenantID,id)
+	if err!=nil{writeError(w,500,"failed to verify pending account");return};if !pending{writeError(w,404,"pending account not found");return}
+	result,err:=h.telegram.VerifyPhonePassword(r.Context(),id,q.Password)
+	if err!=nil{writeError(w,400,err.Error());return}
+	account,err:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,result.FirstName,result.SessionString)
+	_=h.telegram.Stop(id)
+	if err!=nil{writeError(w,409,"Telegram authorization succeeded but account details could not be saved");return}
+	writeJSON(w,200,map[string]any{"status":"authorized","account":account,"telegram_user":map[string]any{"user_id":result.UserID,"username":result.Username,"first_name":result.FirstName}})
 }
