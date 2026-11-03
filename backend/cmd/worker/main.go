@@ -92,6 +92,7 @@ func main() {
 	logger.Info("Telegram account worker started")
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
+		processReplyJobs(ctx, messageService, manager, logger)
 		select { case <-ctx.Done(): return; case <-ticker.C: }
 	}
 }
@@ -160,4 +161,25 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 		logger.Info("persisted refreshed Telegram session", "account_id", id)
 	}
 	return nil
+}
+
+func processReplyJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
+	jobs,err:=service.ClaimPendingReplies(ctx,20)
+	if err!=nil { logger.Error("claim Telegram reply jobs","error",err);return }
+	for _,job:=range jobs {
+		if ctx.Err()!=nil{return}
+		sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
+		telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+		cancel()
+		if sendErr!=nil {
+			if err:=service.FailReply(ctx,job,sendErr);err!=nil { logger.Error("reschedule failed Telegram reply","job_id",job.ID,"error",err) }
+			logger.Warn("Telegram reply failed","job_id",job.ID,"account_id",job.AccountID,"attempt",job.Attempts,"error",sendErr)
+			continue
+		}
+		if err:=service.CompleteReply(ctx,job,telegramMessageID);err!=nil {
+			logger.Error("persist sent Telegram reply","job_id",job.ID,"telegram_message_id",telegramMessageID,"error",err)
+			continue
+		}
+		logger.Info("Telegram reply sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
+	}
 }
