@@ -159,15 +159,31 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 	out:=[]ProfileUpdateJob{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		rows,err:=tx.QueryContext(ctx,`WITH picked AS (
-			SELECT id FROM account_profile_update_jobs
-			WHERE tenant_id=$1 AND next_run_at<=NOW()
-			  AND (status='pending' OR (status='processing' AND lease_until<NOW()))
-			ORDER BY next_run_at,created_at,id
-			FOR UPDATE SKIP LOCKED LIMIT $2
+			SELECT j.id,j.tenant_id,j.account_id
+			FROM account_profile_update_jobs j
+			JOIN telegram_accounts acc ON acc.tenant_id=j.tenant_id AND acc.id=j.account_id
+			WHERE j.tenant_id=$1 AND j.next_run_at<=NOW()
+			  AND (j.status='pending' OR (j.status='processing' AND j.lease_until<NOW()))
+			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
+			  AND COALESCE(acc.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
+			  AND COALESCE(acc.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
+			  AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.account_id AND x.status='processing' AND x.lease_until>NOW())
+			  AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.account_id AND x.status='processing' AND x.lease_until>NOW())
+			  AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.account_id AND x.status='processing' AND x.lease_until>NOW())
+			  AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.account_id AND x.status='processing' AND x.lease_until>NOW())
+			ORDER BY j.next_run_at,j.created_at,j.id
+			FOR UPDATE OF j,acc SKIP LOCKED LIMIT $2
+		), claimed AS (
+			UPDATE account_profile_update_jobs j SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',updated_at=NOW()
+			FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
+			RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.username_prefix,j.username_random_length,j.username_charset,j.photo_data,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at,j.tenant_id AS schedule_tenant_id,j.account_id AS schedule_account_id
+		), scheduled AS (
+			UPDATE telegram_accounts acc SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
+			FROM claimed c WHERE acc.tenant_id=c.schedule_tenant_id AND acc.id=c.schedule_account_id
+			RETURNING acc.id
 		)
-		UPDATE account_profile_update_jobs j SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',updated_at=NOW()
-		FROM picked WHERE j.id=picked.id
-		RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.username_prefix,j.username_random_length,j.username_charset,j.photo_data,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at`,tenantID,limit)
+		SELECT c.id,c.batch_id,c.tenant_id,c.account_id,c.first_name,c.last_name,c.about,c.generate_username,c.username_prefix,c.username_random_length,c.username_charset,c.photo_data,c.applied_username,c.status,c.attempts,c.next_run_at,c.lease_until,c.last_error,c.created_at,c.updated_at
+		FROM claimed c JOIN scheduled s ON TRUE`,tenantID,limit)
 		if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
@@ -209,6 +225,9 @@ func (s *Service) FailProfileUpdate(ctx context.Context,job ProfileUpdateJob,cau
 	if floodWait<=0{status,delay=profileUpdateRetry(job.Attempts);attempts++}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		seconds:=int64(delay/time.Second);if delay%time.Second!=0{seconds++};if seconds<1{seconds=1}
+		if floodWait>0 {
+			if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
+		}
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status=$3,attempts=$4,lease_until=NULL,next_run_at=NOW()+($5 * INTERVAL '1 second'),last_error=$6,updated_at=NOW()
 			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,attempts,seconds,message)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
