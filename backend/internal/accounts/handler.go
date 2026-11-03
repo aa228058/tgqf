@@ -16,6 +16,7 @@ import (
 )
 type Handler struct{service *Service;auth *auth.Handler;telegram *telegrammtgo.Manager}
 type createRequest struct{Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Session string `json:"session"`;Proxy json.RawMessage `json:"proxy"`}
+type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
 type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
@@ -23,6 +24,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
  m.Handle("GET /api/v1/accounts/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportCSV)))
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
+ m.Handle("POST /api/v1/accounts/import",h.auth.Authenticated(http.HandlerFunc(h.importBatch)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
@@ -59,6 +61,29 @@ func(h *Handler)exportCSV(w http.ResponseWriter,r *http.Request){
 }
 
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"));items,total,err:=h.service.ListPage(r.Context(),u.TenantID,AccountListOptions{Query:r.URL.Query().Get("q"),GroupName:r.URL.Query().Get("group"),Status:r.URL.Query().Get("status"),Limit:limit,Offset:offset});if err!=nil{writeError(w,400,err.Error());return};if limit<1||limit>100{limit=50};if offset<0{offset=0};writeJSON(w,200,map[string]any{"accounts":items,"total":total,"limit":limit,"offset":offset})}
+
+func(h *Handler)importBatch(w http.ResponseWriter,r *http.Request){
+	var input batchImportRequest
+	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid import payload");return}
+	if len(input.Accounts)==0||len(input.Accounts)>20{writeError(w,http.StatusBadRequest,"import must contain between 1 and 20 accounts");return}
+	u:=auth.UserFromContext(r.Context())
+	type itemResult struct{Index int `json:"index"`;Account *Account `json:"account,omitempty"`;Error string `json:"error,omitempty"`}
+	results:=make([]itemResult,0,len(input.Accounts));success:=0
+	for i,item:=range input.Accounts{
+		account,err:=h.service.Create(r.Context(),u.TenantID,item.Phone,item.DisplayName,item.GroupName,item.Session,item.Proxy)
+		if err!=nil{
+			message:="account import failed"
+			if strings.Contains(err.Error(),"account limit reached"){message="account limit reached";results=append(results,itemResult{Index:i,Error:message});for j:=i+1;j<len(input.Accounts);j++{results=append(results,itemResult{Index:j,Error:"not processed after account limit reached"})};break}
+			if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){message="session encryption is not configured"}
+			results=append(results,itemResult{Index:i,Error:message});continue
+		}
+		results=append(results,itemResult{Index:i,Account:&account});success++
+	}
+	status:=http.StatusOK
+	if success==0{status=http.StatusUnprocessableEntity}else if success<len(input.Accounts){status=http.StatusMultiStatus}
+	writeJSON(w,status,map[string]any{"total":len(input.Accounts),"succeeded":success,"failed":len(input.Accounts)-success,"results":results})
+}
+
 func(h *Handler)create(w http.ResponseWriter,r *http.Request){var q createRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());a,err:=h.service.Create(r.Context(),u.TenantID,q.Phone,q.DisplayName,q.GroupName,q.Session,q.Proxy);if err!=nil{if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error());return};if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){writeError(w,503,"session encryption is not configured");return};writeError(w,400,err.Error());return};writeJSON(w,201,map[string]any{"account":a})}
 func(h *Handler)delete(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());if err:=h.service.Delete(r.Context(),u.TenantID,r.PathValue("id"));err!=nil{writeError(w,404,"account not found");return};w.WriteHeader(204)}
 func(h *Handler)setGroup(w http.ResponseWriter,r *http.Request){var q groupRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());if err:=h.service.SetGroup(r.Context(),u.TenantID,r.PathValue("id"),q.GroupName);err!=nil{if strings.Contains(err.Error(),"account not found"){writeError(w,404,"account not found");return};writeError(w,400,err.Error());return};writeJSON(w,200,map[string]string{"group_name":strings.TrimSpace(q.GroupName)})}
