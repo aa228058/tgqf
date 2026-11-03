@@ -183,3 +183,16 @@
 CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一致，已按编译错误修正；之后对应工作流已出现成功结果。其余后续提交工作流仍需以各自 head SHA 的最终状态为准。
 
 本轮仍不修改前端。语音通话继续保持不可用，不允许使用伪造音频或文字邀请替代真实通话。
+
+
+## 9. 2026-11-04 代理检测能力补齐（增量）
+
+- [x] 代理检测不再只测试代理主机 TCP 端口是否可达。
+- [x] SOCKS5：协商无认证/用户名密码认证，验证认证结果，并请求建立到 Telegram 数据中心 TCP 端点 `149.154.167.51:443` 的隧道。
+- [x] SOCKS4：验证 CONNECT 响应，并支持 SOCKS4a 域名目标。
+- [x] HTTP/HTTPS：发送 CONNECT；配置用户名时发送 Basic Proxy-Authorization；HTTPS 代理先完成 TLS 握手并验证证书。
+- [x] 从租户代理记录读取协议、用户名及加密密码；密码只在 Worker/API 服务端解密使用，不回显。
+- [x] 检测接口成功响应明确标注 `proxy_auth_and_telegram_dc_tcp`，失败时不再误报为单纯 TCP 不可达。
+- [x] 增加 SOCKS5 认证成功/失败、HTTP CONNECT 认证头/代理拒绝、SOCKS4 CONNECT 测试。
+- CI：提交 `f0115a6392434492382711912cf185d55f18695d` 对应 Go backend checks 成功（test、vet、API build）。
+- 验收边界：该检测证明代理协议协商/认证和 Telegram DC TCP 隧道可建立；**不等于 Telegram 账号 MTProto 登录成功**，账号最终连接状态仍以 MTGo Worker 的真实连接结果为准。
