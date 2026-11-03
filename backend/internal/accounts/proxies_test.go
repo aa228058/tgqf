@@ -3,8 +3,7 @@ package accounts
 import (
 	"context"
 	"net"
-	"strconv"
-	"testing"
+		"testing"
 )
 
 func TestValidateProxyInput(t *testing.T) {
@@ -26,7 +25,6 @@ func TestCheckProxyTCPReachability(t *testing.T) {
 	listener,err:=net.Listen("tcp","127.0.0.1:0")
 	if err!=nil{t.Fatal(err)}
 	defer listener.Close()
-	port,err:=strconv.Atoi(listener.Addr().(*net.TCPAddr).PortString())
-	if err!=nil{t.Fatal(err)}
+	port:=listener.Addr().(*net.TCPAddr).Port
 	if err:=CheckProxy(context.Background(),"127.0.0.1",port);err!=nil{t.Fatalf("reachable endpoint rejected: %v",err)}
 }
