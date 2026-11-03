@@ -54,6 +54,8 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 	}
 	for id, account := range allowed {
 		if manager.IsConnected(id) { continue }
+		// Remove stale disconnected clients before attempting a reconnect.
+		_ = manager.Stop(id)
 		if err := manager.Start(id, account.Session, account.ProxyJSON); err != nil {
 			logger.Warn("Telegram account connection failed", "account_id", id, "error", err)
 			_ = accountsService.SetRuntimeStatus(ctx, account.TenantID, id, "error", err.Error())
