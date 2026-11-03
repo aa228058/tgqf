@@ -317,3 +317,60 @@ func (s *Service) PauseKeywordAction(ctx context.Context,job KeywordActionJob,re
         if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
     })
 }
+
+
+type KeywordActionRecord struct {
+    ID string `json:"id"`
+    MatchID int64 `json:"keyword_match_id"`
+    RuleName string `json:"rule_name"`
+    AccountID string `json:"account_id"`
+    ChatID int64 `json:"chat_id"`
+    ReplyToMessageID int64 `json:"reply_to_message_id"`
+    Text string `json:"message_text"`
+    Status string `json:"status"`
+    Attempts int `json:"attempts"`
+    TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
+    LastError string `json:"last_error"`
+    AvailableAt time.Time `json:"available_at"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,limit,offset int)([]KeywordActionRecord,int,error) {
+    if limit<1||limit>100{limit=50};if offset<0{offset=0}
+    switch status {case "","pending","processing","sent","failed","paused":default:return nil,0,errors.New("invalid keyword action status")}
+    items:=[]KeywordActionRecord{};total:=0
+    err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        where:="j.tenant_id=$1";args:=[]any{tenantID}
+        if status!=""{args=append(args,status);where+=" AND j.status=$2"}
+        if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM keyword_action_jobs j WHERE `+where,args...).Scan(&total);err!=nil{return err}
+        args=append(args,limit,offset);li,oi:=len(args)-1,len(args)
+        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.status,j.attempts,j.telegram_message_id,j.last_error,j.available_at,j.created_at,j.updated_at
+            FROM keyword_action_jobs j JOIN tenant_keyword_matches m ON m.id=j.keyword_match_id AND m.tenant_id=j.tenant_id
+            JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
+            WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
+        if err!=nil{return err};defer rows.Close()
+        for rows.Next(){var item KeywordActionRecord;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};items=append(items,item)}
+        return rows.Err()
+    })
+    return items,total,err
+}
+
+func (s *Service) ChangeKeywordActionStatus(ctx context.Context,tenantID,id,action string) error {
+    if !validUUID(id){return errors.New("keyword action not found")}
+    var query string
+    switch action {
+    case "pause":
+        query=`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('pending','failed')`
+    case "resume":
+        query=`UPDATE keyword_action_jobs j SET status='pending',attempts=0,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenants t WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='paused' AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()`
+    case "retry":
+        query=`UPDATE keyword_action_jobs j SET status='pending',attempts=0,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenants t WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='failed' AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()`
+    default:return errors.New("unsupported keyword action")
+    }
+    return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        result,err:=tx.ExecContext(ctx,query,tenantID,id);if err!=nil{return err}
+        n,_:=result.RowsAffected();if n==0{return errors.New("keyword action not found or state does not allow action")}
+        return nil
+    })
+}
