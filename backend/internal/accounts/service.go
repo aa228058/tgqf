@@ -234,6 +234,20 @@ func (s *Service) CreatePending(ctx context.Context, tenantID, group string, pro
  return a,nil
 }
 
+
+func (s *Service) LoadPendingProxyJSON(ctx context.Context,tenantID,accountID string)(string,error){
+	var result string
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		var proxyID sql.NullString
+		var proxyCipher []byte
+		if err:=tx.QueryRowContext(ctx,`SELECT proxy_id::text,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='pending'`,tenantID,accountID).Scan(&proxyID,&proxyCipher);err!=nil{return err}
+		if proxyID.Valid && proxyID.String!="" { var err error;result,err=s.LoadProxyJSON(ctx,tx,tenantID,proxyID.String);return err }
+		if len(proxyCipher)>0 { plain,err:=decrypt(proxyCipher);if err!=nil{return err};result=string(plain) }
+		return nil
+	})
+	return result,err
+}
+
 func (s *Service) IsPending(ctx context.Context, tenantID, accountID string) (bool, error) {
 	var pending bool
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
