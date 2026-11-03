@@ -5,7 +5,6 @@ import (
  "net/http"
  "strings"
  "context"
- "fmt"
  "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 
  "github.com/aa228058/tgqf/backend/internal/auth"
