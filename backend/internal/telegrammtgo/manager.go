@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mtgo-labs/mtgo/telegram"
+ "github.com/mtgo-labs/mtgo/telegram/types"
 )
 
 type RuntimeConfig struct {
@@ -33,6 +34,7 @@ type Manager struct {
 	cfg RuntimeConfig
 	clients map[string]*telegram.Client
 	pendingQR map[string]*pendingQR
+ messageHandler func(accountID string, message *types.Message, ownUserID int64)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
@@ -49,6 +51,26 @@ type QRAuthResult struct { Pending bool; Challenge *QRChallenge; SessionString s
 func NewManager(cfg RuntimeConfig) *Manager {
 	if cfg.ConnectTimeout <= 0 { cfg.ConnectTimeout = 45 * time.Second }
 	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR)}
+}
+
+// SetMessageHandler installs the worker-owned callback for new Telegram messages.
+func (m *Manager) SetMessageHandler(handler func(accountID string, message *types.Message, ownUserID int64)) {
+	m.mu.Lock()
+	m.messageHandler = handler
+	m.mu.Unlock()
+}
+
+func (m *Manager) registerMessageHandler(accountID string, client *telegram.Client) {
+	m.mu.RLock()
+	handler := m.messageHandler
+	m.mu.RUnlock()
+	if handler == nil { return }
+	client.OnMessage(func(ctx *telegram.Context, message *types.Message) {
+		if message == nil { return }
+		me := client.Me()
+		if me == nil { return }
+		handler(accountID, message, me.ID)
+	})
 }
 
 // Start restores an existing MTGo-compatible session and connects it.
@@ -85,6 +107,7 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string) error {
 	}
 	m.clients[accountID] = client
 	m.mu.Unlock()
+	m.registerMessageHandler(accountID, client)
 
 	if err := client.Connect(m.cfg.ConnectTimeout); err != nil {
 		m.mu.Lock()
