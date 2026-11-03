@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"sync"
 	"time"
@@ -99,6 +100,7 @@ func main() {
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
+		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
@@ -220,4 +222,48 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 		}
 		logger.Info("Telegram reply sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
 	}
+}
+
+func processJoinTasks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
+    tenantSet:=map[string]bool{}
+    accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
+    for tenantID:=range tenantSet {
+        jobs,err:=service.ClaimJoinTaskAccounts(ctx,tenantID,10)
+        if err!=nil {logger.Error("claim Telegram join tasks","tenant_id",tenantID,"error",err);continue}
+        for _,job:=range jobs {
+            if ctx.Err()!=nil{return}
+            if !service.TenantCanOperate(ctx,job.TenantID) {
+                if err:=service.FailJoinTaskAccount(ctx,job,"tenant subscription inactive; task requires manual review");err!=nil{logger.Error("close join task for inactive tenant","task_id",job.TaskID,"error",err)}
+                continue
+            }
+            if !manager.IsConnected(job.AccountID) {
+                if err:=service.RescheduleJoinTaskAccount(ctx,job,30*time.Second,"Telegram account is temporarily disconnected");err!=nil{logger.Error("reschedule join task for offline account","task_id",job.TaskID,"error",err)}
+                continue
+            }
+            joinCtx,cancel:=context.WithTimeout(ctx,60*time.Second)
+            chatID,joinErr:=manager.JoinChat(joinCtx,job.AccountID,job.TargetURL)
+            cancel()
+            if joinErr!=nil {
+                if wait,ok:=tgerr.AsFloodWait(joinErr);ok {
+                    logger.Warn("Telegram join FloodWait; preserving server cooldown","task_id",job.TaskID,"account_id",job.AccountID,"wait",wait.String())
+                    if err:=service.RescheduleJoinTaskAccount(ctx,job,wait,joinErr.Error());err!=nil{logger.Error("reschedule join task after FloodWait","task_id",job.TaskID,"error",err)}
+                    continue
+                }
+                upper:=strings.ToUpper(joinErr.Error())
+                if strings.Contains(upper,"INVITE_REQUEST_SENT") {
+                    if err:=service.CompleteJoinTaskAccount(ctx,job,0,"request_pending");err!=nil{logger.Error("record pending Telegram join request","task_id",job.TaskID,"error",err)}
+                    continue
+                }
+                if strings.Contains(upper,"USER_ALREADY_PARTICIPANT")||strings.Contains(upper,"ALREADY_PARTICIPANT") {
+                    if err:=service.CompleteJoinTaskAccount(ctx,job,0,"already_member");err!=nil{logger.Error("record existing Telegram membership","task_id",job.TaskID,"error",err)}
+                    continue
+                }
+                if err:=service.FailJoinTaskAccount(ctx,job,joinErr.Error());err!=nil{logger.Error("record failed Telegram join","task_id",job.TaskID,"error",err)}
+                logger.Warn("Telegram group join failed","task_id",job.TaskID,"account_id",job.AccountID,"error",joinErr)
+                continue
+            }
+            if err:=service.CompleteJoinTaskAccount(ctx,job,chatID,"not_required");err!=nil{logger.Error("persist Telegram group join","task_id",job.TaskID,"chat_id",chatID,"error",err);continue}
+            logger.Info("Telegram group joined","task_id",job.TaskID,"account_id",job.AccountID,"chat_id",chatID)
+        }
+    }
 }
