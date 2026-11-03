@@ -191,6 +191,7 @@ func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,membe
 		return nil
 	}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
 		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,last_error='',updated_at=NOW()
 			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending'`,status,application,job.TenantID,job.TaskID,job.AccountRowID)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return nil}
