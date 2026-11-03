@@ -23,6 +23,13 @@ func (h *Handler) listProxies(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,map[string]any{"proxies":items})
 }
 
+func (h *Handler) listProxyChecks(w http.ResponseWriter,r *http.Request) {
+	u:=auth.UserFromContext(r.Context())
+	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"))
+	items,err:=h.service.ListProxyChecks(r.Context(),u.TenantID,r.PathValue("id"),limit)
+	if err!=nil{if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return};writeError(w,http.StatusInternalServerError,"failed to list proxy check history");return}
+	writeJSON(w,http.StatusOK,map[string]any{"checks":items})
+}
 func (h *Handler) createProxy(w http.ResponseWriter,r *http.Request) {
 	var input ProxyInput
 	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
