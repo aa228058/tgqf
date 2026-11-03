@@ -150,7 +150,7 @@ func (s *Service) PauseJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be paused")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='queued'",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','processing')",tenantID,id)
         return err
     })
 }
