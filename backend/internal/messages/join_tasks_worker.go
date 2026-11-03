@@ -52,7 +52,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 LIMIT $2 FOR UPDATE OF a,acc SKIP LOCKED
             ), claimed AS (
                 UPDATE tenant_join_task_accounts a
-                SET status='processing',lease_until=NOW()+INTERVAL '90 seconds',attempts=a.attempts+1,updated_at=NOW()
+                SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
                 RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
