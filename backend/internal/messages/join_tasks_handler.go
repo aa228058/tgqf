@@ -20,7 +20,7 @@ func (h *Handler) joinTasks(w http.ResponseWriter,r *http.Request) {
         if err:=decodeMessageJSON(w,r,32<<10,&input);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid join task body"});return}
         created,err:=h.service.CreateJoinTask(r.Context(),user.TenantID,user.ID,input)
         if err!=nil{status:=http.StatusBadRequest;if err.Error()=="tenant subscription inactive"{status=http.StatusForbidden};messageJSON(w,status,map[string]string{"error":err.Error()});return}
-        messageJSON(w,http.StatusCreated,map[string]any{"task":created,"execution_enabled":true,"notice":"Public username and public-link targets are executed by the worker after explicit authorization. Private invite links are not supported; Telegram join requests are recorded as pending."})
+        messageJSON(w,http.StatusCreated,map[string]any{"task":created,"execution_enabled":true,"notice":"Public username and public-link targets are executed by the worker after explicit authorization. Public targets and encrypted private invite links are executed by the worker after explicit authorization. Telegram join requests remain pending until the worker synchronizes approval or decline status."})
     default:messageJSON(w,http.StatusMethodNotAllowed,map[string]string{"error":"method not allowed"})
     }
 }
