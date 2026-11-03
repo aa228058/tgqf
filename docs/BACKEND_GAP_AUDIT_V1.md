@@ -62,7 +62,7 @@
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
 
 ### P1 — 基础能力补齐
-- P1-01 进行中：MTGo 手机验证码及 2FA 登录 API 已实现（`POST /accounts/phone/start`、`POST /accounts/{id}/phone/verify`、`POST /accounts/{id}/phone/2fa`），challenge 在 Manager 内存保存，成功后复用加密 Session 持久化；批量登录编排、重启恢复、SQLite `.session` 导入和真实账号验收仍未完成。
+- P1-01 进行中：MTGo 手机验证码及 2FA 登录 API 已实现（`POST /accounts/phone/start`、`POST /accounts/{id}/phone/verify`、`POST /accounts/{id}/phone/2fa`），challenge 在 Manager 内存保存并设置 10 分钟过期，超时自动拒绝并断开待登录客户端，成功后复用加密 Session 持久化；批量登录编排、重启恢复、SQLite `.session` 导入和真实账号验收仍未完成。
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
 - [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
 - P1-04 账号标签/搜索/分页/批量操作/导出/断开重连。
