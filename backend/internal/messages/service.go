@@ -386,6 +386,18 @@ func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody
 // processing leases are reclaimable after a worker restart.
 func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]ReplyJob,error) {
 	if maxJobs<1||maxJobs>50 {maxJobs=10}
+	// Expired/disabled tenants are swept before any active tenant can claim work.
+	inactiveRows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status<>'active' OR expires_at IS NULL OR expires_at<=NOW()`)
+	if err!=nil{return nil,err}
+	var inactiveTenants []string
+	for inactiveRows.Next(){var id string;if err:=inactiveRows.Scan(&id);err!=nil{inactiveRows.Close();return nil,err};inactiveTenants=append(inactiveTenants,id)}
+	if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
+	for _,tenantID:=range inactiveTenants {
+		if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+			return err
+		});err!=nil{return nil,err}
+	}
 	rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()`)
 	if err!=nil{return nil,err}
 	var tenants []string
@@ -413,6 +425,20 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 		if err!=nil{return nil,err}
 	}
 	return jobs,nil
+}
+
+func (s *Service) TenantCanOperate(ctx context.Context, tenantID string) bool {
+	var allowed bool
+	err:=s.db.QueryRowContext(ctx,`SELECT status='active' AND expires_at>NOW() FROM tenants WHERE id=$1`,tenantID).Scan(&allowed)
+	return err==nil && allowed
+}
+
+func (s *Service) PauseReply(ctx context.Context, job ReplyJob, reason string) error {
+	reason=strings.TrimSpace(reason);if reason==""{reason="tenant inactive; manual review required"};if len(reason)>500{reason=reason[:500]}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
+		return err
+	})
 }
 
 func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessageID int64) error {
