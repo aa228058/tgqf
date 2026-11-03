@@ -67,9 +67,10 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 2. 租户可配置规则：启停汇总、选择账号、选择群组/聊天 ID、启用文字或媒体、关键词匹配。未配置时默认收集所有账号的符合固定规则的文字和媒体消息。过滤在入库前执行，不是只隐藏列表结果。
 
 接口（租户 Bearer Token）：
+- GET /api/v1/groups：返回账号已观察到的群组/频道资料，支持 chat_type=group|channel、q 名称/用户名搜索，以及 limit/offset 分页；只读当前租户数据。
 - GET /api/v1/messages：默认只返回未处理消息；支持 limit、offset、include_processed=true。
 - GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、用户名、成员数、认证标记、未处理数量和最近一条消息。
-- GET /api/v1/messages/events：SSE 实时事件流，使用 Bearer Token 认证；连接后推送 `message` 事件（JSON 包含 `type`、`account_id`、`chat_id`、`message_id`、`created_at`），每 25 秒发送心跳。浏览器端请用支持 Authorization 请求头的 fetch 流式读取，不要把长期令牌放进 URL。事件通过 Redis 按租户隔离发布，数据库仍是消息事实来源；断线重连后应重新拉取未处理列表以补齐遗漏。群组资料按租户/账号/聊天隔离缓存，只在消息通过租户筛选并实际入库时更新
+- GET /api/v1/messages/events：SSE 实时事件流，使用 Bearer Token 认证；连接后推送 `message` 事件（JSON 包含 `type`、`account_id`、`chat_id`、`message_id`、`created_at`），每 25 秒发送心跳。浏览器端请用支持 Authorization 请求头的 fetch 流式读取，不要把长期令牌放进 URL。事件通过 Redis 按租户隔离发布，数据库仍是消息事实来源；断线重连后应重新拉取未处理列表以补齐遗漏。群组/频道资料按租户/账号/聊天隔离缓存：Worker 观察到私聊、群组或频道事件时更新必要的聊天元数据，不受消息正文采集开关、关键词或“仅收回复本人消息”规则影响；这些规则仍严格控制消息正文入库。资料库只包含账号实际观察到的聊天，不枚举未知对话，也不代表完整 Telegram 群组目录。
 - PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
 - GET /api/v1/messages/settings：读取当前租户收集条件。
 - PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
