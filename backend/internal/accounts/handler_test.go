@@ -114,3 +114,12 @@ func TestNormalizeBulkPhoneVerify(t *testing.T) {
 	}
 	for i,input:=range cases { if _,err:=normalizeBulkPhoneVerify(input);err==nil { t.Errorf("case %d unexpectedly accepted",i) } }
 }
+
+func TestNormalizeBulkDeleteAccountIDs(t *testing.T) {
+	id:="11111111-1111-4111-8111-111111111111"
+	got,err:=normalizeBulkDeleteAccountIDs([]string{" "+id+" "})
+	if err!=nil||len(got)!=1||got[0]!=id{t.Fatalf("unexpected normalized IDs %#v, %v",got,err)}
+	for _,ids:=range [][]string{nil, {id,id}, {"invalid"}, make([]string,101)} {
+		if _,err:=normalizeBulkDeleteAccountIDs(ids);err==nil{t.Errorf("invalid delete IDs accepted: %#v",ids)}
+	}
+}
