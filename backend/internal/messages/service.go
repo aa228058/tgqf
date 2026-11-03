@@ -183,6 +183,9 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 				 last_seen_at=NOW(),updated_at=NOW()
 				RETURNING id`,in.ChatID,in.ChatType,strings.TrimSpace(in.ChatTitle),strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified).Scan(&groupID)
 			if err!=nil{return err}
+			if username:=strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@");username!="" {
+				if _,err=tx.ExecContext(ctx,`UPDATE public_group_links SET group_id=$1,last_seen_at=NOW() WHERE link_type='public' AND group_id IS NULL AND lower(public_url)=lower($2)`,groupID,"https://t.me/"+username);err!=nil{return err}
+			}
 			_,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count)
 				VALUES($1,$2,$3,$4,NOW(),NOW(),1)
 				ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET last_seen_at=NOW(),discovery_count=public_group_sources.discovery_count+1`,
