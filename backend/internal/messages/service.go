@@ -281,6 +281,8 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 }
 
 
+var ErrInvalidGroupLibraryQuery = errors.New("invalid group library query")
+
 type GroupLibraryItem struct {
 	AccountID string `json:"account_id"`
 	AccountName string `json:"account_name"`
@@ -298,10 +300,10 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 	if offset < 0 { offset = 0 }
 	chatType = strings.ToLower(strings.TrimSpace(chatType))
 	if chatType != "" && chatType != "group" && chatType != "channel" {
-		return nil, 0, errors.New("chat_type must be group or channel")
+		return nil, 0, ErrInvalidGroupLibraryQuery
 	}
 	query = strings.TrimSpace(query)
-	if len(query) > 100 { return nil, 0, errors.New("search query is too long") }
+	if len(query) > 100 { return nil, 0, ErrInvalidGroupLibraryQuery }
 	items := []GroupLibraryItem{}
 	total := 0
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
