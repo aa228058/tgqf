@@ -75,9 +75,15 @@ func main() {
 		if textBody == "" { textBody = message.Caption }
 		mediaType := ""
 		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
+		photoID := ""
+		if message.Chat.Photo != nil {
+			photoID = message.Chat.Photo.BigPhotoUniqueID
+			if photoID == "" { photoID = message.Chat.Photo.SmallPhotoUniqueID }
+		}
 		_, err := messageService.Ingest(ctx, tenantValue.(string), messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
-			ChatType: chatType, ChatTitle: message.Chat.FullName(), SenderID: message.FromID,
+			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, ChatPhotoID: photoID, SenderID: message.FromID,
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
 		})
