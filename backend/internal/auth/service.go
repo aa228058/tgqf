@@ -51,3 +51,35 @@ func (s *Service) Audit(ctx context.Context, tenantID, actorID, action, resource
  _,err=s.db.ExecContext(ctx,`INSERT INTO audit_logs(tenant_id,actor_user_id,action,resource_type,resource_id,details) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,tenant,actorID,action,resourceType,resourceID,string(raw))
  return err
 }
+
+
+type WorkerInstance struct {
+	InstanceID string `json:"instance_id"`
+	Hostname string `json:"hostname"`
+	ProcessID int `json:"process_id"`
+	Status string `json:"status"`
+	HeartbeatAt time.Time `json:"heartbeat_at"`
+	StartedAt time.Time `json:"started_at"`
+	StoppedAt *time.Time `json:"stopped_at,omitempty"`
+	Stale bool `json:"stale"`
+}
+
+func (s *Service) ListWorkerInstances(ctx context.Context, limit int) ([]WorkerInstance, error) {
+	if limit < 1 || limit > 200 { limit = 100 }
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT instance_id,hostname,process_id,status,heartbeat_at,started_at,stopped_at
+		FROM worker_instances ORDER BY heartbeat_at DESC LIMIT $1
+	`, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	items := make([]WorkerInstance, 0)
+	now := time.Now().UTC()
+	for rows.Next() {
+		var item WorkerInstance
+		if err := rows.Scan(&item.InstanceID,&item.Hostname,&item.ProcessID,&item.Status,&item.HeartbeatAt,&item.StartedAt,&item.StoppedAt); err != nil { return nil, err }
+		item.Stale = item.Status == "running" && now.Sub(item.HeartbeatAt) > 45*time.Second
+		if item.Stale { item.Status = "stale" }
+		items = append(items,item)
+	}
+	return items, rows.Err()
+}
