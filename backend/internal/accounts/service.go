@@ -35,7 +35,7 @@ func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session str
 func nullBytes(v []byte)any{if len(v)==0{return nil};return v}
 func(s *Service)List(ctx context.Context,tenantID string)([]Account,error){
  out:=[]Account{}
- err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,phone,display_name,group_name,status,session_ciphertext IS NOT NULL,proxy_ciphertext IS NOT NULL,last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,proxy_ciphertext IS NOT NULL,last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
  return out,err
 }
 func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,tenantID,id);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
@@ -115,4 +115,40 @@ func (s *Service) SetRuntimeStatus(ctx context.Context, tenantID, accountID, sta
 		result, err := tx.ExecContext(ctx, `UPDATE telegram_accounts SET status=$3,last_error=$4,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`, tenantID, accountID, status, lastError)
 		if err != nil { return err }; n, _ := result.RowsAffected(); if n == 0 { return errors.New("account not found") }; return nil
 	})
+}
+
+func (s *Service) CreatePending(ctx context.Context, tenantID, group string, proxy json.RawMessage) (Account, error) {
+ group=strings.TrimSpace(group)
+ if tenantID=="" || len(group)>80 { return Account{},errors.New("invalid pending account fields") }
+ if len(proxy)>16384 { return Account{},errors.New("proxy configuration is too large") }
+ var proxyCipher []byte
+ if len(proxy)>0 && string(proxy)!="null" && string(proxy)!="{}" {
+  var value map[string]any
+  if err:=json.Unmarshal(proxy,&value);err!=nil || value==nil { return Account{},errors.New("proxy must be a JSON object") }
+  var err error; proxyCipher,err=encrypt(proxy);if err!=nil{return Account{},err}
+ }
+ tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return Account{},err};defer tx.Rollback()
+ if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return Account{},err}
+ var limit int
+ if err=tx.QueryRowContext(ctx,`SELECT account_limit FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW() FOR UPDATE`,tenantID).Scan(&limit);err!=nil{return Account{},errors.New("tenant subscription inactive")}
+ var count int
+ if err=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM telegram_accounts WHERE tenant_id=$1`,tenantID).Scan(&count);err!=nil{return Account{},err}
+ if count>=limit{return Account{},fmt.Errorf("account limit reached (%d)",limit)}
+ var a Account
+ err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,proxy_ciphertext) VALUES($1,NULL,'',$2,'pending',$3) RETURNING id::text,'',display_name,group_name,status,false,proxy_ciphertext IS NOT NULL,last_error,created_at,updated_at`,tenantID,group,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+ if err!=nil{return Account{},err}
+ if err=insertDeviceProfile(ctx,tx,tenantID,a.ID);err!=nil{return Account{},err}
+ if err=tx.Commit();err!=nil{return Account{},err}
+ return a,nil
+}
+
+func (s *Service) CompleteQRAuthorization(ctx context.Context, tenantID, accountID, phone, displayName, session string) (Account,error) {
+ phone=strings.TrimSpace(phone);displayName=strings.TrimSpace(displayName);session=strings.TrimSpace(session)
+ if tenantID==""||len(phone)<5||len(phone)>32||session==""||len(session)>65536||len(displayName)>120{return Account{},errors.New("invalid Telegram authorization result")}
+ ciphertext,err:=encrypt([]byte(session));if err!=nil{return Account{},err}
+ var a Account
+ err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  return tx.QueryRowContext(ctx,`UPDATE telegram_accounts SET phone=$3,display_name=$4,status='authorized',session_ciphertext=$5,session_key_version=1,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING id::text,COALESCE(phone,''),display_name,group_name,status,true,proxy_ciphertext IS NOT NULL,last_error,created_at,updated_at`,tenantID,accountID,phone,displayName,ciphertext).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+ })
+ if err!=nil{return Account{},err};return a,nil
 }

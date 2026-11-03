@@ -15,6 +15,7 @@ import (
  "github.com/aa228058/tgqf/backend/internal/config"
  "github.com/aa228058/tgqf/backend/internal/httpapi"
  "github.com/aa228058/tgqf/backend/internal/storage"
+ "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 )
 func main(){
  logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil));slog.SetDefault(logger)
@@ -24,7 +25,9 @@ func main(){
  if cfg.DatabaseURL!=""{store,err=storage.Open(rootCtx,cfg.DatabaseURL,cfg.RedisURL);if err!=nil{logger.Error("initialize storage","error",err);os.Exit(1)};defer store.Close();authService=auth.New(store.DB);accountService=accounts.New(store.DB)
   if cfg.SuperAdminUsername!=""{if err=authService.EnsureSuperAdmin(rootCtx,cfg.SuperAdminUsername,cfg.SuperAdminPassword);err!=nil{logger.Error("initialize super admin","error",err);os.Exit(1)}}
  }else{logger.Warn("database and Redis are not configured; readiness and authentication are unavailable")}
- server:=&http.Server{Addr:cfg.HTTPAddr,Handler:httpapi.NewRouter(store,authService,accountService),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second}
+ var telegramManager *telegrammtgo.Manager
+ if cfg.TelegramAPIID>0 { telegramManager=telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID,APIHash:cfg.TelegramAPIHash,ConnectTimeout:45*time.Second}); defer telegramManager.Close() }
+ server:=&http.Server{Addr:cfg.HTTPAddr,Handler:httpapi.NewRouter(store,authService,accountService,telegramManager),ReadHeaderTimeout:5*time.Second,IdleTimeout:60*time.Second}
  serverErrors:=make(chan error,1);go func(){logger.Info("API server starting","address",cfg.HTTPAddr,"service","TG账号管理系统");serverErrors<-server.ListenAndServe()}()
  select{case err:=<-serverErrors:if err!=nil&&!errors.Is(err,http.ErrServerClosed){logger.Error("API server stopped unexpectedly","error",err);os.Exit(1)};case<-rootCtx.Done():ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel();if err:=server.Shutdown(ctx);err!=nil{logger.Error("graceful shutdown failed","error",err);_=server.Close()}}
 }
