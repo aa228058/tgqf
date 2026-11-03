@@ -100,7 +100,7 @@
 - `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，并通过 `generate_username: true` 启用随机用户名；用户名冲突自动重新生成最多 8 次，返回统一 batch_id 和逐账号任务）
 - `GET /api/v1/accounts/username-generation-settings`、`PUT /api/v1/accounts/username-generation-settings`（租户配置随机用户名前缀、随机长度和字符集；任务创建时保存规则快照）
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
-- `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`（失败任务重试、暂停任务人工恢复）
+- `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`、`POST /api/v1/accounts/profile-updates/{id}/cancel`（失败重试、暂停恢复；仅 pending/paused 可取消，正在执行的任务必须等待当前 Telegram RPC 结束）
 - `PATCH /api/v1/accounts/{id}/group`
 - `PATCH /api/v1/accounts/{id}/proxy`
 - `GET/POST/PUT/DELETE /api/v1/proxies`
@@ -277,3 +277,15 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] channel 不自动创建回复动作，避免把私聊/群组回复逻辑错误套用到频道。
 - [x] 新增 migration 0033、字段持久化及配置校验/动作选择测试。
 - [ ] CI、数据库迁移及 Telegram 实际发送验证待完成。
+
+
+## 18. 2026-11-04 账号级任务调度与资料任务取消（增量）
+
+- [x] 普通消息回复、关键词自动回复、加群任务、账号资料更新领取任务时统一检查账号级发送时间窗口和冷却状态。
+- [x] 领取条件互相排斥：同一 Telegram 账号存在有效 processing lease 时，其他任务队列不再同时领取，避免不同 Worker/队列并发操作同一账号。
+- [x] 领取任务时持久化更新 `telegram_send_next_at`；FloodWait 同步写入账号级 `telegram_send_cooldown_until`，加群任务同时保留专用 join cooldown。
+- [x] 加群任务和资料更新也纳入跨队列互斥，避免与消息回复、关键词动作同时调用 Telegram API。
+- [x] 资料更新任务新增 `POST /api/v1/accounts/profile-updates/{id}/cancel`；仅允许取消 pending/paused，正在执行中的 Telegram RPC 不会被伪装成可立即中断。
+- [x] migration `0035_profile_update_cancellation.sql` 放开 cancelled 状态；列表状态筛选可查询 cancelled。
+- [ ] 当前提交的 Go test、vet、API build 正在运行；需以最新 head SHA 的最终 CI 结果为准。
+- [ ] 尚未在真实数据库验证迁移、跨队列并发锁竞争和多 Worker 场景；需后续集成测试。
