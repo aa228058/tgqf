@@ -364,11 +364,17 @@ func (s *Service) SetGroupBatch(ctx context.Context, tenantID string, ids []stri
 
 // ApplyBulkRuntimeAction changes the persisted desired runtime state for a
 // tenant's accounts. The worker reconciler performs the actual MTGo stop/start.
-func (s *Service) ApplyBulkRuntimeAction(ctx context.Context, tenantID string, accountIDs []string, action string) (int, error) {
+func normalizeBulkRuntimeActionInput(accountIDs []string, action string) ([]string, string, error) {
 	ids, _, err := normalizeBulkGroupInput(accountIDs, "")
-	if err != nil { return 0, err }
+	if err != nil { return nil, "", err }
 	action = strings.ToLower(strings.TrimSpace(action))
-	if action != "disconnect" && action != "reconnect" { return 0, errors.New("action must be disconnect or reconnect") }
+	if action != "disconnect" && action != "reconnect" { return nil, "", errors.New("action must be disconnect or reconnect") }
+	return ids, action, nil
+}
+
+func (s *Service) ApplyBulkRuntimeAction(ctx context.Context, tenantID string, accountIDs []string, action string) (int, error) {
+	ids, action, err := normalizeBulkRuntimeActionInput(accountIDs, action)
+	if err != nil { return 0, err }
 	changed := 0
 	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		for _, id := range ids {
