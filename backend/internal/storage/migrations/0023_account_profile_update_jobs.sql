@@ -28,3 +28,11 @@ CREATE INDEX account_profile_update_claim_idx
     ON account_profile_update_jobs(tenant_id,status,next_run_at,created_at);
 CREATE INDEX account_profile_update_batch_idx
     ON account_profile_update_jobs(tenant_id,batch_id,created_at);
+
+ALTER TABLE account_profile_update_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account_profile_update_jobs FORCE ROW LEVEL SECURITY;
+CREATE POLICY account_profile_update_jobs_tenant_policy ON account_profile_update_jobs
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+CREATE INDEX account_profile_update_paused_idx
+    ON account_profile_update_jobs(tenant_id,updated_at DESC) WHERE status='paused';
