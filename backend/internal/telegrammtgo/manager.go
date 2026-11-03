@@ -132,6 +132,16 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 		_ = client.Disconnect()
 		return errors.New("account client is already managed")
 	}
+	if _, exists := m.pendingQR[accountID]; exists {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return errors.New("account QR login is already pending")
+	}
+	if _, exists := m.pendingPhone[accountID]; exists {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return errors.New("account phone login is already pending")
+	}
 	m.clients[accountID] = client
 	m.mu.Unlock()
 	m.registerMessageHandler(accountID, client)
