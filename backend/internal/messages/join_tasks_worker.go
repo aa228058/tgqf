@@ -69,13 +69,18 @@ func (s *Service) CompleteJoinTaskAccount(ctx context.Context,job JoinTaskJob,ch
     })
 }
 
+func joinTaskCooldownSeconds(wait time.Duration) int64 {
+    if wait<=0{return 0}
+    seconds:=int64(wait/time.Second)
+    if wait%time.Second!=0 {seconds++}
+    return seconds+1
+}
+
 func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,wait time.Duration,reason string)error {
-    if wait<=0{return errors.New("positive FloodWait duration is required")}
-    delay:=wait.Truncate(time.Second)+time.Second
-    if wait%time.Second!=0 {delay=wait.Truncate(time.Second)+2*time.Second}
+    seconds:=joinTaskCooldownSeconds(wait)
+    if seconds<=0{return errors.New("positive FloodWait duration is required")}
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-        seconds:=int64(delay/time.Second)
         if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET join_flood_wait_until=GREATEST(COALESCE(join_flood_wait_until,NOW()),NOW()+($1 * INTERVAL '1 second'))
             WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),lease_until=NULL,last_error=$2,updated_at=NOW()
