@@ -71,6 +71,26 @@ func TestNegotiateHTTPConnectSendsBasicCredentials(t *testing.T) {
 	if err := <-done; err != nil { t.Fatal(err) }
 }
 
+func TestNegotiateHTTPConnectLeavesTunnelUsable(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	done := make(chan error, 1)
+	go func() {
+		req, err := http.ReadRequest(bufio.NewReader(server))
+		if err != nil { done <- err; return }
+		if req.Method != http.MethodConnect { done <- fmt.Errorf("unexpected method %s", req.Method); return }
+		if _, err := io.WriteString(server, "HTTP/1.1 200 Connection Established\\r\\n\\r\\n"); err != nil { done <- err; return }
+		payload := make([]byte, 4)
+		if _, err := io.ReadFull(server, payload); err != nil { done <- err; return }
+		if string(payload) != "ping" { done <- fmt.Errorf("unexpected tunnel payload %q", payload); return }
+		done <- nil
+	}()
+	if err := negotiateHTTPConnect(client, "", "", "telegram.org:443"); err != nil { t.Fatal(err) }
+	if _, err := io.WriteString(client, "ping"); err != nil { t.Fatalf("CONNECT tunnel was closed after success: %v", err) }
+	if err := <-done; err != nil { t.Fatal(err) }
+}
+
 func TestNegotiateHTTPConnectRejectsProxyFailure(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
