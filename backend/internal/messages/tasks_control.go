@@ -140,7 +140,7 @@ func deriveJoinTaskParentStatus(childStatuses []string) string {
 }
 
 func refreshJoinTaskControlStatus(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT status FROM tenant_join_task_accounts WHERE tenant_id=$1 AND task_id=$2 ORDER BY id FOR UPDATE`, tenantID, taskID)
+	rows, err := tx.QueryContext(ctx, `SELECT status FROM tenant_join_task_accounts WHERE tenant_id=$1 AND task_id=$2 ORDER BY id`, tenantID, taskID)
 	if err != nil { return err }
 	statuses := make([]string, 0)
 	for rows.Next() {
