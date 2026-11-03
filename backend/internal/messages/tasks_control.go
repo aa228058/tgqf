@@ -57,8 +57,8 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 			case "resume", "retry":
 				status := "paused"
 				if action == "retry" { status = "failed" }
-				query = `UPDATE keyword_action_jobs j SET status='pending',attempts=0,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenants t WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status=$3 AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()`
-				result, err := tx.ExecContext(ctx, query, tenantID, id, status)
+				query = `UPDATE keyword_action_jobs j SET status='pending',attempts=CASE WHEN $4='retry' THEN 0 ELSE attempts END,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenants t,telegram_accounts a WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status=$3 AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
+				result, err := tx.ExecContext(ctx, query, tenantID, id, status, action)
 				return checkTaskRows(result, err)
 			case "cancel":
 				query = `UPDATE keyword_action_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused','failed')`
