@@ -46,3 +46,14 @@ func TestSafeCSVCellPreventsFormulaInjection(t *testing.T) {
 	}
 	if got:=safeCSVCell("ordinary text");got!="ordinary text" { t.Fatalf("ordinary value changed: %q",got) }
 }
+
+func TestNormalizeBulkGroupInput(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	ids, group, err := normalizeBulkGroupInput([]string{" "+id+" "}, "  customers ")
+	if err != nil { t.Fatal(err) }
+	if len(ids)!=1 || ids[0]!=id || group!="customers" { t.Fatalf("unexpected normalized values: %#v %q",ids,group) }
+	if _,_,err:=normalizeBulkGroupInput([]string{id,id},"x");err==nil { t.Fatal("duplicate account IDs accepted") }
+	if _,_,err:=normalizeBulkGroupInput([]string{"bad"},"x");err==nil { t.Fatal("invalid account ID accepted") }
+	if _,_,err:=normalizeBulkGroupInput(nil,"x");err==nil { t.Fatal("empty account batch accepted") }
+	if _,_,err:=normalizeBulkGroupInput([]string{id},strings.Repeat("x",81));err==nil { t.Fatal("oversized group accepted") }
+}
