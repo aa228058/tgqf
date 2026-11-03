@@ -116,7 +116,7 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 		FROM picked WHERE j.id=picked.id
 		RETURNING j.id::text,j.batch_id::text,j.tenant_id::text,j.account_id::text,j.first_name,j.last_name,j.about,j.generate_username,j.applied_username,j.status,j.attempts,j.next_run_at,j.lease_until,j.last_error,j.created_at,j.updated_at`,tenantID,limit)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
+		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
 	})
 	return out,err
