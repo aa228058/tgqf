@@ -574,18 +574,41 @@ type ReplyJob struct {
 	LeaseUntil time.Time `json:"-"`
 }
 
-func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phone,firstName,lastName string)(ReplyJob,error) {
+func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phone,firstName,lastName string,idempotencyKeys ...string)(ReplyJob,error) {
 	phone=strings.TrimSpace(phone);firstName=strings.TrimSpace(firstName);lastName=strings.TrimSpace(lastName)
 	if !validUUID(messageID)||len(phone)<3||len(phone)>32||len(firstName)<1||len(firstName)>64||len(lastName)>64||strings.ContainsAny(phone,"\\r\\n") {
 		return ReplyJob{},errors.New("contact requires a valid message id, phone, first name, and optional last name")
 	}
+	key:=""
+	if len(idempotencyKeys)>0 { key=idempotencyKeys[0] }
+	var err error
+	if key,err=normalizeIdempotencyKey(key);err!=nil { return ReplyJob{},err }
+	requestHash:=""
+	if key!="" { requestHash=replyRequestHash("contact_reply",messageID,phone,firstName,lastName) }
 	var job ReplyJob
-	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
 		if errors.Is(err,sql.ErrNoRows){return errors.New("message not found")};if err!=nil{return err}
-		err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text,message_type,contact_phone,contact_first_name,contact_last_name)
-			VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,phone,firstName,lastName).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
-		if err==nil {job.TenantID=tenantID;job.MessageType="contact";job.ContactPhone=phone;job.ContactFirstName=firstName;job.ContactLastName=lastName}
+		if key=="" {
+			err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text,message_type,contact_phone,contact_first_name,contact_last_name)
+				VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,phone,firstName,lastName).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+		} else {
+			err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text,message_type,contact_phone,contact_first_name,contact_last_name,idempotency_key,request_hash)
+				VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8,$9,$10)
+				ON CONFLICT(tenant_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+				RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,phone,firstName,lastName,key,requestHash).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+			if errors.Is(err,sql.ErrNoRows) {
+				var existingHash string
+				err=tx.QueryRowContext(ctx,`SELECT id::text,status,attempts,created_at,request_hash,telegram_account_id::text,chat_id,reply_to_message_id,contact_phone,contact_first_name,contact_last_name
+					FROM message_reply_jobs WHERE tenant_id=$1 AND idempotency_key=$2`,tenantID,key).
+					Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt,&existingHash,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName)
+				if err==nil && existingHash!=requestHash { return errors.New("Idempotency-Key was already used with a different contact request") }
+			}
+		}
+		if err==nil {
+			job.TenantID=tenantID;job.MessageType="contact"
+			if job.ContactPhone=="" {job.ContactPhone=phone;job.ContactFirstName=firstName;job.ContactLastName=lastName}
+		}
 		return err
 	})
 	return job,err
@@ -600,8 +623,9 @@ func normalizeIdempotencyKey(key string) (string,error) {
 	return key,nil
 }
 
-func replyRequestHash(messageID,textBody string) string {
-	sum:=sha256.Sum256([]byte(strings.Join([]string{"message_reply",messageID,textBody},"\\x00")))
+func replyRequestHash(operation string, fields ...string) string {
+	parts:=append([]string{operation},fields...)
+	sum:=sha256.Sum256([]byte(strings.Join(parts,"\\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -615,7 +639,7 @@ func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody
 	var err error
 	if key,err=normalizeIdempotencyKey(key);err!=nil { return ReplyJob{},err }
 	requestHash:=""
-	if key!="" { requestHash=replyRequestHash(messageID,textBody) }
+	if key!="" { requestHash=replyRequestHash("message_reply",messageID,textBody) }
 	var job ReplyJob
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
