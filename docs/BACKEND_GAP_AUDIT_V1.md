@@ -403,3 +403,11 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 新增纯状态矩阵测试，覆盖 pending、processing、failed、paused、sent、queued、request_pending 及未知任务类型。
 - [ ] 能力字段只是 UI 提示，不替代服务端事务中的租户隔离和状态条件更新；状态可能在列表读取后发生变化，动作接口仍以数据库更新结果为准。
 - [ ] 尚未执行 Go test/vet/build；按项目约定待后端功能整体完成后统一执行。
+
+
+## 29. 2026-11-04 统一任务中心统计接口（增量）
+
+- [x] 新增 GET /api/v1/tasks/summary，在租户 RLS 事务中聚合普通回复、关键词动作、账号资料更新和加群子任务四类现有队列。
+- [x] 返回总任务数、processing 数量、租约已过期的 processing 数量，以及按 task type/status 分组的计数；带有统计生成时间。
+- [x] 统计直接读取各队列表，不创建第二份任务状态，也不改变 Worker 的 claim/lease/重试行为。
+- [ ] 尚未运行 Go test/vet/build 或 PostgreSQL 集成测试；需在最终统一验收时验证迁移后 schema、RLS 和大队列统计查询性能。
