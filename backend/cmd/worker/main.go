@@ -52,7 +52,7 @@ func main() {
 	defer store.Close()
 
 	accountService := accounts.New(store.DB)
-	messageService := messages.New(store.DB)
+	messageService := messages.New(store.DB, store.Redis)
 	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
