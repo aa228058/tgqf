@@ -19,6 +19,7 @@ func TestValidateProxyInput(t *testing.T) {
 		{Name:"bad port",Protocol:"http",Host:"localhost",Port:65536},
 	}
 	for _,input:=range tests{if _,err:=validateProxyInput(input);err==nil{t.Errorf("expected invalid proxy to be rejected: %#v",input)}}
+	if _,err:=validateProxyInput(ProxyInput{Name:"proxy",Protocol:"socks5",Host:"localhost",Port:1080,Password:"secret",ClearPassword:true});err==nil{t.Fatal("password and clear_password must be mutually exclusive")}
 }
 
 func TestCheckProxyTCPReachability(t *testing.T) {
