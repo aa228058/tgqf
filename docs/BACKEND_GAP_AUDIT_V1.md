@@ -372,3 +372,15 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] API 进程内存客户端停止属于删除提交后的 best-effort 清理；若 Stop 返回错误，账号数据已删除，接口会明确返回清理错误/待清理状态。仍需验证 Worker 侧账号消失后的自动断开/重连行为及 DB cascade 覆盖的子表。
 - [ ] 尚需 PostgreSQL 集成测试：跨租户 ID 混入批次时零删除、同一账号并发删除、外键级联、事务中断回滚。
 - 按项目约定未运行全量 Go test/vet/build；仍待后端全部模块完成后统一 CI。
+
+## 27. 2026-11-04 Telethon SQLite Session 导入（首个格式闭环）
+
+- [x] `POST /api/v1/accounts/import-file` 接受 `.session` 上传；单文件大小仍限制为 1 MiB，临时文件由系统以私有权限创建并在处理后清理。
+- [x] SQLite 通过 MTGo storage 的纯 Go SQLite 驱动只读打开，并设置 `PRAGMA query_only=ON`；不会对用户上传数据库执行 schema 初始化或写入。
+- [x] 校验 `sessions` 表结构，要求 Telethon 标准列 `dc_id/server_address/port/auth_key`，且恰好一条 session 记录；校验 DC、IP、端口和 256 字节 auth key。
+- [x] 使用 `session-converter v0.6.0` 的 `EncodeTelethon` 生成标准 Telethon StringSession；MTGo `v0.22.0` 支持自动识别该格式，继续沿用现有账号创建、设备资料创建及 Session 加密存储流程。
+- [x] 因 Telethon SQLite session 不保存账号手机号，上传表单必须额外提交 `phone`，可选提交 `display_name`、`group_name`；不从 auth key 猜测手机号或伪造 MTGO1 元数据。
+- [x] 增加 SQLite fixture 测试，覆盖标准 Telethon schema 转换、非法数据库、多 session 行拒绝及 `.session` 文件识别。
+- [ ] 当前只实现 Telethon SQLite `.session`；Pyrogram SQLite、加密/损坏数据库、WAL sidecar 组合文件及其他库的 SQLite schema 尚未支持。
+- [ ] 本流程只验证 SQLite 结构与 session 编码，不会在导入时自动连接 Telegram；账号授权有效性需由后续 MTGo 连接流程确认。
+- [ ] 需要运行 Go test/build 并在真实 Telethon session 文件上验收；按项目约定暂不执行全量 CI，等待后端模块整体完成。
