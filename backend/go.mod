@@ -8,6 +8,6 @@ require (
 	github.com/mtgo-labs/mtgo v0.22.0
 	github.com/mtgo-labs/device-manager v0.3.0
 	github.com/mtgo-labs/session-converter v0.6.0
-	github.com/mtgo-labs/storage/sqlite v0.5.0
+	modernc.org/sqlite v1.34.5
 	golang.org/x/crypto v0.57.0
 )
