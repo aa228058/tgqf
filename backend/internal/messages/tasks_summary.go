@@ -47,6 +47,7 @@ func (s *Service) GetUnifiedTaskSummary(ctx context.Context, tenantID string) (U
 			summary.ExpiredLeases += expired
 		}
 		if err := rows.Err(); err != nil { return err }
+		if err := rows.Close(); err != nil { return err }
 		return tx.QueryRowContext(ctx, "SELECT NOW()").Scan(&summary.GeneratedAt)
 	})
 	return summary, err
