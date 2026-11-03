@@ -16,6 +16,8 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
+	mux.Handle("POST /api/v1/messages/{id}/reply",h.auth.Authenticated(http.HandlerFunc(h.createReply)))
+	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
 }
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
 	user:=auth.UserFromContext(r.Context())
@@ -56,4 +58,25 @@ func(h *Handler)listChats(w http.ResponseWriter,r *http.Request){
 	items,total,err:=h.service.ListChats(r.Context(),user.TenantID,limit,offset)
 	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load message chats"});return}
 	messageJSON(w,http.StatusOK,map[string]any{"chats":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
+}
+
+func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
+	var body struct{Text string `json:"text"`}
+	decoder:=json.NewDecoder(http.MaxBytesReader(w,r.Body,16<<10));decoder.DisallowUnknownFields()
+	if err:=decoder.Decode(&body);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid reply body"});return}
+	user:=auth.UserFromContext(r.Context())
+	job,err:=h.service.CreateReply(r.Context(),user.TenantID,r.PathValue("id"),body.Text)
+	if err!=nil{
+		status:=http.StatusBadRequest
+		if err.Error()=="message not found"{status=http.StatusNotFound}
+		messageJSON(w,status,map[string]string{"error":err.Error()});return
+	}
+	messageJSON(w,http.StatusAccepted,map[string]any{"reply":job})
+}
+
+func(h *Handler)getReply(w http.ResponseWriter,r *http.Request){
+	user:=auth.UserFromContext(r.Context())
+	job,err:=h.service.GetReply(r.Context(),user.TenantID,r.PathValue("id"))
+	if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"reply job not found"});return}
+	messageJSON(w,http.StatusOK,map[string]any{"reply":job})
 }
