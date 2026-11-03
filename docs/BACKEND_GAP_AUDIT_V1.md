@@ -101,6 +101,8 @@
 - `POST /api/v1/accounts/import-file`（multipart 文件上传，支持 JSON/CSV/TXT；单文件最大 1 MiB、最多 20 条；Session 按账号独立加密，响应不包含 Session）
 - `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，并通过 `generate_username: true` 启用随机用户名；用户名冲突自动重新生成最多 8 次，返回统一 batch_id 和逐账号任务）
 - `GET /api/v1/accounts/username-generation-settings`、`PUT /api/v1/accounts/username-generation-settings`（租户配置随机用户名前缀、随机长度和字符集；任务创建时保存规则快照）
+- `PATCH /api/v1/accounts/{id}/tags`、`PATCH /api/v1/accounts/tags`（单账号/批量替换标签；每账号最多 20 个标签、单标签最多 32 字符；空数组清空；列表及 CSV 导出返回标签）
+- 数据库迁移 `0040_account_tags.sql`：`telegram_accounts.tags TEXT[]`，并建立 GIN 索引。
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`、`POST /api/v1/accounts/profile-updates/{id}/cancel`（失败重试、暂停恢复；仅 pending/paused 可取消，正在执行的任务必须等待当前 Telegram RPC 结束）
 - `PATCH /api/v1/accounts/{id}/group`
