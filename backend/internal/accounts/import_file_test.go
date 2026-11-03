@@ -77,3 +77,14 @@ func TestParseAccountImportFileTelethonSession(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     if len(records)!=1||records[0].Session==""||records[0].Phone!=""{t.Fatalf("unexpected imported record: %+v",records)}
 }
+
+func TestValidateImportedSession(t *testing.T) {
+    key:=make([]byte,256)
+    for i:=range key{key[i]=byte(i+1)}
+    value,err:=tgconv.EncodeTelethon(&tgconv.Session{DCID:2,ServerAddress:"149.154.167.50",Port:443,AuthKey:key})
+    if err!=nil{t.Fatal(err)}
+    if err:=validateImportedSession(value);err!=nil{t.Fatalf("valid Telethon session rejected: %v",err)}
+    for _,invalid:=range []string{"","not-a-session",strings.Repeat("x",65537)} {
+        if err:=validateImportedSession(invalid);err==nil{t.Errorf("invalid session accepted: %q",invalid)}
+    }
+}
