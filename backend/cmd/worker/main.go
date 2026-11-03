@@ -1,6 +1,6 @@
 package main
 
-import (
+import (\n\t"errors"
 	"context"
 	"log/slog"
 	"os"
@@ -101,6 +101,7 @@ func main() {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
+		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
@@ -271,4 +272,51 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
             logger.Info("Telegram group joined","task_id",job.TaskID,"account_id",job.AccountID,"chat_id",chatID)
         }
     }
+}
+
+func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Service, messageService *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
+	tenantSet:=map[string]bool{}
+	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
+	for tenantID:=range tenantSet {
+		jobs,err:=accountService.ClaimProfileUpdateJobs(ctx,tenantID,10)
+		if err!=nil { logger.Error("claim Telegram profile update jobs","tenant_id",tenantID,"error",err);continue }
+		blockedAccounts:=map[string]bool{}
+		for _,job:=range jobs {
+			if ctx.Err()!=nil{return}
+			if blockedAccounts[job.AccountID] { continue }
+			if !messageService.TenantCanOperate(ctx,job.TenantID) {
+				if err:=accountService.FailProfileUpdate(ctx,job,errors.New("tenant subscription inactive; manual review required"),0);err!=nil {
+					logger.Error("pause profile update for inactive tenant","job_id",job.ID,"error",err)
+				}
+				continue
+			}
+			if !manager.IsConnected(job.AccountID) {
+				if err:=accountService.RescheduleProfileUpdate(ctx,job,30*time.Second,errors.New("Telegram account is temporarily disconnected"));err!=nil {
+					logger.Error("reschedule profile update for offline account","job_id",job.ID,"error",err)
+				}
+				blockedAccounts[job.AccountID]=true
+				continue
+			}
+			updateCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
+			updateErr:=manager.UpdateProfile(updateCtx,job.AccountID,job.FirstName,job.LastName,job.About)
+			cancel()
+			if updateErr!=nil {
+				floodWait,_:=tgerr.AsFloodWait(updateErr)
+				if floodWait>0 {
+					logger.Warn("Telegram profile update FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
+					blockedAccounts[job.AccountID]=true
+				}
+				if err:=accountService.FailProfileUpdate(ctx,job,updateErr,floodWait);err!=nil {
+					logger.Error("reschedule failed Telegram profile update","job_id",job.ID,"error",err)
+				}
+				logger.Warn("Telegram profile update failed","job_id",job.ID,"account_id",job.AccountID,"attempt",job.Attempts+1,"error",updateErr)
+				continue
+			}
+			if err:=accountService.CompleteProfileUpdate(ctx,job);err!=nil {
+				logger.Error("persist Telegram profile update result","job_id",job.ID,"error",err)
+				continue
+			}
+			logger.Info("Telegram profile updated","job_id",job.ID,"account_id",job.AccountID)
+		}
+	}
 }
