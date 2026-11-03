@@ -143,9 +143,11 @@ func (s *Service) ListKeywordMatches(ctx context.Context,tenantID,ruleID string,
         if ruleID!=""{where+=" AND rule_id=$2";args=append(args,ruleID)}
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_matches WHERE "+where,args...).Scan(&total);err!=nil{return err}
         args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
+        matchWhere:="m.tenant_id=$1"
+        if ruleID!=""{matchWhere+=" AND m.rule_id=$2"}
         rows,err:=tx.QueryContext(ctx,`SELECT m.id,m.rule_id::text,r.name,m.telegram_account_id::text,m.chat_id,m.message_id,m.matched_terms,m.matched_at
             FROM tenant_keyword_matches m JOIN tenant_keyword_rules r ON r.tenant_id=m.tenant_id AND r.id=m.rule_id
-            WHERE `+strings.ReplaceAll(where,"tenant_id","m.tenant_id")+strings.ReplaceAll(where,"rule_id","m.rule_id")+fmt.Sprintf(" ORDER BY m.matched_at DESC,m.id DESC LIMIT $%d OFFSET $%d",limitArg,offsetArg),args...)
+            WHERE `+matchWhere+fmt.Sprintf(" ORDER BY m.matched_at DESC,m.id DESC LIMIT $%d OFFSET $%d",limitArg,offsetArg),args...)
         if err!=nil{return err};defer rows.Close()
         for rows.Next(){var m KeywordMatch;var terms []byte;if err:=rows.Scan(&m.ID,&m.RuleID,&m.RuleName,&m.AccountID,&m.ChatID,&m.MessageID,&terms,&m.MatchedAt);err!=nil{return err};if err:=json.Unmarshal(terms,&m.MatchedTerms);err!=nil{return err};out=append(out,m)}
         return rows.Err()
