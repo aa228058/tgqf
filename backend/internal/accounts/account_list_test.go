@@ -1,6 +1,6 @@
 package accounts
 
-import "testing"
+import ("testing"; "strings")
 
 func TestNormalizeAccountListOptions(t *testing.T) {
 	got,err:=normalizeAccountListOptions(AccountListOptions{Query:"  Alice  ",GroupName:" work ",Status:" AUTHORIZED ",Limit:0,Offset:-2})
@@ -10,4 +10,16 @@ func TestNormalizeAccountListOptions(t *testing.T) {
 	}
 	if _,err:=normalizeAccountListOptions(AccountListOptions{Status:"unknown"});err==nil { t.Fatal("unknown status should be rejected") }
 	if _,err:=normalizeAccountListOptions(AccountListOptions{Query:string(make([]byte,121))});err==nil { t.Fatal("oversized query should be rejected") }
+}
+
+func TestNormalizeAccountTags(t *testing.T) {
+	got,err:=normalizeAccountTags([]string{" Work ","sales","work","客户"})
+	if err!=nil { t.Fatal(err) }
+	want:=[]string{"Work","sales","客户"}
+	if len(got)!=len(want) { t.Fatalf("tags = %#v, want %#v",got,want) }
+	for i:=range want { if got[i]!=want[i] { t.Fatalf("tags = %#v, want %#v",got,want) } }
+	if cleared,err:=normalizeAccountTags(nil);err!=nil||len(cleared)!=0 { t.Fatalf("empty tags should clear: %#v %v",cleared,err) }
+	for _,input:=range [][]string{{""},{strings.Repeat("x",33)},make([]string,21),{"bad\ntag"}} {
+		if _,err:=normalizeAccountTags(input);err==nil { t.Errorf("invalid tags accepted: %#v",input) }
+	}
 }
