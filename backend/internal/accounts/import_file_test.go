@@ -1,6 +1,7 @@
 package accounts
 
 import (
+    "bytes"
     "database/sql"
     "os"
     "strings"
@@ -108,4 +109,20 @@ func TestParsePyrogramSQLiteSession(t *testing.T) {
     decoded,format,err:=tgconv.Decode(encoded)
     if err!=nil{t.Fatal(err)}
     if sourceFormat!="pyrogram"||format!=tgconv.FormatPyrogram||decoded.DCID!=2||decoded.AppID!=12345||decoded.UserID!=987654321||len(decoded.AuthKey)!=256{t.Fatalf("unexpected Pyrogram session: source=%s format=%s session=%+v",sourceFormat,format,decoded)}
+}
+
+
+func TestParseSQLiteSessionRejectsAmbiguousSchema(t *testing.T) {
+path:=t.TempDir()+"/ambiguous.session"
+db,err:=sql.Open("sqlite",path);if err!=nil{t.Fatal(err)}
+_,err=db.Exec("CREATE TABLE sessions (dc_id INTEGER, server_address TEXT, port INTEGER, api_id INTEGER, test_mode INTEGER, auth_key BLOB, user_id INTEGER, is_bot INTEGER)");if err!=nil{t.Fatal(err)}
+if err:=db.Close();err!=nil{t.Fatal(err)}
+data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+if _,_,err:=parseSQLiteSession(data);err==nil{t.Fatal("ambiguous SQLite schema was accepted")}
+}
+
+func TestParseTelethonSQLiteSessionDoesNotModifySource(t *testing.T) {
+data:=makeTelethonSessionSQLite(t,1);before:=append([]byte(nil),data...)
+if _,_,err:=parseSQLiteSession(data);err!=nil{t.Fatal(err)}
+if !bytes.Equal(data,before){t.Fatal("parser modified caller-owned SQLite bytes")}
 }
