@@ -305,3 +305,13 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 心跳超过 45 秒未更新的 running 实例标记为 stale；正常 stopped 实例不误报 stale。
 - [x] 增加 stale 判定单元测试。
 - [ ] 需在最新 HEAD 统一执行 Go test、vet、API/Worker build，并验证 migration、异常杀进程和多实例部署；当前未声称运行验收通过。
+
+## 21. 2026-11-04 回复任务幂等请求（增量）
+
+- [x] 新增 migration `0039_reply_idempotency.sql`，为 `message_reply_jobs` 增加 `idempotency_key`、`request_hash`，并建立租户范围的部分唯一索引。
+- [x] `POST /api/v1/messages/{id}/reply` 接受可选 `Idempotency-Key` 请求头；同租户同 key 的重复请求返回原任务，不再重复创建待发送任务。
+- [x] 同一个 key 如果用于不同消息或不同回复文本，返回冲突错误，不会静默复用旧任务。
+- [x] 增加 key 格式与请求指纹单元测试。
+- [ ] 仍需最新 HEAD 的 Go test/vet/build 和真实 PostgreSQL migration/并发重复请求集成测试。
+- 边界：这是 API 入队幂等，不是 Telegram 外部发送 exactly-once。若 Telegram 已成功发送但 Worker 在持久化成功结果前崩溃，外部副作用仍可能重复；需要通过结果核对/人工审计等进一步降低风险，不能宣称绝对一次发送。
+
