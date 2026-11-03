@@ -86,7 +86,7 @@ func main() {
 		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, SenderID: message.FromID,
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, SenderID: message.FromID, SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(), SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
 		})
