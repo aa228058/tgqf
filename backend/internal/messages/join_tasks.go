@@ -71,7 +71,7 @@ func (s *Service) CreateJoinTask(ctx context.Context,tenantID,actorID string,inp
         if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,tenantID).Scan(&active);err!=nil{return err}
         if !active{return errors.New("tenant subscription inactive")}
         if input.TargetGroupID>0 {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_groups WHERE id=$1)",input.TargetGroupID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("target group not found")}}
-        if input.TargetLinkID>0 {var sourceExists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_group_link_sources WHERE tenant_id=$1 AND link_id=$2)",tenantID,input.TargetLinkID).Scan(&sourceExists);err!=nil{return err};if !sourceExists{return errors.New("target link was not discovered by this tenant")}}
+        if input.TargetLinkID>0 {var sourceExists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_group_links l JOIN public_group_link_sources s ON s.link_id=l.id AND s.tenant_id=$1 WHERE l.id=$2 AND l.status<>$3 AND ($4=0 OR l.group_id=$4))",tenantID,input.TargetLinkID,"invalid",input.TargetGroupID).Scan(&sourceExists);err!=nil{return err};if !sourceExists{return errors.New("target link was not discovered by this tenant")}}
         for _,accountID:=range input.AccountIDs {
             var authorized bool
             if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='authorized' AND session_ciphertext IS NOT NULL)`,tenantID,accountID).Scan(&authorized);err!=nil{return err}
