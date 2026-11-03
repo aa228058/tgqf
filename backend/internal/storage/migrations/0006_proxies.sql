@@ -24,5 +24,5 @@ ALTER TABLE telegram_accounts
     ADD CONSTRAINT telegram_accounts_proxy_fk
     FOREIGN KEY (tenant_id, proxy_id)
     REFERENCES tenant_proxies(tenant_id, id)
-    ON DELETE SET NULL;
+    ON DELETE RESTRICT;
 CREATE INDEX telegram_accounts_proxy_idx ON telegram_accounts(tenant_id, proxy_id);
