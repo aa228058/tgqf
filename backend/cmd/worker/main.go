@@ -64,7 +64,9 @@ func main() {
 			chatType = "private"
 		case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum:
 			chatType = "group"
-		case types.ChatTypeBot, types.ChatTypeChannel:
+		case types.ChatTypeChannel:
+			chatType = "channel"
+		case types.ChatTypeBot:
 			return
 		default:
 			return
@@ -244,6 +246,7 @@ func processRecentHistory(ctx context.Context, service *messages.Service, manage
 				switch message.Chat.Type {
 				case types.ChatTypePrivate, types.ChatTypeDirect: chatType = "private"
 				case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum: chatType = "group"
+				case types.ChatTypeChannel: chatType = "channel"
 				default: continue
 				}
 				replyToOwn := chatType == "group" && replyTargets[message.ReplyToID]
