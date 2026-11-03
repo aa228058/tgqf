@@ -1,27 +1,26 @@
 # Go Backend
 
-TG账号管理系统 API 服务，基于 Go 标准库启动 HTTP 服务。Telegram 长连接和后台任务将放在独立 Worker 进程，不运行在 HTTP handler 中。
+TG账号管理系统 API。HTTP API 与 Telegram 长连接 Worker 分离；长连接不会运行在 HTTP handler 中。
 
 ## 本地运行
+
+需要 Go 1.23+。仅启动 API（不接数据库）：
 
 ```bash
 cd backend
 go run ./cmd/api
 ```
 
-默认监听 `:8080`。可通过环境变量调整：
+连接依赖时同时设置 `DATABASE_URL` 和 `REDIS_URL`，服务启动时会检查连接并执行内置 SQL 迁移：
 
-- `HTTP_ADDR`：HTTP 监听地址，默认 `:8080`
-- `APP_ENV`：运行环境，默认 `development`
+```bash
+export DATABASE_URL='postgres://user:password@localhost:5432/tgmanager?sslmode=disable'
+export REDIS_URL='redis://localhost:6379/0'
+go run ./cmd/api
+```
 
-健康检查：`GET /health/live`。当前仅检查 API 进程存活；数据库、Redis 和 Worker 就绪检查将在对应组件接入后实现。
+配置项：`HTTP_ADDR`（默认 `:8080`）、`APP_ENV`（默认 `development`）、`DATABASE_URL`、`REDIS_URL`。健康检查：`GET /health/live`；依赖就绪检查：`GET /health/ready`。
 
-## 下一步
+## 数据安全
 
-1. 接入 PostgreSQL、迁移和 Redis。
-2. 建立多租户身份认证、授权期限和卡密模型。
-3. 集成 gotd 普通用户账号客户端与加密 Session 存储。
-4. 验证 iOS 设备资料生成逻辑并适配 gotd `DeviceConfig`。
-5. 将 Telegram 账号连接放入独立 Worker 池。
-
-不要将 Session、API Hash、密码或代理凭据提交到 Git。生产环境必须使用密钥管理和 HTTPS。
+Telegram Session 和代理凭据只允许以加密密文存储；不得提交到 Git 或通过普通 API 返回。生产环境必须使用密钥管理、HTTPS 和受限数据库账户。租户数据查询必须始终带 tenant_id 约束；后续会在仓储层统一封装租户作用域，不能依赖前端传入 tenant_id。

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -12,21 +13,35 @@ type healthResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func NewRouter() http.Handler {
+type dependencyChecker interface {
+	Ping(context.Context) error
+}
+
+func NewRouter(deps dependencyChecker) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", live)
 	mux.HandleFunc("GET /health", live)
+	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
+		if deps == nil {
+			http.Error(w, "dependencies are not configured", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := deps.Ping(ctx); err != nil {
+			http.Error(w, "dependency check failed", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+	})
 	return securityHeaders(mux)
 }
 
 func live(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(healthResponse{
-		Status:    "ok",
-		Service:   "tg-account-manager-api",
-		Timestamp: time.Now().UTC(),
-	})
+	_ = json.NewEncoder(w).Encode(healthResponse{Status: "ok", Service: "tg-account-manager-api", Timestamp: time.Now().UTC()})
 }
 
 func securityHeaders(next http.Handler) http.Handler {
