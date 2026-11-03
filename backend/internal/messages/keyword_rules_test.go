@@ -56,3 +56,32 @@ func TestKeywordRuleCaseSensitivity(t *testing.T) {
     sensitive:=insensitive;sensitive.CaseSensitive=true
     if _,ok:=keywordRuleMatches(sensitive,in);ok{t.Fatal("case-sensitive rule unexpectedly matched")}
 }
+
+func TestKeywordRuleAccountChatAndMediaFilters(t *testing.T) {
+	accountA := "11111111-1111-4111-8111-111111111111"
+	accountB := "22222222-2222-4222-8222-222222222222"
+	rule, err := normalizeKeywordRule(KeywordRule{
+		Name:"filtered", MatchMode:"any", Keywords:[]string{"hello"},
+		ChatTypes:[]string{"group"}, AccountIDs:[]string{accountA},
+		ChatIDs:[]int64{-100123}, MediaTypes:[]string{"photo"},
+	})
+	if err != nil { t.Fatal(err) }
+	base := Incoming{AccountID:accountA, ChatID:-100123, ChatType:"group", Text:"hello", MediaType:"photo"}
+	if _,ok:=keywordRuleMatches(rule,base); !ok { t.Fatal("matching account, chat and media should pass") }
+	cases := []struct{name string; in Incoming}{
+		{"other account", Incoming{AccountID:accountB,ChatID:-100123,ChatType:"group",Text:"hello",MediaType:"photo"}},
+		{"other chat", Incoming{AccountID:accountA,ChatID:-100999,ChatType:"group",Text:"hello",MediaType:"photo"}},
+		{"other media", Incoming{AccountID:accountA,ChatID:-100123,ChatType:"group",Text:"hello",MediaType:"video"}},
+		{"other chat type", Incoming{AccountID:accountA,ChatID:-100123,ChatType:"private",Text:"hello",MediaType:"photo"}},
+	}
+	for _,tc := range cases { t.Run(tc.name,func(t *testing.T){if _,ok:=keywordRuleMatches(rule,tc.in);ok{t.Fatal("non-matching filter passed")}}) }
+}
+
+func TestNormalizeKeywordRuleRejectsInvalidFilters(t *testing.T) {
+	_,err:=normalizeKeywordRule(KeywordRule{Name:"bad account",MatchMode:"any",Keywords:[]string{"x"},AccountIDs:[]string{"not-a-uuid"}})
+	if err==nil {t.Fatal("invalid account filter accepted")}
+	_,err=normalizeKeywordRule(KeywordRule{Name:"bad chat",MatchMode:"any",Keywords:[]string{"x"},ChatIDs:[]int64{0}})
+	if err==nil {t.Fatal("zero chat filter accepted")}
+	_,err=normalizeKeywordRule(KeywordRule{Name:"bad media",MatchMode:"any",Keywords:[]string{"x"},MediaTypes:[]string{"executable"}})
+	if err==nil {t.Fatal("unsupported media filter accepted")}
+}
