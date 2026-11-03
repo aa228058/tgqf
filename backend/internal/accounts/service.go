@@ -360,3 +360,38 @@ func (s *Service) SetGroupBatch(ctx context.Context, tenantID string, ids []stri
 	if err != nil { return 0, err }
 	return updated, nil
 }
+
+
+// ApplyBulkRuntimeAction changes the persisted desired runtime state for a
+// tenant's accounts. The worker reconciler performs the actual MTGo stop/start.
+func (s *Service) ApplyBulkRuntimeAction(ctx context.Context, tenantID string, accountIDs []string, action string) (int, error) {
+	ids, _, err := normalizeBulkGroupInput(accountIDs, "")
+	if err != nil { return 0, err }
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action != "disconnect" && action != "reconnect" { return 0, errors.New("action must be disconnect or reconnect") }
+	changed := 0
+	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		for _, id := range ids {
+			var status string
+			var hasSession bool
+			err := tx.QueryRowContext(ctx, `SELECT status,session_ciphertext IS NOT NULL FROM telegram_accounts WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, id).Scan(&status, &hasSession)
+			if errors.Is(err, sql.ErrNoRows) { return errors.New("one or more accounts were not found in this tenant") }
+			if err != nil { return err }
+			target := "disconnected"
+			if action == "reconnect" { target = "authorized" }
+			if status == target { if action == "reconnect" && !hasSession { return errors.New("account has no saved Telegram session") }; continue }
+			if action == "disconnect" {
+				if status != "authorized" && status != "disconnected" { return fmt.Errorf("account %s cannot be disconnected from status %s", id, status) }
+			} else {
+				if status != "disconnected" && status != "authorized" { return fmt.Errorf("account %s cannot be reconnected from status %s", id, status) }
+				if !hasSession { return errors.New("account has no saved Telegram session") }
+			}
+			res, err := tx.ExecContext(ctx, `UPDATE telegram_accounts SET status=$3,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, id, target)
+			if err != nil { return err }
+			n, err := res.RowsAffected(); if err != nil { return err }; changed += int(n)
+		}
+		return nil
+	})
+	if err != nil { return 0, err }
+	return changed, nil
+}
