@@ -217,3 +217,96 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 	})
 	return out,total,err
 }
+
+
+var ErrNoReplyJob = errors.New("no pending reply job")
+
+type ReplyJob struct {
+	ID string `json:"id"`
+	TenantID string `json:"tenant_id"`
+	AccountID string `json:"account_id"`
+	ChatID int64 `json:"chat_id"`
+	ReplyToMessageID int64 `json:"reply_to_message_id"`
+	Text string `json:"text"`
+	Attempts int `json:"attempts"`
+	Status string `json:"status"`
+	TelegramMessageID int64 `json:"telegram_message_id,omitempty"`
+	LastError string `json:"last_error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody string) (ReplyJob,error) {
+	textBody=strings.TrimSpace(textBody)
+	if !validUUID(messageID) || textBody=="" || len([]rune(textBody))>4096 {
+		return ReplyJob{},errors.New("reply text must contain 1-4096 characters and message id must be valid")
+	}
+	var job ReplyJob
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
+		if errors.Is(err,sql.ErrNoRows){return errors.New("message not found")};if err!=nil{return err}
+		err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,textBody).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+		if err==nil {job.TenantID=tenantID;job.Text=textBody}
+		return err
+	})
+	return job,err
+}
+
+// ClaimPendingReplies claims due jobs under each tenant's RLS scope. Expired
+// processing leases are reclaimable after a worker restart.
+func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]ReplyJob,error) {
+	if maxJobs<1||maxJobs>50 {maxJobs=10}
+	rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()`)
+	if err!=nil{return nil,err}
+	var tenants []string
+	for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
+	if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close()
+	jobs:=make([]ReplyJob,0,maxJobs)
+	for _,tenantID:=range tenants {
+		if len(jobs)>=maxJobs {break}
+		err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+			remaining:=maxJobs-len(jobs)
+			rows,err:=tx.QueryContext(ctx,`WITH picked AS (
+				SELECT id FROM message_reply_jobs
+				WHERE tenant_id=$1 AND ((status='pending' AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW()))
+				ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
+			)
+			UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
+			FROM picked WHERE j.id=picked.id
+			RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts,j.status,j.created_at`,tenantID,remaining)
+			if err!=nil{return err}
+			defer rows.Close()
+			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts,&job.Status,&job.CreatedAt);err!=nil{return err};jobs=append(jobs,job)}
+			return rows.Err()
+		})
+		if err!=nil{return nil,err}
+	}
+	return jobs,nil
+}
+
+func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessageID int64) error {
+	if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,telegramMessageID)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
+	})
+}
+
+func (s *Service) FailReply(ctx context.Context, job ReplyJob, cause error) error {
+	if cause==nil{cause=errors.New("unknown Telegram send error")}
+	message:=cause.Error();if len(message)>500{message=message[:500]}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		status:="pending";if job.Attempts>=5{status="failed"}
+		delay:=job.Attempts*30;if delay>900{delay=900};if delay<30{delay=30}
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,message,delay)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
+	})
+}
+
+func (s *Service) GetReply(ctx context.Context,tenantID,jobID string)(ReplyJob,error){
+	if !validUUID(jobID){return ReplyJob{},errors.New("reply job not found")}
+	var job ReplyJob
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		return tx.QueryRowContext(ctx,`SELECT id::text,tenant_id::text,telegram_account_id::text,chat_id,reply_to_message_id,message_text,attempts,status,COALESCE(telegram_message_id,0),last_error,created_at FROM message_reply_jobs WHERE tenant_id=$1 AND id=$2`,tenantID,jobID).Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts,&job.Status,&job.TelegramMessageID,&job.LastError,&job.CreatedAt)
+	})
+	return job,err
+}
