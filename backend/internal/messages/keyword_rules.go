@@ -83,7 +83,7 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
         for _,term:=range terms {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if !strings.Contains(text,needle){return nil,false};matched=append(matched,term)}
         return matched,true
     case "regex":
-        for _,pattern:=range terms {compiled,err:=regexp.Compile(pattern);if err!=nil{return nil,false};if compiled.MatchString(in.Text){matched=append(matched,pattern)}}
+        for _,pattern:=range terms {compiledPattern:=pattern;if !rule.CaseSensitive {compiledPattern="(?i:"+pattern+")"};compiled,err:=regexp.Compile(compiledPattern);if err!=nil{return nil,false};if compiled.MatchString(in.Text){matched=append(matched,pattern)}}
         return matched,len(matched)>0
     default:return nil,false
     }
