@@ -7,6 +7,8 @@ CREATE TABLE account_profile_update_jobs (
     first_name TEXT NOT NULL DEFAULT '',
     last_name TEXT NOT NULL DEFAULT '',
     about TEXT NOT NULL DEFAULT '',
+    generate_username BOOLEAN NOT NULL DEFAULT FALSE,
+    applied_username TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending','processing','paused','completed','failed')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -17,7 +19,7 @@ CREATE TABLE account_profile_update_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (tenant_id, account_id)
         REFERENCES telegram_accounts(tenant_id, id) ON DELETE CASCADE,
-    CHECK (length(first_name) > 0 OR length(last_name) > 0 OR length(about) > 0),
+    CHECK (length(first_name) > 0 OR length(last_name) > 0 OR length(about) > 0 OR generate_username),
     CHECK ((status='processing' AND lease_until IS NOT NULL)
         OR (status<>'processing' AND lease_until IS NULL))
 );
