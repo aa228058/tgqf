@@ -345,3 +345,22 @@ func (s *Service) ReleaseReply(ctx context.Context,job ReplyJob,delay time.Durat
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
 }
+
+
+// ListKnownChatIDs returns a bounded set of chats already discovered by this
+// tenant/account. It deliberately does not enumerate arbitrary Telegram dialogs.
+func (s *Service) ListKnownChatIDs(ctx context.Context, tenantID, accountID string, limit int) ([]int64, error) {
+	if !validUUID(accountID) { return nil, errors.New("invalid account id") }
+	if limit < 1 || limit > 50 { limit = 20 }
+	out := []int64{}
+	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT chat_id FROM tenant_message_chats
+			WHERE tenant_id=$1 AND telegram_account_id=$2
+			ORDER BY last_seen_at DESC LIMIT $3`, tenantID, accountID, limit)
+		if err != nil { return err }
+		defer rows.Close()
+		for rows.Next() { var id int64; if err := rows.Scan(&id); err != nil { return err }; out = append(out,id) }
+		return rows.Err()
+	})
+	return out, err
+}
