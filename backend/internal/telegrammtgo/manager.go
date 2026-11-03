@@ -220,3 +220,13 @@ func (m *Manager) CancelQR(accountID string) error {
 	if err := entry.client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) { return fmt.Errorf("cancel QR login: %w", err) }
 	return nil
 }
+
+
+// ManagedAccountIDs returns a snapshot of accounts currently owned by Manager.
+func (m *Manager) ManagedAccountIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.clients))
+	for id := range m.clients { ids = append(ids, id) }
+	return ids
+}
