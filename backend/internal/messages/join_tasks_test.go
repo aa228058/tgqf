@@ -1,6 +1,9 @@
 package messages
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestNormalizeJoinTaskInputRequiresExplicitAuthorization(t *testing.T) {
     base:=JoinTaskInput{Name:"campaign",TargetGroupID:12,AccountIDs:[]string{"11111111-1111-4111-8111-111111111111"},AuthorizationConfirmed:true}
@@ -35,4 +38,11 @@ func TestNormalizeJoinTaskInputPrivateInviteRequiresExclusiveTarget(t *testing.T
 	if got.PrivateInviteLink!="AbCdEfGh123"{t.Fatalf("unexpected normalized invite hash: %q",got.PrivateInviteLink)}
 	base.TargetGroupID=12
 	if _,err:=normalizeJoinTaskInput(base);err==nil{t.Fatal("private invite combined with public target should be rejected")}
+}
+
+func TestRetryJoinTaskRejectsInvalidIDBeforeDatabaseAccess(t *testing.T) {
+	service := &Service{}
+	if err := service.RetryJoinTask(context.Background(), "tenant", "not-a-uuid"); err == nil {
+		t.Fatal("expected invalid task id to be rejected")
+	}
 }
