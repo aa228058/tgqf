@@ -60,10 +60,12 @@ func envValue(key,fallback string)string{if v:=strings.TrimSpace(os.Getenv(key))
 // RuntimeAccount contains decrypted credentials only for the isolated worker.
 // Never serialize this value or expose it from an HTTP handler.
 type RuntimeAccount struct {
-	TenantID string
-	ID string
-	Session string
-	ProxyJSON string
+ TenantID string
+ ID string
+ Session string
+ ProxyJSON string
+ ReconnectAttempts int
+ ReconnectAt time.Time
 }
 
 // LoadAuthorizedRuntimeAccounts loads active tenants first, then reads each
@@ -80,9 +82,11 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 	for _, tenantID := range tenantIDs {
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 			accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
-				p.protocol,p.host,p.port,p.username,p.password_ciphertext
+				p.protocol,p.host,p.port,p.username,p.password_ciphertext,
+				COALESCE(rt.reconnect_attempts,0),rt.reconnect_at
 				FROM telegram_accounts a
 				LEFT JOIN tenant_proxies p ON p.tenant_id=a.tenant_id AND p.id=a.proxy_id
+				LEFT JOIN telegram_account_runtime rt ON rt.tenant_id=a.tenant_id AND rt.account_id=a.id
 				WHERE a.tenant_id=$1 AND a.status IN ('authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
@@ -91,10 +95,12 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 				var sessionCipher, proxyCipher, proxyPasswordCipher []byte
 				var protocol, host, username sql.NullString
 				var port sql.NullInt64
+				var reconnectAt sql.NullTime
 				item.TenantID = tenantID
-				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher); err != nil { return err }
+				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher,&item.ReconnectAttempts,&reconnectAt); err != nil { return err }
 				plain, err := decrypt(sessionCipher); if err != nil { return fmt.Errorf("decrypt session for account %s: %w", item.ID, err) }
 				item.Session = string(plain)
+				if reconnectAt.Valid { item.ReconnectAt = reconnectAt.Time }
 				if protocol.Valid {
 					password := ""
 					if len(proxyPasswordCipher)>0 { secret,err:=decrypt(proxyPasswordCipher);if err!=nil{return fmt.Errorf("decrypt proxy password for account %s: %w",item.ID,err)};password=string(secret) }
@@ -166,4 +172,26 @@ func (s *Service) CompleteQRAuthorization(ctx context.Context, tenantID, account
   return tx.QueryRowContext(ctx,`UPDATE telegram_accounts SET phone=$3,display_name=$4,status='authorized',session_ciphertext=$5,session_key_version=1,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING id::text,COALESCE(phone,''),display_name,group_name,status,true,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,accountID,phone,displayName,ciphertext).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
  })
  if err!=nil{return Account{},err};return a,nil
+}
+
+
+// SaveRuntimeReconnectState persists retry timing so worker restarts do not
+// reset exponential backoff and reconnect every account at once.
+func (s *Service) SaveRuntimeReconnectState(ctx context.Context, tenantID, accountID string, attempts int, nextTry time.Time) error {
+ if attempts < 1 { attempts = 1 }
+ if attempts > 30 { attempts = 30 }
+ return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+  _, err := tx.ExecContext(ctx, `INSERT INTO telegram_account_runtime(tenant_id,account_id,reconnect_attempts,reconnect_at,updated_at)
+   VALUES($1,$2,$3,$4,NOW())
+   ON CONFLICT(tenant_id,account_id) DO UPDATE SET reconnect_attempts=EXCLUDED.reconnect_attempts,reconnect_at=EXCLUDED.reconnect_at,updated_at=NOW()`, tenantID,accountID,attempts,nextTry)
+  return err
+ })
+}
+
+// ClearRuntimeReconnectState resets the retry counter after a successful connection.
+func (s *Service) ClearRuntimeReconnectState(ctx context.Context, tenantID, accountID string) error {
+ return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+  _, err := tx.ExecContext(ctx, `DELETE FROM telegram_account_runtime WHERE tenant_id=$1 AND account_id=$2`,tenantID,accountID)
+  return err
+ })
 }
