@@ -161,6 +161,7 @@ func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
 	if err!=nil{
 		status:=http.StatusBadRequest
 		if err.Error()=="message not found"{status=http.StatusNotFound}
+		if strings.HasPrefix(err.Error(),"Idempotency-Key was already used") { status=http.StatusConflict }
 		messageJSON(w,status,map[string]string{"error":err.Error()});return
 	}
 	messageJSON(w,http.StatusAccepted,map[string]any{"reply":job})
