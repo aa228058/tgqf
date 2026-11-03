@@ -14,7 +14,7 @@ func (h *Handler) joinTasks(w http.ResponseWriter,r *http.Request) {
         limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
         items,total,err:=h.service.ListJoinTasks(r.Context(),user.TenantID,limit,offset)
         if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load join tasks"});return}
-        messageJSON(w,http.StatusOK,map[string]any{"tasks":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
+        messageJSON(w,http.StatusOK,map[string]any{"tasks":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset),"execution_enabled":false})
     case http.MethodPost:
         var input JoinTaskInput
         if err:=decodeMessageJSON(w,r,32<<10,&input);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid join task body"});return}
@@ -46,6 +46,6 @@ func (h *Handler) joinTaskAction(w http.ResponseWriter,r *http.Request) {
     if err!=nil{status:=http.StatusConflict;if err.Error()=="join task not found"{status=http.StatusNotFound};if err.Error()=="tenant subscription inactive"{status=http.StatusForbidden};messageJSON(w,status,map[string]string{"error":err.Error()});return}
     status:="updated"
     switch r.PathValue("action"){case "start":status="queued";case "pause":status="paused";case "resume":status="queued";case "cancel":status="cancelled"}
-    messageJSON(w,http.StatusOK,map[string]string{"status":status})
+    messageJSON(w,http.StatusOK,map[string]any{"status":status,"execution_enabled":false})
 }
 
