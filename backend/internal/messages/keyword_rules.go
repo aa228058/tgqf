@@ -275,3 +275,11 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
         if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
     })
 }
+
+func (s *Service) PauseKeywordAction(ctx context.Context,job KeywordActionJob,reason string) error {
+    reason=strings.TrimSpace(reason);if reason==""{reason="tenant inactive; manual review required"};if len(reason)>500{reason=reason[:500]}
+    return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
+        if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+    })
+}
