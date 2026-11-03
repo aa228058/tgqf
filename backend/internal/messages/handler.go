@@ -144,7 +144,7 @@ func(h *Handler)createContactReply(w http.ResponseWriter,r *http.Request) {
 	}
 	if err:=decodeMessageJSON(w,r,8<<10,&body);err!=nil {messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid contact body"});return}
 	user:=auth.UserFromContext(r.Context())
-	job,err:=h.service.CreateContactReply(r.Context(),user.TenantID,r.PathValue("id"),body.Phone,body.FirstName,body.LastName)
+	job,err:=h.service.CreateContactReply(r.Context(),user.TenantID,r.PathValue("id"),body.Phone,body.FirstName,body.LastName,r.Header.Get("Idempotency-Key"))
 	if err!=nil {
 		status:=http.StatusBadRequest
 		if err.Error()=="message not found" {status=http.StatusNotFound}
