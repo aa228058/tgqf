@@ -36,7 +36,7 @@
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | 创建账号时写入 telegram_device_profiles | 部分实现 | Manager.Start/StartQR 仍直接 DeviceProfile(accountID) 重新生成，未读取数据库 profile |
-| 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页 | 第一阶段已实现 | 标签、批量选择、导出、断开/重连 API 未形成完整集合 |
+| 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页、CSV 导出、批量 Session 导入 | 第一阶段已实现 | 标签、批量选择、断开/重连 API 未形成完整集合；批量导入当前接收最多 20 条 JSON 记录，非文件上传 |
 | 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
 | 批量资料修改 | 未发现相关路由/服务 | 未实现 | 头像、姓名、简介的单/批量修改和逐账号任务结果 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
@@ -91,6 +91,8 @@
 
 已从路由确认：
 - `GET/POST/DELETE /api/v1/accounts`（GET 支持 `q`、`group`、`status`、`limit`、`offset`）
+- `GET /api/v1/accounts/export.csv`（复用账号筛选条件；CSV 字段公式注入防护；不导出 Session/代理密钥）
+- `POST /api/v1/accounts/import`（单次最多 20 个 Session 记录，逐条结果；Session 仍按账号独立加密保存）
 - `PATCH /api/v1/accounts/{id}/group`
 - `PATCH /api/v1/accounts/{id}/proxy`
 - `GET/POST/PUT/DELETE /api/v1/proxies`
