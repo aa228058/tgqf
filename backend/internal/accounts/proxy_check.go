@@ -109,6 +109,9 @@ func negotiateSOCKS4(rw io.ReadWriter, username, target string) error {
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 { return errors.New("invalid tunnel target port") }
 	request := []byte{4, 1, byte(port >> 8), byte(port), 0, 0, 0, 1}
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil { copy(request[4:8], v4) } else { return errors.New("SOCKS4 does not support IPv6 tunnel targets") }
+	}
 	request = append(request, []byte(username)...)
 	request = append(request, 0)
 	if net.ParseIP(host) == nil {
