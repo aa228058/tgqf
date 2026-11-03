@@ -209,7 +209,13 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 			continue
 		}
 		sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
-		telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+		var telegramMessageID int64
+		var sendErr error
+		if job.MessageType=="contact" {
+			telegramMessageID,sendErr=manager.SendContactReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.ContactPhone,job.ContactFirstName,job.ContactLastName)
+		} else {
+			telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+		}
 		cancel()
 		if sendErr!=nil {
 			floodWait,_:=tgerr.AsFloodWait(sendErr)
