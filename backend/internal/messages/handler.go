@@ -36,6 +36,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
+	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
 	mux.Handle("GET /api/v1/groups/{id}/sources",h.auth.Authenticated(http.HandlerFunc(h.listGroupSources)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
@@ -158,6 +159,19 @@ func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
  }
 }
 
+
+
+func (h *Handler) listGroupLinks(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	items,total,err:=h.service.ListGroupLinks(r.Context(),user.TenantID,r.URL.Query().Get("type"),r.URL.Query().Get("status"),limit,offset)
+	if err!=nil {
+		status:=http.StatusInternalServerError
+		if errors.Is(err,ErrInvalidGroupLibraryQuery){status=http.StatusBadRequest}
+		messageJSON(w,status,map[string]string{"error":"failed to load group links"});return
+	}
+	messageJSON(w,http.StatusOK,map[string]any{"links":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
+}
 
 func (h *Handler) listGroupSources(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
