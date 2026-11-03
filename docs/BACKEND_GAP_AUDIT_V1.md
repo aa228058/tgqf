@@ -69,6 +69,8 @@
 ### P1 — 全局公共群组总库
 - [x] P1-06 第一阶段：新增 `public_groups`，按 Telegram chat type + chat ID 去重，维护全局资料。
 - [x] P1-07 第一阶段：新增 `public_group_sources`、`tenant_group_contributions`，记录来源账号、发现租户、发现次数和时间。
+- [x] P1-09 第二阶段：租户可提交群组标题、公开用户名、成员数和认证标记的纠错建议；超级管理员审核通过后才更新全局资料，拒绝/通过均记录审核人、时间和备注。
+- [x] P1-10 第一阶段：超级管理员可人工合并同类型重复群组；迁移来源记录、租户贡献、公开链接关联和纠错历史，并保存合并快照与审计日志。合并不自动根据相似名称执行。
 - P1-08 记录群组默认发言权限与账号个人权限为不同字段/事实来源（后续权限采集阶段）。
 - P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 改为读取共享目录，并提供来源数、贡献租户数；多链接、人工纠错、合并审计仍待补齐。
 
@@ -111,6 +113,9 @@
 - `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 - `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源和账号信息，不泄露其他租户的账号数据）
+- `POST /api/v1/groups/{id}/corrections`、`GET /api/v1/groups/corrections`（租户提交/查询自身的群组资料纠错建议）
+- `GET /api/v1/admin/group-corrections`、`POST /api/v1/admin/group-corrections/{id}/review`（超级管理员审核全局群组资料建议）
+- `POST /api/v1/admin/groups/{id}/merge`（超级管理员将来源群组人工合并至目标群组；保留来源、贡献、链接关系和合并审计）
 - `GET /api/v1/group-links`（共享链接目录；支持 `type`、`status` 筛选；私密邀请码不向 API 明文返回）
 - `GET/POST /api/v1/keyword-rules`、`PUT/DELETE /api/v1/keyword-rules/{id}`（租户关键词规则管理）
 - `GET /api/v1/keyword-rules/matches`（分页查询实时命中记录，可按 `rule_id` 筛选）
