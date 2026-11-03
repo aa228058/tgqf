@@ -168,6 +168,10 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 	if err!=nil { logger.Error("claim Telegram reply jobs","error",err);return }
 	for _,job:=range jobs {
 		if ctx.Err()!=nil{return}
+		if !manager.IsConnected(job.AccountID) {
+			if err:=service.ReleaseReply(ctx,job,30*time.Second);err!=nil { logger.Error("release reply for offline Telegram account","job_id",job.ID,"error",err) }
+			continue
+		}
 		sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
 		telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
 		cancel()
