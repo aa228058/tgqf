@@ -194,6 +194,10 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 				tenantID,groupID)
 			if err!=nil{return err}
 		}
+		// Link discovery runs only on this live incoming update. It never queries history.
+		if !in.IsOutgoing && strings.TrimSpace(in.Text)!="" {
+			if err:=storeDiscoveredLinks(ctx,tx,tenantID,in);err!=nil{return err}
+		}
 		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
@@ -207,6 +211,32 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 	if err!=nil{return false,err}
 	if collected { s.publishCreated(ctx,tenantID,in) }
 	return collected,nil
+}
+
+
+func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Incoming)error{
+	for _,link:=range ExtractTelegramLinks(in.Text){
+		var id int64
+		if link.Type=="public" {
+			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
+				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
+				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW()
+				RETURNING id`,strings.TrimPrefix(strings.TrimPrefix(link.PublicURL,"https://t.me/"),"@"),link.PublicURL).Scan(&id);err!=nil{return err}
+		}else if link.Type=="invite" {
+			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
+			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status)
+				VALUES('invite',$1,$2,'pending')
+				ON CONFLICT(invite_hash) DO UPDATE SET last_seen_at=NOW()
+				RETURNING id`,link.InviteHash,link.InviteCiphertext).Scan(&id);err!=nil{return err}
+		}else{continue}
+		_,err:=tx.ExecContext(ctx,`INSERT INTO public_group_link_sources(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id)
+			VALUES($1,$2,$3,$4,$5)
+			ON CONFLICT(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id)
+			DO UPDATE SET last_seen_at=NOW(),discovery_count=public_group_link_sources.discovery_count+1`,
+			id,tenantID,in.AccountID,in.ChatID,in.MessageID)
+		if err!=nil{return err}
+	}
+	return nil
 }
 
 func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]Message,int,error){
