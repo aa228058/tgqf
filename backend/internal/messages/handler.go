@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -150,7 +151,9 @@ func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	items, total, err := h.service.ListGroupLibrary(r.Context(), user.TenantID, r.URL.Query().Get("chat_type"), r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
-		messageJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrInvalidGroupLibraryQuery) { status = http.StatusBadRequest }
+		messageJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 	messageJSON(w, http.StatusOK, map[string]any{"groups": items, "total": total, "limit": normalizeLimit(limit), "offset": max(0, offset)})
