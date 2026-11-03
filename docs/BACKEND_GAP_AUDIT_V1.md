@@ -43,7 +43,7 @@
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 第一阶段已实现 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；状态默认 pending；租户可分别开关私聊、群组、频道来源；在线验证与自动关联群组资料仍待补齐 |
-| 自动加群 | 未发现加入/邀请申请任务服务 | 未实现 | 多账号分配、邀请加入、申请状态；当前消息回复任务已按 Telegram 实际 FloodWait 时长延期，FloodWait 不消耗普通重试预算；自动加群仍需独立任务状态机 |
+| 自动加群 | tenant_join_tasks、tenant_join_task_accounts、任务 API | 基础任务生命周期已实现；Telegram 加群执行未启用 | 支持显式授权、租户内账号分配、目标链接来源校验、草稿/排队/暂停/恢复/取消及申请状态字段；MTProto 加群执行、申请审批回调和 FloodWait 调度仍待专项实现 |
 | 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/regex、排除词、聊天类型、大小写；只记录命中，不触发自动动作；规则启停和命中分页 API 已提供 |
 | 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
@@ -74,7 +74,7 @@
 
 ### P2 — 自动化业务闭环
 - [x] P2-01 第一阶段：实时新消息链接识别与公共链接目录入库；私密邀请链接加密存储，不回溯历史。链接来源和待验证状态可查询。实际 Telegram 验证及自动关联群组实体仍待补齐。
-- P2-02 自动加群任务状态机和 FloodWait 安全等待。
+- [x] P2-02 第一阶段：自动加群任务基础状态机、租户内账号分配、明确授权记录、暂停/恢复/取消与申请状态字段；实际 Telegram 加群执行尚未启用，待 MTProto API 与审批流程验证。
 - [x] P2-03 第一阶段：关键词规则模型、any/all/regex、排除词、聊天类型筛选、实时新消息评估与命中记录；不自动发送、不读取历史。
 - P2-04 私聊/群组动作链完全隔离；先实现安全、可审计的文本/媒体动作。
 - P2-05 Telegram 原生联系人卡片能力验证。
@@ -114,6 +114,8 @@
 - `GET /api/v1/group-links`（共享链接目录；支持 `type`、`status` 筛选；私密邀请码不向 API 明文返回）
 - `GET/POST /api/v1/keyword-rules`、`PUT/DELETE /api/v1/keyword-rules/{id}`（租户关键词规则管理）
 - `GET /api/v1/keyword-rules/matches`（分页查询实时命中记录，可按 `rule_id` 筛选）
+- `GET/POST /api/v1/join-tasks`、`GET /api/v1/join-tasks/{id}`（自动加群任务及账号分配状态）
+- `POST /api/v1/join-tasks/{id}/{action}`（`start`、`pause`、`resume`、`cancel`；仅管理任务状态，不会调用 Telegram 加群）
 - `GET/PUT /api/v1/group-links/settings`（分别启停私聊、群组、频道来源及总开关）
 
 ## 5. CI 与代码状态
