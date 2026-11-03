@@ -230,7 +230,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 }
 
 func processReplyJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-	jobs,err:=service.ClaimPendingReplies(ctx,20)
+	jobs,err:=service.ClaimPendingReplies(ctx,1)
 	if err!=nil { logger.Error("claim Telegram reply jobs","error",err);return }
 	for _,job:=range jobs {
 		if ctx.Err()!=nil{return}
@@ -272,7 +272,7 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 
 
 func processKeywordActionJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-    jobs,err:=service.ClaimKeywordActionJobs(ctx,20)
+    jobs,err:=service.ClaimKeywordActionJobs(ctx,1)
     if err!=nil {logger.Error("claim keyword action jobs","error",err);return}
     for _,job:=range jobs {
         if ctx.Err()!=nil{return}
@@ -302,7 +302,7 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
     tenantSet:=map[string]bool{}
     accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
     for tenantID:=range tenantSet {
-        jobs,err:=service.ClaimJoinTaskAccounts(ctx,tenantID,10)
+        jobs,err:=service.ClaimJoinTaskAccounts(ctx,tenantID,1)
         if err!=nil {logger.Error("claim Telegram join tasks","tenant_id",tenantID,"error",err);continue}
         blockedTasks:=map[string]bool{}
         blockedAccounts:=map[string]bool{}
@@ -383,7 +383,7 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 	tenantSet:=map[string]bool{}
 	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
 	for tenantID:=range tenantSet {
-		jobs,err:=accountService.ClaimProfileUpdateJobs(ctx,tenantID,10)
+		jobs,err:=accountService.ClaimProfileUpdateJobs(ctx,tenantID,1)
 		if err!=nil { logger.Error("claim Telegram profile update jobs","tenant_id",tenantID,"error",err);continue }
 		blockedAccounts:=map[string]bool{}
 		for _,job:=range jobs {
