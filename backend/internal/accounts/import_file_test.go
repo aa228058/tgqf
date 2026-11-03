@@ -26,3 +26,16 @@ func TestParseAccountImportFileRejectsBadCSVHeaders(t *testing.T) {
     _,err:=parseAccountImportFile("accounts.csv",[]byte("phone,session,password\n+15550000001,SESSION_ONE,secret\n"))
     if err==nil{t.Fatal("expected unsupported column error")}
 }
+
+func TestParseAccountImportFileJSON(t *testing.T) {
+    records,err:=parseAccountImportFile("accounts.json",[]byte(`{"accounts":[{"phone":"+15550000001","display_name":"Example","session":"SESSION_ONE"}]}`))
+    if err!=nil{t.Fatal(err)}
+    if len(records)!=1||records[0].Phone!="+15550000001"||records[0].Session!="SESSION_ONE"{t.Fatalf("unexpected parsed records: %+v",records)}
+}
+
+func TestParseAccountImportFileRejectsMoreThanTwentyRecords(t *testing.T) {
+    var input strings.Builder
+    input.WriteString("phone,session\n")
+    for i:=0;i<21;i++{input.WriteString("+15550000000,SESSION\n")}
+    if _,err:=parseAccountImportFile("accounts.csv",[]byte(input.String()));err==nil{t.Fatal("expected account count limit error")}
+}
