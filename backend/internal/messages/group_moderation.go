@@ -134,8 +134,10 @@ func (s *Service) ReviewGroupCorrection(ctx context.Context,reviewerID string,co
     }
     status:="rejected";if decision=="approve"{status="approved"}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_corrections SET status=$1,review_note=$2,reviewed_by_user_id=$3,reviewed_at=NOW() WHERE id=$4`,status,note,reviewerID,correctionID);err!=nil{return err}
+    auditDetails,err:=json.Marshal(map[string]any{"group_id":groupID,"note":note,"decision":decision})
+    if err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`INSERT INTO audit_logs(actor_user_id,action,resource_type,resource_id,details)
-        VALUES($1,$2,'public_group_correction',$3,$4::jsonb)`,reviewerID,"admin.group_correction."+decision,fmt.Sprint(correctionID),fmt.Sprintf(`{"group_id":%d,"note":%q}`,groupID,note));err!=nil{return err}
+        VALUES($1,$2,'public_group_correction',$3,$4::jsonb)`,reviewerID,"admin.group_correction."+decision,fmt.Sprint(correctionID),string(auditDetails));err!=nil{return err}
     return tx.Commit()
 }
 
@@ -159,11 +161,14 @@ func (s *Service) MergePublicGroups(ctx context.Context,actorID string,sourceID,
         ON CONFLICT(tenant_id,group_id) DO UPDATE SET first_contributed_at=LEAST(tenant_group_contributions.first_contributed_at,EXCLUDED.first_contributed_at),last_contributed_at=GREATEST(tenant_group_contributions.last_contributed_at,EXCLUDED.last_contributed_at),contribution_count=tenant_group_contributions.contribution_count+EXCLUDED.contribution_count`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`DELETE FROM tenant_group_contributions WHERE group_id=$1`,sourceID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_links SET group_id=$2 WHERE group_id=$1`,sourceID,targetID);err!=nil{return err}
+    if _,err=tx.ExecContext(ctx,`UPDATE public_groups SET last_seen_at=GREATEST(last_seen_at,(SELECT last_seen_at FROM public_groups WHERE id=$1)),updated_at=NOW() WHERE id=$2`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_corrections SET status='rejected',review_note='source group merged; please resubmit against the canonical group',reviewed_by_user_id=$2,reviewed_at=NOW() WHERE group_id=$1 AND status='pending'`,sourceID,actorID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_corrections SET group_id=$2 WHERE group_id=$1`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`INSERT INTO public_group_merge_audits(source_group_id,target_group_id,actor_user_id,reason,source_snapshot) VALUES($1,$2,$3,$4,$5::jsonb)`,sourceID,targetID,actorID,reason,string(snapshot));err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`DELETE FROM public_groups WHERE id=$1`,sourceID);err!=nil{return err}
+    auditDetails,err:=json.Marshal(map[string]any{"source_group_id":sourceID,"target_group_id":targetID,"reason":reason})
+    if err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`INSERT INTO audit_logs(actor_user_id,action,resource_type,resource_id,details)
-        VALUES($1,'admin.public_group.merge','public_group',$2,$3::jsonb)`,actorID,fmt.Sprint(targetID),fmt.Sprintf(`{"source_group_id":%d,"reason":%q}`,sourceID,reason));err!=nil{return err}
+        VALUES($1,'admin.public_group.merge','public_group',$2,$3::jsonb)`,actorID,fmt.Sprint(targetID),string(auditDetails));err!=nil{return err}
     return tx.Commit()
 }
