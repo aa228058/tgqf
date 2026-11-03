@@ -2,7 +2,9 @@ package messages
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 	"strconv"
 
 	"github.com/aa228058/tgqf/backend/internal/auth"
@@ -12,6 +14,7 @@ type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
@@ -79,4 +82,38 @@ func(h *Handler)getReply(w http.ResponseWriter,r *http.Request){
 	job,err:=h.service.GetReply(r.Context(),user.TenantID,r.PathValue("id"))
 	if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"reply job not found"});return}
 	messageJSON(w,http.StatusOK,map[string]any{"reply":job})
+}
+
+func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
+ user:=auth.UserFromContext(r.Context())
+ sub:=h.service.SubscribeMessages(r.Context(),user.TenantID)
+ if sub==nil {
+  messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"realtime message stream is unavailable"})
+  return
+ }
+ defer sub.Close()
+ flusher,ok:=w.(http.Flusher)
+ if !ok { http.Error(w,"streaming is not supported",http.StatusInternalServerError);return }
+ w.Header().Set("Content-Type","text/event-stream")
+ w.Header().Set("Cache-Control","no-cache, no-transform")
+ w.Header().Set("Connection","keep-alive")
+ w.Header().Set("X-Accel-Buffering","no")
+ w.WriteHeader(http.StatusOK)
+ _,_=fmt.Fprint(w,": connected\n\n")
+ flusher.Flush()
+ keepalive:=time.NewTicker(25*time.Second)
+ defer keepalive.Stop()
+ events:=sub.Channel()
+ for {
+  select {
+  case <-r.Context().Done(): return
+  case event,open:=<-events:
+   if !open { return }
+   _,_=fmt.Fprintf(w,"event: message\ndata: %s\n\n",event.Payload)
+   flusher.Flush()
+  case <-keepalive.C:
+   _,_=fmt.Fprint(w,": keep-alive\n\n")
+   flusher.Flush()
+  }
+ }
 }
