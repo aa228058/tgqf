@@ -286,6 +286,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 领取任务时持久化更新 `telegram_send_next_at`；FloodWait 同步写入账号级 `telegram_send_cooldown_until`，加群任务同时保留专用 join cooldown。
 - [x] 加群任务和资料更新也纳入跨队列互斥，避免与消息回复、关键词动作同时调用 Telegram API。
 - [x] 资料更新任务新增 `POST /api/v1/accounts/profile-updates/{id}/cancel`；仅允许取消 pending/paused，正在执行中的 Telegram RPC 不会被伪装成可立即中断。
+- [x] 回复、关键词动作和资料更新任务的完成/失败/暂停/重排操作增加领取租约值校验，过期 Worker 无法覆盖新 Worker 的任务状态。
 - [x] migration `0035_profile_update_cancellation.sql` 放开 cancelled 状态；列表状态筛选可查询 cancelled。
 - [ ] 当前提交的 Go test、vet、API build 正在运行；需以最新 head SHA 的最终 CI 结果为准。
 - [ ] 尚未在真实数据库验证迁移、跨队列并发锁竞争和多 Worker 场景；需后续集成测试。
