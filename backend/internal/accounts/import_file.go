@@ -2,6 +2,9 @@ package accounts
 
 import (
     "bytes"
+    "database/sql"
+    "net"
+    "os"
     "encoding/csv"
     "encoding/json"
     "errors"
@@ -11,13 +14,55 @@ import (
     "strings"
 
     "github.com/aa228058/tgqf/backend/internal/auth"
+    tgconv "github.com/mtgo-labs/session-converter"
+    _ "github.com/mtgo-labs/storage/sqlite"
 )
 
 const maxSessionImportFileBytes = 1 << 20
 
+func parseTelethonSQLiteSession(data []byte) (string,error) {
+    if len(data)==0||len(data)>maxSessionImportFileBytes{return "",errors.New("invalid SQLite session file size")}
+    tmp,err:=os.CreateTemp("","tgqf-telethon-*.session")
+    if err!=nil{return "",errors.New("could not stage SQLite session file")}
+    path:=tmp.Name()
+    defer os.Remove(path)
+    if _,err=tmp.Write(data);err!=nil{tmp.Close();return "",errors.New("could not write temporary SQLite session")}
+    if err=tmp.Close();err!=nil{return "",errors.New("could not close temporary SQLite session")}
+    db,err:=sql.Open("sqlite","file:"+filepath.ToSlash(path)+"?mode=ro")
+    if err!=nil{return "",errors.New("invalid SQLite session database")}
+    defer db.Close()
+    db.SetMaxOpenConns(1)
+    if _,err=db.Exec("PRAGMA query_only=ON");err!=nil{return "",errors.New("could not open SQLite session read-only")}
+    var table string
+    if err=db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").Scan(&table);err!=nil{return "",errors.New("SQLite file does not contain a sessions table")}
+    columns,err:=db.Query("PRAGMA table_info(sessions)")
+    if err!=nil{return "",errors.New("could not inspect SQLite sessions schema")}
+    available:=map[string]bool{}
+    for columns.Next(){var cid,notNull,pk int;var name,kind string;var defaultValue any;if err:=columns.Scan(&cid,&name,&kind,&notNull,&defaultValue,&pk);err!=nil{columns.Close();return "",errors.New("invalid SQLite sessions schema")};available[name]=true}
+    if err:=columns.Err();err!=nil{columns.Close();return "",errors.New("invalid SQLite sessions schema")};columns.Close()
+    for _,name:=range []string{"dc_id","server_address","port","auth_key"}{if !available[name]{return "",errors.New("SQLite file is not a supported Telethon session schema")}}
+    rows,err:=db.Query("SELECT dc_id,server_address,port,auth_key FROM sessions LIMIT 2")
+    if err!=nil{return "",errors.New("could not read Telethon session data")}
+    defer rows.Close()
+    type sessionRow struct{dc,port int;address string;auth []byte}
+    found:=make([]sessionRow,0,2)
+    for rows.Next(){var row sessionRow;if err:=rows.Scan(&row.dc,&row.address,&row.port,&row.auth);err!=nil{return "",errors.New("invalid Telethon session row")};found=append(found,row)}
+    if err:=rows.Err();err!=nil{return "",errors.New("could not read Telethon session rows")}
+    if len(found)!=1{return "",errors.New("Telethon session database must contain exactly one session row")}
+    row:=found[0]
+    if row.dc<1||row.dc>5||row.port<1||row.port>65535||net.ParseIP(row.address)==nil||len(row.auth)!=256{return "",errors.New("Telethon session contains invalid DC, server address, port or authorization key")}
+    encoded,err:=tgconv.EncodeTelethon(&tgconv.Session{DCID:row.dc,ServerAddress:row.address,Port:row.port,AuthKey:append([]byte(nil),row.auth...)})
+    if err!=nil{return "",errors.New("could not convert Telethon session")}
+    return encoded,nil
+}
+
 func parseAccountImportFile(filename string,data []byte)([]createRequest,error) {
     if len(data)==0||len(data)>maxSessionImportFileBytes{return nil,errors.New("invalid import file size")}
     switch strings.ToLower(filepath.Ext(filename)) {
+    case ".session":
+        session,err:=parseTelethonSQLiteSession(data)
+        if err!=nil{return nil,err}
+        return []createRequest{{Session:session}},nil
     case ".json":
         decoder:=json.NewDecoder(bytes.NewReader(data));decoder.DisallowUnknownFields()
         var input batchImportRequest
@@ -70,7 +115,7 @@ func parseAccountImportFile(filename string,data []byte)([]createRequest,error) 
         if len(records)==0{return nil,errors.New("TXT contains no account records")}
         return records,nil
     default:
-        return nil,errors.New("supported import formats are .json, .csv and .txt")
+        return nil,errors.New("supported import formats are Telethon .session, .json, .csv and .txt")
     }
 }
 
@@ -85,6 +130,13 @@ func (h *Handler) importFile(w http.ResponseWriter,r *http.Request) {
     if err!=nil||len(data)>maxSessionImportFileBytes{writeError(w,http.StatusBadRequest,"import file exceeds 1 MiB");return}
     records,err:=parseAccountImportFile(header.Filename,data)
     if err!=nil{writeError(w,http.StatusBadRequest,err.Error());return}
+    if strings.EqualFold(filepath.Ext(header.Filename),".session") {
+        phone:=strings.TrimSpace(r.FormValue("phone"))
+        if len(phone)<5||len(phone)>32{writeError(w,http.StatusBadRequest,"phone form field is required for Telethon .session imports");return}
+        records[0].Phone=phone
+        records[0].DisplayName=strings.TrimSpace(r.FormValue("display_name"))
+        records[0].GroupName=strings.TrimSpace(r.FormValue("group_name"))
+    }
     h.importAccounts(w,r,records)
 }
 
