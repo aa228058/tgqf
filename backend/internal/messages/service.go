@@ -148,7 +148,7 @@ func ShouldCollect(chatType string, isOutgoing, replyToOwn bool) bool {
 
 func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (bool,error) {
 	if tenantID=="" || !validUUID(in.AccountID) || in.ChatID==0 || in.MessageID<=0 { return false,errors.New("invalid message identity") }
-	if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return false,nil }
+	if in.ChatType != "private" && in.ChatType != "group" { return false,nil }
 	if len(in.Text)>16384 || len(in.MediaType)>40 { return false,errors.New("message payload too large") }
 	if in.MessageDate.IsZero() { in.MessageDate=time.Now().UTC() }
 	collected:=false
@@ -156,9 +156,10 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		var exists bool
 		if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,in.AccountID).Scan(&exists);err!=nil{return err}
 		if !exists{return errors.New("account not found")}
-		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
-		if !settings.Allows(in){return nil}
-		_,err=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
+		// Keep the chat catalogue independent from message-content collection:
+		// observing a group must not require a reply to our own message or pass
+		// the tenant's text/media filters. Only metadata is stored here.
+		_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
 			ON CONFLICT(tenant_id,telegram_account_id,chat_id) DO UPDATE SET
 			chat_title=COALESCE(NULLIF(EXCLUDED.chat_title,''),tenant_message_chats.chat_title),
@@ -168,6 +169,9 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 			is_verified=tenant_message_chats.is_verified OR EXCLUDED.is_verified,
 			last_seen_at=NOW(),updated_at=NOW()`,tenantID,in.AccountID,in.ChatID,strings.TrimSpace(in.ChatTitle),in.ChatType,strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified)
 		if err!=nil{return err}
+		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
+		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
+		if !settings.Allows(in){return nil}
 		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
 			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,in.MessageDate)
 		if insertErr!=nil { return insertErr }
