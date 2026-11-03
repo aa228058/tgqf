@@ -56,6 +56,8 @@ type Incoming struct {
 	ChatType string
 	ChatTitle string
 	ChatUsername string
+	SenderUsername string
+	SenderName string
 	ChatMemberCount int
 	ChatVerified bool
 	SenderID int64
