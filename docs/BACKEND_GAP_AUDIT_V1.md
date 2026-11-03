@@ -34,13 +34,13 @@
 |---|---|---|---|
 | 多租户/认证 | tenants、users、activation_cards、auth_sessions、RLS；auth handlers | 已有基础实现，待完整验收 | 多设备会话、密码变更撤销策略、到期停任务/恢复暂停语义需集成测试 |
 | 超管/卡密 | admin handlers、activation_cards | 部分实现 | 租户生命周期完整操作、审计、续期暂停任务闭环需核验 |
-| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 登录 API 已实现（OTP 与 2FA 挑战暂存于进程内，需处理服务重启恢复并完成真实账号验收）；批量登录编排仍缺失；Session 文件导入支持 JSON/CSV/TXT，传统 Telethon SQLite .session 文件需独立转换/导入流程 |
+| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 单账号及批量登录 API 已实现；OTP/2FA challenge 暂存于 Manager 进程内，进程重启后需重新发起登录；Session 文件导入支持 JSON/CSV/TXT 及 Telethon/Pyrogram SQLite .session，仍需真实账号验收 |
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
-| 账号列表/分组 | accounts GET/POST/DELETE、group patch、服务端搜索/筛选/分页、CSV 导出、批量 Session 导入 | 第一阶段已实现 | 标签体系尚待补齐；批量分组、代理绑定、断开/重连 API 已实现；批量导入当前接收最多 20 条 JSON 记录，非文件上传 |
+| 账号列表/分组/标签 | accounts GET/POST/DELETE、搜索/筛选/分页、CSV/Session 文件导入导出、分组/标签、批量分组/代理绑定/断开重连 | 后端功能已实现，待 CI 与真实账号验收 | 标签本轮新增 PostgreSQL TEXT[]、单账号/批量替换 API 和 CSV 导出；登录挑战进程重启恢复仍未实现 |
 | 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
-| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile、账号资料任务 API 与 Worker | 第一阶段已实现，待 CI/在线验收 | 支持每批最多 20 个账号分别设置姓名/简介及随机用户名，并可独立启用随机用户名；撞名时最多重新生成 8 次，成功用户名写入逐账号结果；支持状态、错误、重试、暂停/人工恢复；头像上传尚未实现 |
+| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile/UpdateProfilePhoto/UpdateUsername、资料任务 API 与 Worker | 后端功能已实现，待 CI/真实账号验收 | 支持姓名/简介/头像/随机用户名，逐账号结果、冲突重试、暂停/恢复/重试/取消；用户名规则前端仍待后续前端阶段 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为可断点续传的 SSE + Redis Streams；仍未实现 WebSocket，且需 Redis 集成测试覆盖断线重连、游标续传和保留窗口 |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
@@ -62,11 +62,11 @@
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
 
 ### P1 — 基础能力补齐
-- P1-01 进行中：MTGo 手机验证码及 2FA 登录 API 已实现（`POST /accounts/phone/start`、`POST /accounts/{id}/phone/verify`、`POST /accounts/{id}/phone/2fa`），challenge 在 Manager 内存保存并设置 10 分钟过期，超时自动拒绝并断开待登录客户端，成功后复用加密 Session 持久化；批量登录编排、重启恢复、SQLite `.session` 导入和真实账号验收仍未完成。
+- P1-01 代码已实现：MTGo 手机验证码/2FA 单账号及批量登录 API；challenge 在 Manager 内存保存并设置 10 分钟过期，超时自动拒绝并断开待登录客户端。批量 Session 文件导入支持 JSON/CSV/TXT 与 Telethon/Pyrogram SQLite `.session` 转换。进程重启后 challenge 不恢复，需重新发起登录；真实账号验收仍待完成。
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
 - [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
-- [x] P1-04 第一阶段：账号搜索/分页/CSV 导出、批量分组、批量代理绑定、批量断开/重连状态控制；实际客户端停止/重连由 Worker reconcile 执行。账号标签体系和批量登录编排仍待补齐。
-- [x] P1-05 第一阶段：姓名/简介/随机用户名资料修改已进入逐账号任务队列，批次 ID 统一，Worker 调用 MTGo UpdateProfile，逐账号记录成功/失败、普通错误退避重试、FloodWait 精确等待；租户停用/到期时暂停，恢复后需人工显式恢复。头像上传仍待专项实现。
+- [x] P1-04 第一阶段：账号搜索/分页/CSV 导出、批量 Session 文件导入、分组、标签、批量代理绑定、批量断开/重连状态控制、批量手机号登录均已有代码实现；实际客户端停止/重连由 Worker reconcile 执行。待 Go CI、PostgreSQL 集成及真实账号验收。
+- [x] P1-05 第一阶段：姓名/简介/头像/随机用户名资料修改已进入逐账号任务队列，Worker 调用 MTGo UpdateProfile、UploadFile/SetProfilePhoto、UpdateUsername，记录逐账号结果并遵守 FloodWait；租户停用/到期时暂停，恢复后需人工显式恢复。待 CI 与真实账号上传/资料修改验收。
 
 ### P1 — 全局公共群组总库
 - [x] P1-06 第一阶段：新增 `public_groups`，按 Telegram chat type + chat ID 去重，维护全局资料。
@@ -167,7 +167,7 @@
 
 | 用户要求项 | 当前代码进展 | 当前验收结论 |
 |---|---|---|
-| 账号头像上传 | `POST /api/v1/accounts/profile-updates/photo`；multipart 1–5 MiB、JPEG/PNG magic/解码/尺寸校验；图片字节随逐账号资料任务持久化；MTGo UploadFile + SetProfilePhoto；Worker 按账号执行 | 后端实现已接入，需最新 CI 和真实账号上传验证 |
+| 账号头像上传 | `POST /api/v1/accounts/profile-updates/photo`；multipart 1–5 MiB、JPEG/PNG 解码/尺寸校验；图片字节随逐账号资料任务持久化；MTGo UploadFile + SetProfilePhoto；Worker 按账号执行 | 后端实现已接入，需最新 CI 和真实账号上传验证 |
 | 账号资料修改前端页面 | 按用户要求暂不开始前端 | 未开发，等七项专项结束后再做 |
 | 用户名规则前端设置页面 | 按用户要求暂不开始前端；后端租户 GET/PUT 配置接口已存在 | 未开发，等七项专项结束后再做 |
 | 私密邀请链接加入 | migration 0026 增加密文列；AES-GCM 加密；仅允许 t.me/telegram.me 邀请 hash；任务 Worker 解密后通过 MTGo JoinChat 执行；不向普通 API 回显明文 | 代码已接入，需 CI、数据库迁移和真实私密群测试 |
