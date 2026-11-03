@@ -8,7 +8,7 @@ CREATE TABLE tenant_join_tasks (
     status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','queued','paused','completed','failed','cancelled')),
     authorization_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
     authorization_note TEXT NOT NULL DEFAULT '',
-    authorized_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    authorized_by UUID REFERENCES users(id) ON DELETE RESTRICT,
     authorized_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -32,6 +32,9 @@ CREATE TABLE tenant_join_task_accounts (
     status TEXT NOT NULL DEFAULT 'paused' CHECK (status IN ('queued','paused','request_pending','joined','already_member','failed','skipped','cancelled')),
     application_status TEXT NOT NULL DEFAULT 'not_started' CHECK (application_status IN ('not_started','request_pending','approved','declined','not_required','unknown')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts>=0),
+    available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    lease_until TIMESTAMPTZ,
+    telegram_chat_id BIGINT,
     last_error TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -40,6 +43,7 @@ CREATE TABLE tenant_join_task_accounts (
     UNIQUE(task_id,telegram_account_id)
 );
 CREATE INDEX tenant_join_task_accounts_task_idx ON tenant_join_task_accounts(tenant_id,task_id,status);
+CREATE INDEX tenant_join_task_accounts_worker_idx ON tenant_join_task_accounts(status,available_at,lease_until,created_at) WHERE status IN ('queued','request_pending');
 CREATE INDEX tenant_join_task_accounts_account_idx ON tenant_join_task_accounts(tenant_id,telegram_account_id,created_at DESC);
 ALTER TABLE tenant_join_task_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_join_task_accounts FORCE ROW LEVEL SECURITY;
