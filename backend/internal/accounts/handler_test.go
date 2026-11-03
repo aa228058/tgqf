@@ -38,3 +38,11 @@ func TestDecodeRejectsBodyOverLimit(t *testing.T) {
   t.Fatal("decode() accepted a body larger than 1 MiB")
  }
 }
+
+
+func TestSafeCSVCellPreventsFormulaInjection(t *testing.T) {
+	for _, value := range []string{"=1+1","+SUM(A1:A2)","-1+2","@SUM(A1)","\\tcmd","\\rvalue"} {
+		if got:=safeCSVCell(value);!strings.HasPrefix(got,"'") { t.Errorf("safeCSVCell(%q)=%q, want apostrophe prefix",value,got) }
+	}
+	if got:=safeCSVCell("ordinary text");got!="ordinary text" { t.Fatalf("ordinary value changed: %q",got) }
+}
