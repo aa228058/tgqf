@@ -97,3 +97,20 @@ func TestNormalizeBulkPhoneAccountIDs(t *testing.T) {
 		if _,err:=normalizeBulkPhoneAccountIDs(ids);err==nil { t.Errorf("invalid IDs accepted: %#v",ids) }
 	}
 }
+
+func TestNormalizeBulkPhoneVerify(t *testing.T) {
+	id:="11111111-1111-4111-8111-111111111111"
+	got,err:=normalizeBulkPhoneVerify(bulkPhoneVerifyRequest{Accounts:[]bulkPhoneVerifyItem{{AccountID:id,Code:"12345"}}})
+	if err!=nil || len(got.Accounts)!=1 { t.Fatalf("valid OTP batch rejected: %#v %v",got,err) }
+	_,err=normalizeBulkPhoneVerify(bulkPhoneVerifyRequest{Accounts:[]bulkPhoneVerifyItem{{AccountID:id,Password:"two-factor-secret"}}})
+	if err!=nil { t.Fatalf("valid 2FA batch rejected: %v",err) }
+	cases:=[]bulkPhoneVerifyRequest{
+		{},
+		{Accounts:make([]bulkPhoneVerifyItem,21)},
+		{Accounts:[]bulkPhoneVerifyItem{{AccountID:id}}},
+		{Accounts:[]bulkPhoneVerifyItem{{AccountID:id,Code:"12345",Password:"secret"}}},
+		{Accounts:[]bulkPhoneVerifyItem{{AccountID:"bad",Code:"12345"}}},
+		{Accounts:[]bulkPhoneVerifyItem{{AccountID:id,Code:"12345"},{AccountID:id,Password:"secret"}}},
+	}
+	for i,input:=range cases { if _,err:=normalizeBulkPhoneVerify(input);err==nil { t.Errorf("case %d unexpectedly accepted",i) } }
+}
