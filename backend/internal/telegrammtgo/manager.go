@@ -203,12 +203,20 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	clients := m.clients
 	pending := m.pendingQR
+	phonePending := m.pendingPhone
 	m.clients = make(map[string]*telegram.Client)
 	m.pendingQR = make(map[string]*pendingQR)
+	m.pendingPhone = make(map[string]*pendingPhone)
 	m.mu.Unlock()
 	var firstErr error
 	for id, entry := range pending {
 		if err := disconnectPending(entry); err != nil && firstErr == nil { firstErr = fmt.Errorf("disconnect pending QR account %s: %w", id, err) }
+	}
+	for id, entry := range phonePending {
+		entry.mu.Lock()
+		err := entry.client.Disconnect()
+		entry.mu.Unlock()
+		if err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil { firstErr = fmt.Errorf("disconnect pending phone account %s: %w", id, err) }
 	}
 	for id, client := range clients {
 		if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil {
