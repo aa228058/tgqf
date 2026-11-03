@@ -188,10 +188,13 @@ func (m *Manager) Stop(accountID string) error {
 	m.mu.Lock()
 	client := m.clients[accountID]
 	pending := m.pendingQR[accountID]
+	phonePending := m.pendingPhone[accountID]
 	delete(m.clients, accountID)
 	delete(m.pendingQR, accountID)
+	delete(m.pendingPhone, accountID)
 	m.mu.Unlock()
 	if err := disconnectPending(pending); err != nil { return err }
+	if phonePending != nil { phonePending.mu.Lock(); err := phonePending.client.Disconnect(); phonePending.mu.Unlock(); if err != nil && !errors.Is(err, telegram.ErrNotConnected) { return fmt.Errorf("disconnect pending phone login: %w", err) } }
 	if client == nil { return nil }
 	if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) {
 		return fmt.Errorf("disconnect Telegram account: %w", err)
@@ -232,8 +235,9 @@ func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string, prof
 	m.mu.RLock()
 	_, active := m.clients[accountID]
 	_, pending := m.pendingQR[accountID]
+	_, phonePending := m.pendingPhone[accountID]
 	m.mu.RUnlock()
-	if active || pending { return QRAuthResult{}, errors.New("account already has an active or pending client") }
+	if active || pending || phonePending { return QRAuthResult{}, errors.New("account already has an active or pending client") }
 	var proxy *telegram.Proxy
 	if strings.TrimSpace(proxyJSON) != "" && strings.TrimSpace(proxyJSON) != "null" && strings.TrimSpace(proxyJSON) != "{}" {
 		var p proxyConfig
