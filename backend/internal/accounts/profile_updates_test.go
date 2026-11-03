@@ -27,3 +27,17 @@ func TestProfileUpdateRetrySchedule(t *testing.T) {
 	status,delay=profileUpdateRetry(4)
 	if status!="failed"||delay!=0{t.Fatalf("fifth attempt = %s %s",status,delay)}
 }
+
+func TestNormalizeUsernameGenerationSettings(t *testing.T) {
+	got,err:=normalizeUsernameGenerationSettings(UsernameGenerationSettings{Prefix:" MyBrand_",RandomLength:12,Charset:"alphanumeric"})
+	if err!=nil{t.Fatal(err)}
+	if got.Prefix!="mybrand_"||got.RandomLength!=12{t.Fatalf("unexpected normalized settings: %#v",got)}
+	cases:=[]UsernameGenerationSettings{
+		{Prefix:"1bad",RandomLength:10,Charset:"alphanumeric"},
+		{Prefix:"bad-",RandomLength:10,Charset:"alphanumeric"},
+		{Prefix:"a",RandomLength:2,Charset:"alphanumeric"},
+		{Prefix:"a",RandomLength:32,Charset:"letters"},
+		{Prefix:"ok",RandomLength:5,Charset:"emoji"},
+	}
+	for i,value:=range cases{if _,err:=normalizeUsernameGenerationSettings(value);err==nil{t.Errorf("case %d should be rejected",i)}}
+}
