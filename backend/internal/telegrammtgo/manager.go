@@ -1,14 +1,15 @@
 package telegrammtgo
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"context"
 	"strings"
 	"sync"
 	"time"
 
-	device "github.com/mtgo-labs/device-manager"
 	"github.com/mtgo-labs/mtgo/telegram"
 )
 
@@ -31,11 +32,16 @@ type Manager struct {
 	mu sync.RWMutex
 	cfg RuntimeConfig
 	clients map[string]*telegram.Client
+	pendingQR map[string]*pendingQR
 }
+
+type pendingQR struct { client *telegram.Client; token []byte; expires int64 }
+type QRChallenge struct { URL string; Expires int64 }
+type QRAuthResult struct { Pending bool; Challenge *QRChallenge; SessionString string; UserID int64; Username string; FirstName string }
 
 func NewManager(cfg RuntimeConfig) *Manager {
 	if cfg.ConnectTimeout <= 0 { cfg.ConnectTimeout = 45 * time.Second }
-	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client)}
+	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR)}
 }
 
 // Start restores an existing MTGo-compatible session and connects it.
@@ -115,8 +121,11 @@ func (m *Manager) ExportSession(accountID string) (string, error) {
 func (m *Manager) Stop(accountID string) error {
 	m.mu.Lock()
 	client := m.clients[accountID]
+	pending := m.pendingQR[accountID]
 	delete(m.clients, accountID)
+	delete(m.pendingQR, accountID)
 	m.mu.Unlock()
+	if pending != nil { _ = pending.client.Disconnect() }
 	if client == nil { return nil }
 	if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) {
 		return fmt.Errorf("disconnect Telegram account: %w", err)
@@ -127,9 +136,12 @@ func (m *Manager) Stop(accountID string) error {
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	clients := m.clients
+	pending := m.pendingQR
 	m.clients = make(map[string]*telegram.Client)
+	m.pendingQR = make(map[string]*pendingQR)
 	m.mu.Unlock()
 	var firstErr error
+	for id, entry := range pending { if err := entry.client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil { firstErr = fmt.Errorf("disconnect pending QR account %s: %w", id, err) } }
 	for id, client := range clients {
 		if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil {
 			firstErr = fmt.Errorf("disconnect account %s: %w", id, err)
@@ -138,5 +150,82 @@ func (m *Manager) Close() error {
 	return firstErr
 }
 
-// Keep the device-manager type visible in this package's API documentation.
-var _ device.Profile
+
+func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string) (QRChallenge, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" { return QRChallenge{}, errors.New("account ID is required") }
+	m.mu.RLock()
+	_, active := m.clients[accountID]
+	_, pending := m.pendingQR[accountID]
+	m.mu.RUnlock()
+	if active || pending { return QRChallenge{}, errors.New("account already has an active or pending client") }
+	var proxy *telegram.Proxy
+	if strings.TrimSpace(proxyJSON) != "" && strings.TrimSpace(proxyJSON) != "null" && strings.TrimSpace(proxyJSON) != "{}" {
+		var p proxyConfig
+		if err := json.Unmarshal([]byte(proxyJSON), &p); err != nil { return QRChallenge{}, errors.New("invalid proxy configuration") }
+		p.Addr = strings.TrimSpace(p.Addr)
+		if p.Addr == "" { return QRChallenge{}, errors.New("proxy address is required") }
+		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+		switch protocol { case "", "socks5", "socks4", "http", "https": default: return QRChallenge{}, fmt.Errorf("unsupported proxy protocol %q", protocol) }
+		proxy = &telegram.Proxy{Addr:p.Addr, Username:p.Username, Password:p.Password, Protocol:protocol}
+	}
+	profile, err := DeviceProfile(accountID, "", "", "", "")
+	if err != nil { return QRChallenge{}, err }
+	cfg := telegram.Config{SessionName:"tgqf-"+accountID, InMemory:true, Proxy:proxy}
+	ApplyDeviceProfile(&cfg, profile)
+	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
+	if err != nil { return QRChallenge{}, fmt.Errorf("create MTGo QR client: %w", err) }
+	if err := client.Connect(m.cfg.ConnectTimeout); err != nil { _ = client.Disconnect(); return QRChallenge{}, fmt.Errorf("connect MTGo QR client: %w", err) }
+	token, err := client.GetQRCodeLoginToken(ctx)
+	if err != nil { _ = client.Disconnect(); return QRChallenge{}, fmt.Errorf("request Telegram QR token: %w", err) }
+	if token.User != nil { _ = client.Disconnect(); return QRChallenge{}, errors.New("Telegram returned an authorization without a QR token; retry login") }
+	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires)}
+	m.mu.Lock()
+	if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRChallenge{}, errors.New("account client is already managed") }
+	if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRChallenge{}, errors.New("account QR login is already pending") }
+	m.pendingQR[accountID] = entry
+	m.mu.Unlock()
+	return QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(token.Token), Expires:int64(token.Expires)}, nil
+}
+
+func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, error) {
+	m.mu.RLock()
+	entry := m.pendingQR[accountID]
+	m.mu.RUnlock()
+	if entry == nil { return QRAuthResult{}, errors.New("no pending QR login for account") }
+	if time.Now().Unix() >= entry.expires {
+		token, err := entry.client.GetQRCodeLoginToken(ctx)
+		if err != nil { return QRAuthResult{}, fmt.Errorf("refresh expired QR token: %w", err) }
+		if token.User == nil {
+			entry.token = append(entry.token[:0], token.Token...)
+			entry.expires = int64(token.Expires)
+			return QRAuthResult{Pending:true, Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(token.Token), Expires:int64(token.Expires)}}, nil
+		}
+	}
+	user, err := entry.client.CheckQRCodeLoginToken(ctx, entry.token)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not yet scanned") {
+			return QRAuthResult{Pending:true, Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(entry.token), Expires:entry.expires}}, nil
+		}
+		return QRAuthResult{}, fmt.Errorf("check Telegram QR login: %w", err)
+	}
+	if user == nil { return QRAuthResult{}, errors.New("Telegram QR login returned no user") }
+	sessionString, err := entry.client.ExportSessionString()
+	if err != nil { return QRAuthResult{}, fmt.Errorf("export QR-authorized session: %w", err) }
+	m.mu.Lock()
+	if m.pendingQR[accountID] != entry { m.mu.Unlock(); _ = entry.client.Disconnect(); return QRAuthResult{}, errors.New("QR login was cancelled") }
+	delete(m.pendingQR, accountID)
+	m.clients[accountID] = entry.client
+	m.mu.Unlock()
+	return QRAuthResult{SessionString:sessionString, UserID:user.ID, Username:user.Username, FirstName:user.FirstName}, nil
+}
+
+func (m *Manager) CancelQR(accountID string) error {
+	m.mu.Lock()
+	entry := m.pendingQR[accountID]
+	delete(m.pendingQR, accountID)
+	m.mu.Unlock()
+	if entry == nil { return nil }
+	if err := entry.client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) { return fmt.Errorf("cancel QR login: %w", err) }
+	return nil
+}
