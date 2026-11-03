@@ -228,3 +228,12 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 增加纯媒体匹配、错误媒体类型、出站消息及空规则拒绝测试。
 - [ ] 最新 GitHub Actions 仍在运行，最终测试/vet/build 结果待确认。
 - 剩余：发送者资料字段匹配、群名/用户名过滤、复杂组合表达式和命中后自动动作执行。
+
+ 
+## 13. 2026-11-04 关键词发送者与群组资料筛选
+
+- [x] 规则增加 chat title、chat username、sender numeric ID、sender username、sender display name 筛选。
+- [x] MTGo 0.22.0 的 `Message.Sender` 提供 username/first name/last name；worker 从真实更新事件映射到 Incoming。
+- [x] 新增 JSONB migration 0030，并覆盖匹配/不匹配和非法 sender ID 测试。
+- [ ] CI 与完整数据库 migration 验收待完成。
+- 剩余：复杂 OR/AND 规则组和命中后的自动动作编排。
