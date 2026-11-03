@@ -308,7 +308,7 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			if updateErr==nil && job.GenerateUsername {
 				var username string
 				for attempt:=0;attempt<8;attempt++ {
-					username,updateErr=generateRandomTelegramUsername()
+					username,updateErr=generateRandomTelegramUsername(accounts.UsernameGenerationSettings{Prefix:job.UsernamePrefix,RandomLength:job.UsernameRandomLength,Charset:job.UsernameCharset})
 					if updateErr!=nil { break }
 					updateErr=manager.UpdateUsername(updateCtx,job.AccountID,username)
 					if updateErr==nil { job.AppliedUsername=username; break }
@@ -341,12 +341,19 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 	}
 }
 
-func generateRandomTelegramUsername() (string,error) {
-	const alphabet="abcdefghijklmnopqrstuvwxyz0123456789"
-	random:=make([]byte,10)
+func generateRandomTelegramUsername(settings accounts.UsernameGenerationSettings) (string,error) {
+	const letters="abcdefghijklmnopqrstuvwxyz"
+	const alphanumeric="abcdefghijklmnopqrstuvwxyz0123456789"
+	settings,err:=accounts.NormalizeUsernameGenerationSettingsForWorker(settings)
+	if err!=nil{return "",err}
+	alphabet:=alphanumeric
+	if settings.Charset=="letters" { alphabet=letters }
+	randomLength:=settings.RandomLength
+	random:=make([]byte,randomLength)
 	if _,err:=cryptorand.Read(random);err!=nil{return "",err}
-	username:=make([]byte,12)
-	username[0]='t';username[1]='g'
-	for i,value:=range random { username[i+2]=alphabet[int(value)%len(alphabet)] }
-	return string(username),nil
+	suffix:=make([]byte,randomLength)
+	for i,value:=range random { suffix[i]=alphabet[int(value)%len(alphabet)] }
+	username:=settings.Prefix+string(suffix)
+	if settings.Prefix=="" && username[0]>='0' && username[0]<='9' { username=letters[int(random[0])%len(letters)]+username[1:] }
+	return username,nil
 }
