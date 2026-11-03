@@ -29,7 +29,7 @@ func DefaultUsernameGenerationSettings() UsernameGenerationSettings {
 }
 
 func normalizeUsernameGenerationSettings(settings UsernameGenerationSettings) (UsernameGenerationSettings,error) {
-	settings.Prefix=strings.TrimSpace(settings.Prefix)
+	settings.Prefix=strings.ToLower(strings.TrimSpace(settings.Prefix))
 	if settings.RandomLength<1 || settings.RandomLength>30 { return settings,errors.New("random_length must be between 1 and 30") }
 	if settings.Charset!="letters" && settings.Charset!="alphanumeric" { return settings,errors.New("charset must be letters or alphanumeric") }
 	if len(settings.Prefix)+settings.RandomLength<5 || len(settings.Prefix)+settings.RandomLength>32 { return settings,errors.New("prefix plus random_length must produce a 5-32 character username") }
@@ -265,3 +265,4 @@ func (s *Service) PauseInactiveProfileUpdateJobs(ctx context.Context) error {
 func NormalizeUsernameGenerationSettingsForWorker(settings UsernameGenerationSettings)(UsernameGenerationSettings,error) {
 	return normalizeUsernameGenerationSettings(settings)
 }
+
