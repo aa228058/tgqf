@@ -61,15 +61,17 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 		var active bool
 		if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,tenantID).Scan(&active);err!=nil{return err}
 		if !active{return errors.New("tenant subscription is inactive")}
+		var batchID string
+		if err:=tx.QueryRowContext(ctx,`SELECT gen_random_uuid()::text`).Scan(&batchID);err!=nil{return err}
 		for _,in:=range normalized {
 			var authorized bool
 			if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='authorized' AND session_ciphertext IS NOT NULL)`,tenantID,in.AccountID).Scan(&authorized);err!=nil{return err}
 			if !authorized{return fmt.Errorf("account %s is not an authorized account in this tenant",in.AccountID)}
 			var job ProfileUpdateJob
-			err:=tx.QueryRowContext(ctx,`INSERT INTO account_profile_update_jobs(tenant_id,account_id,requested_by_user_id,first_name,last_name,about)
-				VALUES($1,$2,$3,$4,$5,$6)
+			err:=tx.QueryRowContext(ctx,`INSERT INTO account_profile_update_jobs(batch_id,tenant_id,account_id,requested_by_user_id,first_name,last_name,about)
+				VALUES($1::uuid,$2,$3,$4,$5,$6,$7)
 				RETURNING id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at`,
-				tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
+				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
 			if err!=nil{return err}
 			out=append(out,job)
 		}
@@ -82,7 +84,7 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,status string,limit,offset int)([]ProfileUpdateJob,int,error) {
 	if limit<1||limit>100{limit=50};if offset<0{offset=0}
 	if batchID!=""&&!validAccountUUID(batchID){return nil,0,errors.New("invalid batch id")}
-	switch status {case "","pending","processing","completed","failed":default:return nil,0,errors.New("invalid profile update status")}
+	switch status {case "","pending","processing","paused","completed","failed":default:return nil,0,errors.New("invalid profile update status")}
 	out:=[]ProfileUpdateJob{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:=`tenant_id=$1 AND ($2='' OR batch_id=$2::uuid) AND ($3='' OR status=$3)`
@@ -150,8 +152,9 @@ func (s *Service) FailProfileUpdate(ctx context.Context,job ProfileUpdateJob,cau
 	status:="pending";delay:=floodWait;attempts:=job.Attempts
 	if floodWait<=0{status,delay=profileUpdateRetry(job.Attempts);attempts++}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		seconds:=int64(delay/time.Second);if delay%time.Second!=0{seconds++};if seconds<1{seconds=1}
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status=$3,attempts=$4,lease_until=NULL,next_run_at=NOW()+($5 * INTERVAL '1 second'),last_error=$6,updated_at=NOW()
-			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,attempts,maxInt64(1,int64(delay.Seconds())),message)
+			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,attempts,seconds,message)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
 }
@@ -176,4 +179,24 @@ func validAccountUUID(value string) bool {
 		if !((ch>='0'&&ch<='9')||(ch>='a'&&ch<='f')||(ch>='A'&&ch<='F')){return false}
 	}
 	return true
+}
+
+func (s *Service) PauseProfileUpdate(ctx context.Context,job ProfileUpdateJob,reason string)error {
+	if len(reason)>1000{reason=reason[:1000]}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='paused',lease_until=NULL,last_error=$3,updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
+	})
+}
+
+func (s *Service) ResumeProfileUpdate(ctx context.Context,tenantID,id string)error {
+	if !validAccountUUID(id){return errors.New("profile update job not found")}
+	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='pending',attempts=0,next_run_at=NOW(),last_error='',updated_at=NOW()
+			WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='paused'
+			AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW())
+			AND EXISTS(SELECT 1 FROM telegram_accounts a WHERE a.tenant_id=j.tenant_id AND a.id=j.account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL)`,tenantID,id)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("paused profile update job or authorized account not found")};return nil
+	})
 }
