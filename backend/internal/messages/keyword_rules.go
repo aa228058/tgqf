@@ -331,7 +331,6 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
 
 func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration) error {
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-        if sendErr!=nil && floodWait>0 { waitSeconds:=int64(floodWait/time.Second); if floodWait%time.Second!=0 {waitSeconds++}; waitSeconds++; if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID);err!=nil{return err} }
         if sendErr==nil {
             if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,telegramMessageID,job.LeaseUntil)
@@ -342,7 +341,9 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
         status:="pending";if job.Attempts>=5&&floodWait<=0{status="failed"}
         if floodWait>0{delay=floodWait+time.Second}
         result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,int64(delay.Seconds()),job.LeaseUntil)
-        if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+        if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+        if floodWait>0 { waitSeconds:=int64(floodWait/time.Second); if floodWait%time.Second!=0 {waitSeconds++}; waitSeconds++; if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID);err!=nil{return err} }
+        return nil
     })
 }
 
