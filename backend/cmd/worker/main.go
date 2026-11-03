@@ -1,6 +1,7 @@
 package main
 
-import (\n\t"errors"
+import (
+	"errors"
 	"context"
 	"log/slog"
 	"os"
