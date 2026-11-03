@@ -95,11 +95,17 @@ func main() {
 	statusSynced := make(map[string]bool)
 	ticker := time.NewTicker(30*time.Second)
 	defer ticker.Stop()
+	historyTicker := time.NewTicker(5*time.Minute)
+	defer historyTicker.Stop()
 	logger.Info("Telegram account worker started")
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
-		select { case <-ctx.Done(): return; case <-ticker.C: }
+		select {
+		case <-ctx.Done(): return
+		case <-ticker.C:
+		case <-historyTicker.C: processRecentHistory(ctx, messageService, manager, &accountTenants, logger)
+		}
 	}
 }
 
@@ -192,4 +198,54 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 		}
 		logger.Info("Telegram reply sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
 	}
+}
+
+
+// processRecentHistory repairs short disconnect gaps for chats already known to
+// the collector. It never enumerates all dialogs or imports unrelated traffic.
+func processRecentHistory(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, tenants *sync.Map, logger *slog.Logger) {
+	tenants.Range(func(key, value any) bool {
+		accountID, tenantID := key.(string), value.(string)
+		if !manager.IsConnected(accountID) { return true }
+		chatIDs, err := service.ListKnownChatIDs(ctx, tenantID, accountID, 20)
+		if err != nil { logger.Warn("load known chats for history backfill", "account_id", accountID, "error", err); return true }
+		for _, chatID := range chatIDs {
+			if ctx.Err() != nil { return false }
+			fetchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			history, fetchErr := manager.GetChatHistory(fetchCtx, accountID, chatID, 50)
+			if fetchErr != nil { cancel(); logger.Debug("history backfill skipped", "account_id", accountID, "chat_id", chatID, "error", fetchErr); continue }
+			for _, message := range history {
+				if message == nil || message.Chat == nil || message.ID <= 0 { continue }
+				chatType := ""
+				switch message.Chat.Type {
+				case types.ChatTypePrivate, types.ChatTypeDirect: chatType = "private"
+				case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum: chatType = "group"
+				default: continue
+				}
+				replyToOwn := false
+				if chatType == "group" && message.ReplyToID > 0 {
+					replyToOwn = manager.IsReplyToOwnMessage(fetchCtx, accountID, chatID, message.ReplyToID)
+				}
+				body := message.Text
+				if body == "" { body = message.Caption }
+				mediaType := ""
+				if message.Media != nil { mediaType = string(message.Media.MediaType()) }
+				photoID := ""
+				if message.Chat.Photo != nil {
+					photoID = message.Chat.Photo.BigPhotoUniqueID
+					if photoID == "" { photoID = message.Chat.Photo.SmallPhotoUniqueID }
+				}
+				_, ingestErr := service.Ingest(fetchCtx, tenantID, messages.Incoming{
+					AccountID: accountID, ChatID: chatID, MessageID: int64(message.ID),
+					ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
+					ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, ChatPhotoID: photoID,
+					SenderID: message.FromID, ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
+					IsOutgoing: message.Out || message.Outgoing, Text: body, MediaType: mediaType, MessageDate: message.Date,
+				})
+				if ingestErr != nil { logger.Warn("store backfilled Telegram message", "account_id", accountID, "message_id", message.ID, "error", ingestErr) }
+			}
+			cancel()
+		}
+		return true
+	})
 }
