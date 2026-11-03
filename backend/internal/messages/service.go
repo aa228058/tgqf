@@ -336,7 +336,7 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 			cm.username,cm.member_count,cm.is_verified,cm.last_seen_at
 			FROM tenant_message_chats cm
 			JOIN telegram_accounts a ON a.tenant_id=cm.tenant_id AND a.id=cm.telegram_account_id
-			WHERE `+filter+` ORDER BY cm.last_seen_at DESC,cm.chat_title ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg, args...)
+			WHERE `+filter+` ORDER BY cm.last_seen_at DESC,cm.chat_title ASC,cm.telegram_account_id ASC,cm.chat_id ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg, args...)
 		if err != nil { return err }
 		defer rows.Close()
 		for rows.Next() {
