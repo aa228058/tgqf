@@ -14,6 +14,7 @@ import (
 type bindProxyRequest struct {
 	ProxyID string `json:"proxy_id"`
 }
+type bindProxyBatchRequest struct { AccountIDs []string `json:"account_ids"`; ProxyID string `json:"proxy_id"` }
 
 func (h *Handler) listProxies(w http.ResponseWriter,r *http.Request) {
 	u:=auth.UserFromContext(r.Context())
@@ -91,4 +92,17 @@ func (h *Handler) setDefaultProxy(w http.ResponseWriter,r *http.Request) {
 		writeError(w,http.StatusBadRequest,"could not set default proxy");return
 	}
 	writeJSON(w,http.StatusOK,map[string]string{"proxy_id":id})
+}
+
+
+func (h *Handler) bindProxyBatch(w http.ResponseWriter,r *http.Request) {
+	var input bindProxyBatchRequest
+	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
+	u:=auth.UserFromContext(r.Context())
+	count,err:=h.service.BindProxyBatch(r.Context(),u.TenantID,input.AccountIDs,input.ProxyID)
+	if err!=nil{
+		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return}
+		writeError(w,http.StatusBadRequest,err.Error());return
+	}
+	writeJSON(w,http.StatusOK,map[string]any{"updated":count,"proxy_id":strings.TrimSpace(input.ProxyID)})
 }
