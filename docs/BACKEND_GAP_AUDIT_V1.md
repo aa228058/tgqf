@@ -41,7 +41,7 @@
 | 批量资料修改 | 未发现相关路由/服务 | 未实现 | 头像、姓名、简介的单/批量修改和逐账号任务结果 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
-| 群组目录 | tenant_message_chats、GET /api/v1/groups | 与 V1 目标不符 | 当前是租户/账号维度观察目录；缺少全局共享总库与贡献/来源合并 |
+| 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；链接采集、多来源合并审核、权限字段仍待补齐 |
 | 链接采集器 | 未发现独立采集规则/链接实体/发现服务 | 未实现 | 新消息链接识别、来源开关、状态检测、自动入公共总库 |
 | 自动加群 | 未发现加入/邀请申请任务服务 | 未实现 | 多账号分配、邀请加入、申请状态、FloodWait 状态机 |
 | 关键词监听 | 未发现规则模型/规则 API/匹配引擎 | 未实现 | OR/AND/正则/排除词/分组组合和消息类型筛选 |
@@ -55,8 +55,8 @@
 
 ### P0 — 规格冲突和数据正确性
 - [x] P0-01 已完成：移除 Worker 定时历史消息回填调用，并删除 Manager.GetChatHistory 历史读取封装；保留实时消息事件处理。对应 CI 已通过。提交：`fc028fdf`、`eb31f9ec`。
-- [x] P0-02 核心接入已完成：账号运行和 QR 登录均读取数据库中持久化的 device profile，并传给 MTGo；Manager 不再自行生成。增加 profile 选择校验测试。遗留：旧账号缺失 profile 的幂等补齐尚未完成；当前会明确报错，不能静默生成。最新 CI 待验证。
-- [x] P0-03 第一阶段已实现：Worker 每轮 reconcile 停止不再获授权租户的账号；租户禁用/到期时，待执行/处理中回复任务改为 `paused`，释放租约并保留数据；续费/重新启用不会自动恢复。增加显式 `POST /api/v1/message-replies/{id}/resume`，仅在租户有效、账号仍授权且任务处于 paused 时允许人工恢复。CI 和数据库迁移待验证。
+- [x] P0-02 已完成核心闭环：账号运行和 QR 登录读取数据库持久化 profile 并传给 MTGo；Manager 不再自行生成。Worker 启动时使用 device-manager 按稳定 account ID 幂等补齐旧账号缺失/关键字段为空的 profile，完整记录不覆盖。增加 profile 选择校验测试。对应 backfill 提交 CI 已通过。
+- [x] P0-03 已实现：Worker 每轮 reconcile 停止不再获授权租户的账号；租户禁用/到期时，待执行/处理中回复任务改为 `paused`，释放租约并保留数据；续费/重新启用不会自动恢复。增加显式 `POST /api/v1/message-replies/{id}/resume`，仅在租户有效、账号仍授权且任务处于 paused 时允许人工恢复。管理员暂停事务和续费事务均设置租户 RLS 上下文。相关 Go CI 已通过。
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
 
 ### P1 — 基础能力补齐
@@ -67,10 +67,10 @@
 - P1-05 批量头像/姓名/简介修改接入统一任务执行底座。
 
 ### P1 — 全局公共群组总库
-- P1-06 设计全局 groups 表，以 Telegram group ID 为主键/规范化去重键。
-- P1-07 设计 group_links、group_sources、tenant_group_contributions 等关联数据；保留多链接、多发现来源和贡献租户。
-- P1-08 记录群组默认发言权限与账号个人权限为不同字段/事实来源。
-- P1-09 租户端只读公共资料、可贡献来源；系统更新通过审计和合并策略完成。
+- [x] P1-06 第一阶段：新增 `public_groups`，按 Telegram chat type + chat ID 去重，维护全局资料。
+- [x] P1-07 第一阶段：新增 `public_group_sources`、`tenant_group_contributions`，记录来源账号、发现租户、发现次数和时间。
+- P1-08 记录群组默认发言权限与账号个人权限为不同字段/事实来源（后续权限采集阶段）。
+- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 改为读取共享目录，并提供来源数、贡献租户数；多链接、人工纠错、合并审计仍待补齐。
 
 ### P2 — 自动化业务闭环
 - P2-01 新消息链接采集和公共库入库。
@@ -106,7 +106,7 @@
 - `POST /api/v1/messages/{id}/reply`
 - `GET /api/v1/message-replies/{id}`
 - `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
-- `GET /api/v1/groups`（当前基于租户聊天观察表，不是全局公共总库）
+- `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 
 ## 5. CI 与代码状态
 
