@@ -32,6 +32,7 @@ func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst 
 type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
+	h.groupCorrectionRoutes(mux)
 	mux.Handle("GET /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
 	mux.Handle("POST /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
 	mux.Handle("PUT /api/v1/keyword-rules/{id}",h.auth.Authenticated(http.HandlerFunc(h.keywordRule)))
