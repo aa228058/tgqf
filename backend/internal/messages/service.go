@@ -193,3 +193,27 @@ func (s *Service) UpdateSettings(ctx context.Context,tenantID string,settings Co
 	})
 	return settings,err
 }
+
+type ChatSummary struct {
+	AccountID string `json:"account_id"`
+	AccountName string `json:"account_name"`
+	ChatID int64 `json:"chat_id"`
+	ChatTitle string `json:"chat_title"`
+	ChatType string `json:"chat_type"`
+	UnprocessedCount int `json:"unprocessed_count"`
+	LastMessage string `json:"last_message"`
+	LastMessageDate time.Time `json:"last_message_date"`
+}
+
+func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int)([]ChatSummary,int,error){
+	if limit<1||limit>100{limit=50};if offset<0{offset=0}
+	out:=[]ChatSummary{};total:=0
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(DISTINCT (telegram_account_id,chat_id)) FROM unified_messages WHERE tenant_id=$1",tenantID).Scan(&total);err!=nil{return err}
+		query:="SELECT g.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),g.chat_id,g.chat_title,g.chat_type,g.unprocessed_count,COALESCE(latest.message_text,''),g.last_message_date FROM (SELECT telegram_account_id,chat_id,MAX(chat_title) AS chat_title,MAX(chat_type) AS chat_type,COUNT(*) FILTER (WHERE processed_at IS NULL) AS unprocessed_count,MAX(message_date) AS last_message_date FROM unified_messages WHERE tenant_id=$1 GROUP BY telegram_account_id,chat_id) g JOIN telegram_accounts a ON a.tenant_id=$1 AND a.id=g.telegram_account_id LEFT JOIN LATERAL (SELECT message_text FROM unified_messages m2 WHERE m2.tenant_id=$1 AND m2.telegram_account_id=g.telegram_account_id AND m2.chat_id=g.chat_id ORDER BY m2.message_date DESC,m2.id DESC LIMIT 1) latest ON TRUE ORDER BY g.last_message_date DESC LIMIT $2 OFFSET $3"
+		rows,err:=tx.QueryContext(ctx,query,tenantID,limit,offset);if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item ChatSummary;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.ChatTitle,&item.ChatType,&item.UnprocessedCount,&item.LastMessage,&item.LastMessageDate);err!=nil{return err};out=append(out,item)}
+		return rows.Err()
+	})
+	return out,total,err
+}
