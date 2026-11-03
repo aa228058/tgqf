@@ -54,6 +54,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
 	mux.Handle("POST /api/v1/messages/{id}/reply",h.auth.Authenticated(http.HandlerFunc(h.createReply)))
+	mux.Handle("POST /api/v1/messages/{id}/contact",h.auth.Authenticated(http.HandlerFunc(h.createContactReply)))
 	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
 	mux.Handle("POST /api/v1/message-replies/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeReply)))
 }
@@ -95,6 +96,23 @@ func(h *Handler)listChats(w http.ResponseWriter,r *http.Request){
 	items,total,err:=h.service.ListChats(r.Context(),user.TenantID,limit,offset)
 	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load message chats"});return}
 	messageJSON(w,http.StatusOK,map[string]any{"chats":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
+}
+
+func(h *Handler)createContactReply(w http.ResponseWriter,r *http.Request) {
+	var body struct {
+		Phone string `json:"phone"`
+		FirstName string `json:"first_name"`
+		LastName string `json:"last_name"`
+	}
+	if err:=decodeMessageJSON(w,r,8<<10,&body);err!=nil {messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid contact body"});return}
+	user:=auth.UserFromContext(r.Context())
+	job,err:=h.service.CreateContactReply(r.Context(),user.TenantID,r.PathValue("id"),body.Phone,body.FirstName,body.LastName)
+	if err!=nil {
+		status:=http.StatusBadRequest
+		if err.Error()=="message not found" {status=http.StatusNotFound}
+		messageJSON(w,status,map[string]string{"error":err.Error()});return
+	}
+	messageJSON(w,http.StatusAccepted,map[string]any{"reply":job})
 }
 
 func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
