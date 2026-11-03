@@ -354,6 +354,6 @@ func generateRandomTelegramUsername(settings accounts.UsernameGenerationSettings
 	suffix:=make([]byte,randomLength)
 	for i,value:=range random { suffix[i]=alphabet[int(value)%len(alphabet)] }
 	username:=settings.Prefix+string(suffix)
-	if settings.Prefix=="" && username[0]>='0' && username[0]<='9' { username=letters[int(random[0])%len(letters)]+username[1:] }
+	if settings.Prefix=="" && username[0]>='0' && username[0]<='9' { username=string(letters[int(random[0])%len(letters)])+username[1:] }
 	return username,nil
 }
