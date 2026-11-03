@@ -43,7 +43,7 @@
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 第一阶段已实现 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；状态默认 pending；租户可分别开关私聊、群组、频道来源；在线验证与自动关联群组资料仍待补齐 |
-| 自动加群 | 未发现加入/邀请申请任务服务 | 未实现 | 多账号分配、邀请加入、申请状态、FloodWait 状态机 |
+| 自动加群 | 未发现加入/邀请申请任务服务 | 未实现 | 多账号分配、邀请加入、申请状态；当前消息回复任务已按 Telegram 实际 FloodWait 时长延期，FloodWait 不消耗普通重试预算；自动加群仍需独立任务状态机 |
 | 关键词监听 | 未发现规则模型/规则 API/匹配引擎 | 未实现 | OR/AND/正则/排除词/分组组合和消息类型筛选 |
 | 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
