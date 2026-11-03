@@ -17,3 +17,34 @@ func TestNormalizeUnifiedTaskFilter(t *testing.T) {
 		t.Fatal("expected invalid account id to be rejected")
 	}
 }
+
+
+func TestUnifiedTaskActionsMatchQueueTransitions(t *testing.T) {
+	tests := []struct {
+		taskType, status string
+		pause, resume, retry, cancel bool
+	}{
+		{"message_reply", "pending", true, false, false, true},
+		{"message_reply", "processing", false, false, false, false},
+		{"message_reply", "failed", true, false, true, true},
+		{"message_reply", "paused", false, true, false, true},
+		{"message_reply", "sent", false, false, false, false},
+		{"keyword_action", "pending", true, false, false, true},
+		{"profile_update", "pending", true, false, false, true},
+		{"profile_update", "failed", false, false, true, false},
+		{"profile_update", "paused", false, true, false, true},
+		{"group_join", "queued", true, false, false, true},
+		{"group_join", "processing", true, false, false, true},
+		{"group_join", "request_pending", false, false, false, true},
+		{"group_join", "failed", false, false, true, false},
+		{"group_join", "paused", false, true, false, true},
+		{"unknown", "pending", false, false, false, false},
+	}
+	for _, test := range tests {
+		pause, resume, retry, cancel := unifiedTaskActions(test.taskType, test.status)
+		if pause != test.pause || resume != test.resume || retry != test.retry || cancel != test.cancel {
+			t.Errorf("%s/%s: got pause=%v resume=%v retry=%v cancel=%v",
+				test.taskType, test.status, pause, resume, retry, cancel)
+		}
+	}
+}
