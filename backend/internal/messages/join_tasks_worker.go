@@ -123,6 +123,7 @@ type JoinApprovalJob struct {
 	AccountRowID int64
 	AccountID string
 	ChatID int64
+	InviteHash string
 }
 
 func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,limit int)([]JoinApprovalJob,error) {
@@ -130,19 +131,21 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
 	out:=[]JoinApprovalJob{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		rows,err:=tx.QueryContext(ctx,`
-			SELECT a.tenant_id::text,a.task_id::text,a.id,a.telegram_account_id::text,g.telegram_chat_id
+			SELECT a.tenant_id::text,a.task_id::text,a.id,a.telegram_account_id::text,COALESCE(g.telegram_chat_id,0),t.private_invite_hash_ciphertext
 			FROM tenant_join_task_accounts a
 			JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
 			LEFT JOIN public_group_links l ON l.id=t.target_link_id
-			JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
+			LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
 			JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
 			WHERE a.tenant_id=$1 AND a.status='request_pending'
+			  AND (g.telegram_chat_id IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
 			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
 			  AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
 			ORDER BY a.updated_at LIMIT $2
 		`,tenantID,limit)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job JoinApprovalJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID);err!=nil{return err};out=append(out,job)}
+		for rows.Next(){var job JoinApprovalJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&job.InviteHash);err!=nil{return err};if len(job.InviteHash)>0 { hash,decryptErr:=decryptJoinInviteHash([]byte(job.InviteHash));if decryptErr!=nil{return decryptErr};job.InviteHash=hash }
+			out=append(out,job)}
 		return rows.Err()
 	})
 	return out,err
