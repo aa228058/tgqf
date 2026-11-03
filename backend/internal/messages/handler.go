@@ -41,6 +41,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
 	mux.Handle("POST /api/v1/messages/{id}/reply",h.auth.Authenticated(http.HandlerFunc(h.createReply)))
 	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
+	mux.Handle("POST /api/v1/message-replies/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeReply)))
 }
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
 	user:=auth.UserFromContext(r.Context())
@@ -93,6 +94,17 @@ func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
 		messageJSON(w,status,map[string]string{"error":err.Error()});return
 	}
 	messageJSON(w,http.StatusAccepted,map[string]any{"reply":job})
+}
+
+
+func(h *Handler)resumeReply(w http.ResponseWriter,r *http.Request){
+	user:=auth.UserFromContext(r.Context())
+	if err:=h.service.ResumeReply(r.Context(),user.TenantID,r.PathValue("id"));err!=nil{
+		status:=http.StatusConflict
+		if err.Error()=="reply job not found"{status=http.StatusNotFound}
+		messageJSON(w,status,map[string]string{"error":err.Error()});return
+	}
+	messageJSON(w,http.StatusOK,map[string]string{"status":"resumed"})
 }
 
 func(h *Handler)getReply(w http.ResponseWriter,r *http.Request){
