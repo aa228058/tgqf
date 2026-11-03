@@ -97,6 +97,9 @@
 - `GET /api/v1/accounts/export.csv`（复用账号筛选条件；CSV 字段公式注入防护；不导出 Session/代理密钥）
 - `POST /api/v1/accounts/import`（单次最多 20 个 JSON Session 记录，逐条结果；Session 仍按账号独立加密保存）
 - `POST /api/v1/accounts/import-file`（multipart 文件上传，支持 JSON/CSV/TXT；单文件最大 1 MiB、最多 20 条；Session 按账号独立加密，响应不包含 Session）
+- `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，返回统一 batch_id 和逐账号任务）
+- `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
+- `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`（失败任务重试、暂停任务人工恢复）
 - `PATCH /api/v1/accounts/{id}/group`
 - `PATCH /api/v1/accounts/{id}/proxy`
 - `GET/POST/PUT/DELETE /api/v1/proxies`
