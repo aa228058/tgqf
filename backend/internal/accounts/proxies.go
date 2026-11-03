@@ -249,3 +249,27 @@ func (s *Service) BindProxyBatch(ctx context.Context, tenantID string, ids []str
 	if err!=nil{return 0,err}
 	return updated,nil
 }
+
+type ProxyCheck struct {
+	ID string `json:"id"`
+	CheckType string `json:"check_type"`
+	Status string `json:"status"`
+	LatencyMS int64 `json:"latency_ms"`
+	Message string `json:"message"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+func (s *Service) ListProxyChecks(ctx context.Context,tenantID,proxyID string,limit int)([]ProxyCheck,error) {
+	if limit<1 || limit>100 { limit=50 }
+	out:=[]ProxyCheck{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		var exists bool
+		if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_proxies WHERE tenant_id=$1 AND id=$2)",tenantID,proxyID).Scan(&exists);err!=nil{return err}
+		if !exists{return errors.New("proxy not found")}
+		rows,err:=tx.QueryContext(ctx,"SELECT id::text,check_type,status,latency_ms,message,checked_at FROM tenant_proxy_checks WHERE tenant_id=$1 AND proxy_id=$2 ORDER BY checked_at DESC,id DESC LIMIT $3",tenantID,proxyID,limit)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item ProxyCheck;if err:=rows.Scan(&item.ID,&item.CheckType,&item.Status,&item.LatencyMS,&item.Message,&item.CheckedAt);err!=nil{return err};out=append(out,item)}
+		return rows.Err()
+	})
+	return out,err
+}
