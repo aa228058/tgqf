@@ -21,7 +21,7 @@ type DiscoveredLink struct {
 	InviteCiphertext []byte
 }
 
-var telegramLinkPattern = regexp.MustCompile(`(?i)(?:https?://)?(?:www\\.)?(?:t\\.me|telegram\\.me)/(\\+[A-Za-z0-9_-]{8,}|joinchat/[A-Za-z0-9_-]{8,}|[A-Za-z0-9_]{5,})`)
+var telegramLinkPattern = regexp.MustCompile(`(?i)(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(\+[A-Za-z0-9_-]{8,}|joinchat/[A-Za-z0-9_-]{8,}|[A-Za-z0-9_]{5,})`)
 
 var reservedTelegramPaths = map[string]bool{
 	"addstickers":true,"addemoji":true,"addtheme":true,"addlist":true,
@@ -40,7 +40,7 @@ func ExtractTelegramLinks(text string) []DiscoveredLink {
 		if raw=="" { continue }
 		if strings.HasPrefix(raw,"+") || strings.HasPrefix(strings.ToLower(raw),"joinchat/") {
 			code:=strings.TrimPrefix(raw,"+")
-			code=strings.TrimPrefix(strings.ToLower(code),"joinchat/")
+			if strings.HasPrefix(strings.ToLower(code),"joinchat/") { code=code[len("joinchat/"):] }
 			if len(code)<8 { continue }
 			key:="invite:"+code
 			if seen[key] { continue };seen[key]=true
