@@ -1,6 +1,7 @@
 CREATE TABLE tenant_join_tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    UNIQUE(tenant_id,id),
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
     target_group_id BIGINT REFERENCES public_groups(id) ON DELETE RESTRICT,
     target_link_id BIGINT REFERENCES public_group_links(id) ON DELETE RESTRICT,
