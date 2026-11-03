@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestShouldCatalogChat(t *testing.T) {
+	for _, tt := range []struct{ chatType string; want bool }{
+		{"private", true}, {"group", true}, {"channel", true},
+		{"bot", false}, {"unknown", false}, {"", false},
+	} {
+		if got := ShouldCatalogChat(tt.chatType); got != tt.want {
+			t.Errorf("ShouldCatalogChat(%q) = %v, want %v", tt.chatType, got, tt.want)
+		}
+	}
+}
+
 func TestShouldCollect(t *testing.T) {
 	tests:=[]struct{name,chatType string;outgoing,replyToOwn,want bool}{
 		{"incoming private","private",false,false,true},
