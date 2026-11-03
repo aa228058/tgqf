@@ -281,6 +281,59 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 }
 
 
+type GroupLibraryItem struct {
+	AccountID string `json:"account_id"`
+	AccountName string `json:"account_name"`
+	ChatID int64 `json:"chat_id"`
+	Title string `json:"title"`
+	ChatType string `json:"chat_type"`
+	Username string `json:"username"`
+	MemberCount int `json:"member_count"`
+	IsVerified bool `json:"is_verified"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, query string, limit, offset int) ([]GroupLibraryItem, int, error) {
+	if limit < 1 || limit > 100 { limit = 50 }
+	if offset < 0 { offset = 0 }
+	chatType = strings.ToLower(strings.TrimSpace(chatType))
+	if chatType != "" && chatType != "group" && chatType != "channel" {
+		return nil, 0, errors.New("chat_type must be group or channel")
+	}
+	query = strings.TrimSpace(query)
+	if len(query) > 100 { return nil, 0, errors.New("search query is too long") }
+	items := []GroupLibraryItem{}
+	total := 0
+	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		filter := "cm.tenant_id=$1 AND cm.chat_type IN ('group','channel')"
+		args := []any{tenantID}
+		if chatType != "" { args = append(args, chatType); filter += " AND cm.chat_type=$" + strconv.Itoa(len(args)) }
+		if query != "" {
+			args = append(args, "%"+query+"%")
+			filter += " AND (cm.chat_title ILIKE $" + strconv.Itoa(len(args)) + " OR cm.username ILIKE $" + strconv.Itoa(len(args)) + ")"
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tenant_message_chats cm WHERE "+filter, args...).Scan(&total); err != nil { return err }
+		args = append(args, limit, offset)
+		limitArg, offsetArg := strconv.Itoa(len(args)-1), strconv.Itoa(len(args))
+		rows, err := tx.QueryContext(ctx, `SELECT cm.telegram_account_id::text,
+			COALESCE(NULLIF(a.display_name,''),a.phone,''),cm.chat_id,cm.chat_title,cm.chat_type,
+			cm.username,cm.member_count,cm.is_verified,cm.last_seen_at
+			FROM tenant_message_chats cm
+			JOIN telegram_accounts a ON a.tenant_id=cm.tenant_id AND a.id=cm.telegram_account_id
+			WHERE `+filter+` ORDER BY cm.last_seen_at DESC,cm.chat_title ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg, args...)
+		if err != nil { return err }
+		defer rows.Close()
+		for rows.Next() {
+			var item GroupLibraryItem
+			if err := rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.LastSeenAt); err != nil { return err }
+			items = append(items,item)
+		}
+		return rows.Err()
+	})
+	return items,total,err
+}
+
+
 var ErrNoReplyJob = errors.New("no pending reply job")
 
 type ReplyJob struct {
