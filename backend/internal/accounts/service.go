@@ -356,7 +356,7 @@ func (s *Service) CompleteQRAuthorization(ctx context.Context, tenantID, account
  ciphertext,err:=encrypt([]byte(session));if err!=nil{return Account{},err}
  var a Account
  err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-  return tx.QueryRowContext(ctx,`UPDATE telegram_accounts SET phone=$3,display_name=$4,status='authorized',session_ciphertext=$5,session_key_version=1,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING id::text,COALESCE(phone,''),display_name,group_name,tags,status,true,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,accountID,phone,displayName,ciphertext).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+  return tx.QueryRowContext(ctx,`UPDATE telegram_accounts SET phone=$3,display_name=$4,status='authorized',session_ciphertext=$5,session_key_version=1,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING id::text,COALESCE(phone,''),display_name,group_name,tags,status,true,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,accountID,phone,displayName,ciphertext).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
  })
  if err!=nil{return Account{},err};return a,nil
 }
