@@ -204,7 +204,9 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 				if err:=storeDiscoveredLinks(ctx,tx,tenantID,in);err!=nil{return err}
 			}
 		}
-		// Keyword rules inspect only this live incoming update; they never trigger outbound actions.\n		if err:=evaluateAndRecordKeywordMatches(ctx,tx,tenantID,in);err!=nil{return err}\n		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
+		// Keyword rules inspect only this live incoming update; they never trigger outbound actions.
+		if err:=evaluateAndRecordKeywordMatches(ctx,tx,tenantID,in);err!=nil{return err}
+		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
 		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
