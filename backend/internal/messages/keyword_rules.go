@@ -45,7 +45,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.MatchMode = strings.ToLower(strings.TrimSpace(rule.MatchMode))
     if len(rule.Name)==0 || len(rule.Name)>80 { return rule, fmt.Errorf("%w: name must be 1-80 characters",ErrInvalidKeywordRule) }
     if rule.MatchMode!="any" && rule.MatchMode!="all" && rule.MatchMode!="exact" && rule.MatchMode!="regex" { return rule, fmt.Errorf("%w: match_mode must be any, all, exact, or regex",ErrInvalidKeywordRule) }
-    if len(rule.Keywords)==0 || len(rule.Keywords)>20 || len(rule.ExcludeTerms)>20 { return rule, fmt.Errorf("%w: provide 1-20 keywords and at most 20 exclude terms",ErrInvalidKeywordRule) }
+    if len(rule.Keywords)>20 || len(rule.ExcludeTerms)>20 { return rule, fmt.Errorf("%w: provide at most 20 keywords and 20 exclude terms",ErrInvalidKeywordRule) }
     normalizeTerms:=func(items []string, allowRegex bool)([]string,error){
         out:=make([]string,0,len(items));seen:=map[string]bool{}
         for _,item:=range items {
@@ -78,11 +78,13 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     normalizedTypes:=make([]string,0,len(rule.ChatTypes))
     for _,kind:=range rule.ChatTypes {kind=strings.ToLower(strings.TrimSpace(kind));if !allowed[kind]||seenTypes[kind]{return rule,fmt.Errorf("%w: unsupported or duplicate chat type",ErrInvalidKeywordRule)};seenTypes[kind]=true;normalizedTypes=append(normalizedTypes,kind)}
     rule.ChatTypes=normalizedTypes
+    if len(rule.Keywords)==0 && len(rule.MediaTypes)==0 {return rule,fmt.Errorf("%w: provide keywords or at least one media type",ErrInvalidKeywordRule)}
     return rule,nil
 }
 
 func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
-    if in.IsOutgoing || strings.TrimSpace(in.Text)=="" {return nil,false}
+    textPresent:=strings.TrimSpace(in.Text)!=""
+    if in.IsOutgoing || (!textPresent && len(rule.MediaTypes)==0) {return nil,false}
     if len(rule.AccountIDs)>0 {found:=false;for _,id:=range rule.AccountIDs {if id==in.AccountID {found=true;break}};if !found{return nil,false}}
     if len(rule.ChatIDs)>0 {found:=false;for _,id:=range rule.ChatIDs {if id==in.ChatID {found=true;break}};if !found{return nil,false}}
     if len(rule.MediaTypes)>0 {found:=false;for _,kind:=range rule.MediaTypes {if kind==in.MediaType {found=true;break}};if !found{return nil,false}}
@@ -90,8 +92,10 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if !allowed {return nil,false}
     text:=in.Text;terms:=rule.Keywords;excluded:=rule.ExcludeTerms
     if !rule.CaseSensitive {text=strings.ToLower(text)}
-    for _,term:=range excluded {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){return nil,false}}
+    if textPresent {for _,term:=range excluded {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){return nil,false}}}
     matched:=[]string{}
+    if len(rule.Keywords)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
+    if !textPresent {return nil,false}
     switch rule.MatchMode {
     case "any":
         for _,term:=range terms {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){matched=append(matched,term)}}
