@@ -153,6 +153,9 @@ func (h *Handler) createProfilePhotoUpdates(w http.ResponseWriter,r *http.Reques
 	if cfg.Width<1 || cfg.Height<1 || cfg.Width>4096 || cfg.Height>4096 || int64(cfg.Width)*int64(cfg.Height)>16_000_000 {
 		writeError(w,http.StatusBadRequest,"photo dimensions must not exceed 4096x4096 or 16 megapixels");return
 	}
+	if _,decodedFormat,decodeErr:=image.Decode(bytes.NewReader(data));decodeErr!=nil || decodedFormat!=format {
+		writeError(w,http.StatusBadRequest,"photo image data is corrupted");return
+	}
 	inputs:=make([]ProfileUpdateInput,0,len(accountIDs))
 	for _,id:=range accountIDs { inputs=append(inputs,ProfileUpdateInput{AccountID:id,PhotoData:data}) }
 	user:=auth.UserFromContext(r.Context())
