@@ -323,3 +323,29 @@ func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64,
 	if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty sent message")}
 	return int64(sent.ID),nil
 }
+
+
+// GetChatHistory returns a bounded recent history slice for a known chat.
+func (m *Manager) GetChatHistory(ctx context.Context, accountID string, chatID int64, limit int) ([]*types.Message, error) {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() { return nil, errors.New("Telegram account is not connected") }
+	if limit < 1 || limit > 100 { limit = 50 }
+	return client.GetChatHistory(ctx, chatID, limit, 0)
+}
+
+// IsReplyToOwnMessage verifies the historical reply target against the
+// authenticated account. A failed lookup is treated as not matching.
+func (m *Manager) IsReplyToOwnMessage(ctx context.Context, accountID string, chatID int64, replyToID int32) bool {
+	if replyToID <= 0 { return false }
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() { return false }
+	me := client.Me()
+	if me == nil { return false }
+	original, err := client.GetMessages(ctx, chatID, []int32{replyToID})
+	if err != nil || len(original) == 0 || original[0] == nil { return false }
+	return original[0].Out || original[0].FromID == me.ID
+}
