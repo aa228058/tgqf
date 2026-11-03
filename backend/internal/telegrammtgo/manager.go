@@ -34,7 +34,7 @@ type Manager struct {
 	cfg RuntimeConfig
 	clients map[string]*telegram.Client
 	pendingQR map[string]*pendingQR
- messageHandler func(accountID string, message *types.Message, ownUserID int64)
+ messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
@@ -54,7 +54,7 @@ func NewManager(cfg RuntimeConfig) *Manager {
 }
 
 // SetMessageHandler installs the worker-owned callback for new Telegram messages.
-func (m *Manager) SetMessageHandler(handler func(accountID string, message *types.Message, ownUserID int64)) {
+func (m *Manager) SetMessageHandler(handler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)) {
 	m.mu.Lock()
 	m.messageHandler = handler
 	m.mu.Unlock()
@@ -69,7 +69,16 @@ func (m *Manager) registerMessageHandler(accountID string, client *telegram.Clie
 		if message == nil { return }
 		me := client.Me()
 		if me == nil { return }
-		handler(accountID, message, me.ID)
+		replyToOwn := false
+		if message.ReplyToID > 0 && message.ChatID != 0 {
+			lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			replied, err := client.GetMessages(lookupCtx, message.ChatID, []int32{message.ReplyToID})
+			cancel()
+			if err == nil && len(replied) > 0 && replied[0] != nil {
+				replyToOwn = replied[0].Out || replied[0].FromID == me.ID
+			}
+		}
+		handler(accountID, message, me.ID, replyToOwn)
 	})
 }
 
