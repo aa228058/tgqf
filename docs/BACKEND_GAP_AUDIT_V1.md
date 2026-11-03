@@ -373,15 +373,15 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] 尚需 PostgreSQL 集成测试：跨租户 ID 混入批次时零删除、同一账号并发删除、外键级联、事务中断回滚。
 - 按项目约定未运行全量 Go test/vet/build；仍待后端全部模块完成后统一 CI。
 
-## 27. 2026-11-04 Telethon SQLite Session 导入（首个格式闭环）
+## 27. 2026-11-04 Telethon / Pyrogram SQLite Session 导入
 
 - [x] `POST /api/v1/accounts/import-file` 接受 `.session` 上传；单文件大小仍限制为 1 MiB，临时文件由系统以私有权限创建并在处理后清理。
 - [x] SQLite 通过与 MTGo storage 同源的 `modernc.org/sqlite` 纯 Go 驱动只读打开，并设置 `PRAGMA query_only=ON`；不会对用户上传数据库执行 schema 初始化或写入。
-- [x] 校验 `sessions` 表结构，要求 Telethon 标准列 `dc_id/server_address/port/auth_key`，且恰好一条 session 记录；校验 DC、IP、端口和 256 字节 auth key。
-- [x] 使用 `session-converter v0.6.0` 的 `EncodeTelethon` 生成标准 Telethon StringSession；MTGo `v0.22.0` 支持自动识别该格式，继续沿用现有账号创建、设备资料创建及 Session 加密存储流程。
-- [x] 因 Telethon SQLite session 不保存账号手机号，上传表单必须额外提交 `phone`，可选提交 `display_name`、`group_name`；不从 auth key 猜测手机号或伪造 MTGO1 元数据。
-- [x] 增加 SQLite fixture 测试，覆盖标准 Telethon schema 转换、非法数据库、多 session 行拒绝及 `.session` 文件识别。
+- [x] 校验 `sessions` 表结构，识别 Telethon 标准列 `dc_id/server_address/port/auth_key` 或 Pyrogram 列 `dc_id/api_id/test_mode/auth_key/user_id/is_bot`，且恰好一条 session 记录；校验 DC、API ID、用户 ID、IP、端口和 256 字节 auth key。
+- [x] 使用 `session-converter v0.6.0` 的 `EncodeTelethon` / `EncodePyrogram` 分别生成标准 StringSession；MTGo `v0.22.0` 支持自动识别这两种格式，继续沿用现有账号创建、设备资料创建及 Session 加密存储流程。
+- [x] Telethon / Pyrogram SQLite session 均不保存可用于账号管理的手机号，上传表单必须额外提交 `phone`，可选提交 `display_name`、`group_name`；不从 auth key 猜测手机号或伪造 MTGO1 元数据。
+- [x] 增加 SQLite fixture 测试，覆盖 Telethon / Pyrogram schema 转换、非法数据库、多 session 行拒绝及 `.session` 文件识别。
 - [x] JSON/CSV/TXT/SQLite 文件导入统一使用 `session-converter v0.6.0` 识别和校验 Session 字符串格式；无效或不支持的字符串逐条失败，不写入账号表。
-- [ ] 当前只实现 Telethon SQLite `.session`；Pyrogram SQLite、加密/损坏数据库、WAL sidecar 组合文件及其他库的 SQLite schema 尚未支持。
+- [ ] 当前实现 Telethon 与 Pyrogram SQLite `.session`；加密/损坏数据库、WAL sidecar 组合文件及其他库的 SQLite schema 尚未支持。
 - [ ] 本流程只验证 SQLite 结构与 session 编码，不会在导入时自动连接 Telegram；账号授权有效性需由后续 MTGo 连接流程确认。
 - [ ] 需要运行 Go test/build 并在真实 Telethon session 文件上验收；按项目约定暂不执行全量 CI，等待后端模块整体完成。
