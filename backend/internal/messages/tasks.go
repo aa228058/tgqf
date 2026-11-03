@@ -41,7 +41,10 @@ func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, er
 	default:
 		return filter, errors.New("invalid task type")
 	}
-	if filter.Status != "" && len(filter.Status) > 32 {
+	switch filter.Status {
+	case "", "pending", "processing", "sent", "failed", "paused", "completed", "cancelled",
+		"draft", "queued", "request_pending", "joined", "already_member", "skipped":
+	default:
 		return filter, errors.New("invalid task status")
 	}
 	if filter.AccountID != "" && !validUUID(filter.AccountID) {
