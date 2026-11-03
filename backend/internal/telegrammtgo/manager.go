@@ -14,8 +14,6 @@ import (
 	"github.com/mtgo-labs/mtgo/telegram"
  "github.com/mtgo-labs/mtgo/telegram/types"
  "github.com/mtgo-labs/mtgo/telegram/params"
- gotdcalls "github.com/gotd/td/telegram/calls"
- gotdtg "github.com/gotd/td/tg"
  "github.com/mtgo-labs/mtgo/tg"
  device "github.com/mtgo-labs/device-manager"
 )
@@ -39,8 +37,6 @@ type Manager struct {
 	mu sync.RWMutex
 	cfg RuntimeConfig
 	clients map[string]*telegram.Client
-	voice map[string]*voiceCallBridge
-	incomingVoiceHandler func(accountID string, incoming *gotdcalls.IncomingCall)
 	pendingQR map[string]*pendingQR
  messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
 }
@@ -68,7 +64,7 @@ func selectDeviceProfile(profiles []device.Profile) (device.Profile, error) {
 
 func NewManager(cfg RuntimeConfig) *Manager {
 	if cfg.ConnectTimeout <= 0 { cfg.ConnectTimeout = 45 * time.Second }
-	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), voice: make(map[string]*voiceCallBridge), pendingQR: make(map[string]*pendingQR)}
+	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR)}
 }
 
 // SetMessageHandler installs the worker-owned callback for new Telegram messages.
@@ -133,8 +129,6 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 		return errors.New("account client is already managed")
 	}
 	m.clients[accountID] = client
-	voice := newVoiceCallBridge(client, accountID, m.incomingVoiceHandler)
-	m.voice[accountID] = voice
 	m.mu.Unlock()
 	m.registerMessageHandler(accountID, client)
 
@@ -153,45 +147,6 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 		return errors.New("Telegram session connected but is not authorized")
 	}
 	return nil
-}
-
-func (m *Manager) SetIncomingVoiceCallHandler(handler func(accountID string, incoming *gotdcalls.IncomingCall)) {
-	m.mu.Lock()
-	m.incomingVoiceHandler = handler
-	for accountID, bridge := range m.voice {
-		if bridge != nil && bridge.calls != nil {
-			bridge.calls.OnIncoming(func(incoming *gotdcalls.IncomingCall) {
-				if handler != nil { handler(accountID, incoming) }
-			})
-		}
-	}
-	m.mu.Unlock()
-}
-
-func (m *Manager) RequestVoiceCall(ctx context.Context,accountID string,user gotdtg.InputUserClass)(*gotdcalls.Conn,error) {
-	m.mu.RLock();bridge:=m.voice[accountID];client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil||!client.IsConnected()||bridge==nil||bridge.calls==nil{return nil,errors.New("voice calling is unavailable for this Telegram account")}
-	return bridge.calls.Request(ctx,user)
-}
-
-func (m *Manager) AcceptVoiceCall(ctx context.Context,accountID string,incoming *gotdcalls.IncomingCall)(*gotdcalls.Conn,error) {
-	m.mu.RLock();bridge:=m.voice[accountID];client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil||!client.IsConnected()||bridge==nil||bridge.calls==nil{return nil,errors.New("voice calling is unavailable for this Telegram account")}
-	if incoming==nil{return nil,errors.New("incoming Telegram call is required")}
-	return incoming.Accept(ctx)
-}
-
-func (m *Manager) RejectVoiceCall(ctx context.Context,accountID string,incoming *gotdcalls.IncomingCall)error {
-	m.mu.RLock();bridge:=m.voice[accountID];client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil||!client.IsConnected()||bridge==nil||bridge.calls==nil{return errors.New("voice calling is unavailable for this Telegram account")}
-	if incoming==nil{return errors.New("incoming Telegram call is required")}
-	return incoming.Reject(ctx)
-}
-
-func (m *Manager) EndVoiceCall(ctx context.Context,accountID string)error {
-	m.mu.RLock();bridge:=m.voice[accountID];client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil||!client.IsConnected()||bridge==nil||bridge.calls==nil{return errors.New("voice calling is unavailable for this Telegram account")}
-	return bridge.calls.Discard(ctx,gotdcalls.DiscardHangup)
 }
 
 func (m *Manager) IsConnected(accountID string) bool {
@@ -245,7 +200,6 @@ func (m *Manager) Close() error {
 	clients := m.clients
 	pending := m.pendingQR
 	m.clients = make(map[string]*telegram.Client)
-	m.voice = make(map[string]*voiceCallBridge)
 	m.pendingQR = make(map[string]*pendingQR)
 	m.mu.Unlock()
 	var firstErr error
@@ -294,7 +248,6 @@ func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string, prof
 		if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account client is already managed") }
 		if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account QR login is already pending") }
 		m.clients[accountID] = client
-		m.voice[accountID] = newVoiceCallBridge(client, accountID, m.incomingVoiceHandler)
 		m.mu.Unlock()
 		return QRAuthResult{SessionString:sessionString, UserID:token.User.ID, Username:token.User.Username, FirstName:token.User.FirstName, Phone:token.User.Phone}, nil
 	}
