@@ -316,3 +316,14 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] 仍需最新 HEAD 的 Go test/vet/build 和真实 PostgreSQL migration/并发重复请求集成测试。
 - 边界：这是 API 入队幂等，不是 Telegram 外部发送 exactly-once。若 Telegram 已成功发送但 Worker 在持久化成功结果前崩溃，外部副作用仍可能重复；需要通过结果核对/人工审计等进一步降低风险，不能宣称绝对一次发送。
 
+
+
+## 22. 2026-11-04 过期 Worker 的账号级副作用隔离（增量）
+
+- [x] 修复加群任务 FloodWait 重排顺序：先以当前任务的精确 lease 条件更新 processing 任务；只有租约仍有效并成功消费后，才写入账号级 join/send cooldown。旧 Worker 即使在租约过期后返回 FloodWait，也不能再延长账号冷却时间。
+- [x] 修复普通消息回复 FloodWait：先通过精确 lease 条件完成任务失败/重排状态迁移，再更新账号级 cooldown；失去租约的旧 Worker 不会改变账号调度状态。
+- [x] 修复关键词自动回复 FloodWait：同样将账号级 cooldown 更新放在成功消费当前 lease 之后。
+- [x] 修复账号资料更新 FloodWait：先校验并消费当前 profile job lease，再写入账号级 cooldown。
+- [ ] 尚未执行 Go test/vet/build；按项目约定待后端模块整体完成后统一执行。
+- [ ] 尚需 PostgreSQL 并发集成测试：模拟 Worker A 租约过期、Worker B 重新领取、Worker A 延迟返回 FloodWait，验证 A 不能改变任务或账号冷却状态。
+- 说明：此修复保护数据库任务状态与账号调度状态，不可能撤销已经发出的 Telegram 外部请求；对外部发送仍需保留结果核对和重复风险说明。
