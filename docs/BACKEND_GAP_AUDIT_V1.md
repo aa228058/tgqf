@@ -54,9 +54,9 @@
 ## 3. 必须优先处理的 P0/P1
 
 ### P0 — 规格冲突和数据正确性
-- [x] P0-01 已完成：移除 Worker 定时历史消息回填调用，并删除 Manager.GetChatHistory 历史读取封装；保留实时消息事件处理。提交：`fc028fdf`、`eb31f9ec`。待 CI 确认。
-- P0-02 Worker 启动时读取 telegram_device_profiles 已保存的 profile 并应用到 MTGo；缺失 profile 时幂等补齐后再启动。不得忽略持久化记录而自行重新生成。
-- P0-03 为租户到期/禁用定义统一运行时 gate：停止/暂停 Worker 账号和任务；续期后不自动恢复旧任务。
+- [x] P0-01 已完成：移除 Worker 定时历史消息回填调用，并删除 Manager.GetChatHistory 历史读取封装；保留实时消息事件处理。对应 CI 已通过。提交：`fc028fdf`、`eb31f9ec`。
+- [x] P0-02 核心接入已完成：账号运行和 QR 登录均读取数据库中持久化的 device profile，并传给 MTGo；Manager 不再自行生成。增加 profile 选择校验测试。遗留：旧账号缺失 profile 的幂等补齐尚未完成；当前会明确报错，不能静默生成。最新 CI 待验证。
+- [x] P0-03 第一阶段已实现：Worker 每轮 reconcile 停止不再获授权租户的账号；租户禁用/到期时，待执行/处理中回复任务改为 `paused`，释放租约并保留数据；续费/重新启用不会自动恢复。增加显式 `POST /api/v1/message-replies/{id}/resume`，仅在租户有效、账号仍授权且任务处于 paused 时允许人工恢复。CI 和数据库迁移待验证。
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
 
 ### P1 — 基础能力补齐
@@ -105,13 +105,15 @@
 - `PATCH /api/v1/messages/{id}/processed`
 - `POST /api/v1/messages/{id}/reply`
 - `GET /api/v1/message-replies/{id}`
+- `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
 - `GET /api/v1/groups`（当前基于租户聊天观察表，不是全局公共总库）
 
 ## 5. CI 与代码状态
 
-审计时读取 GitHub Actions 最近 Go 后端工作流：
-- Run 41680589979：completed / success。
-- Run 41680574465：completed / success。
+最近 Go 后端工作流：
+- P0-01 对应提交的检查已通过。
+- 设备资料与租户暂停相关连续提交正在触发 CI；最新提交需以 GitHub Actions 实际结果为准。
+- 曾发现设备资料服务中重复定义 `LoadDeviceProfile` 导致 Go 测试失败，已删除重复定义并由最新工作流重新验证。
 
 这只能证明对应提交的 CI 检查通过，不证明未实现模块已完成，也不代表生产环境端到端验证通过。
 
