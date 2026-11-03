@@ -3,13 +3,13 @@ package accounts
 import (
     "bytes"
     "database/sql"
-    "net"
-    "os"
     "encoding/csv"
     "encoding/json"
     "errors"
     "io"
+    "net"
     "net/http"
+    "os"
     "path/filepath"
     "strings"
 
