@@ -37,6 +37,8 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
+	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
+	mux.Handle("PUT /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.updateLinkSettings)))
 	mux.Handle("GET /api/v1/groups/{id}/sources",h.auth.Authenticated(http.HandlerFunc(h.listGroupSources)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
@@ -160,6 +162,23 @@ func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
 }
 
 
+
+
+func (h *Handler) getLinkSettings(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	settings,err:=h.service.GetLinkCollectionSettings(r.Context(),user.TenantID)
+	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load link collection settings"});return}
+	messageJSON(w,http.StatusOK,map[string]any{"settings":settings})
+}
+
+func (h *Handler) updateLinkSettings(w http.ResponseWriter,r *http.Request) {
+	var settings LinkCollectionSettings
+	if err:=decodeMessageJSON(w,r,16<<10,&settings);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid link collection settings"});return}
+	user:=auth.UserFromContext(r.Context())
+	updated,err:=h.service.UpdateLinkCollectionSettings(r.Context(),user.TenantID,settings)
+	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"could not update link collection settings"});return}
+	messageJSON(w,http.StatusOK,map[string]any{"settings":updated})
+}
 
 func (h *Handler) listGroupLinks(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
