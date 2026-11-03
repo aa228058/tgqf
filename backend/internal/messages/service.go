@@ -600,13 +600,25 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 			remaining:=maxJobs-len(jobs)
 			if remaining>2 { remaining=2 }
 			rows,err:=tx.QueryContext(ctx,`WITH picked AS (
-				SELECT id FROM message_reply_jobs
-				WHERE tenant_id=$1 AND ((status='pending' AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW()))
-				ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
-			)
-			UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
-			FROM picked WHERE j.id=picked.id
-			RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at`,tenantID,remaining)
+				SELECT j.id,j.tenant_id,j.telegram_account_id
+				FROM message_reply_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
+				WHERE j.tenant_id=$1
+				AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+				AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
+				AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
+				AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+				AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+				AND NOT EXISTS (SELECT 1 FROM message_reply_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
+				AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+				ORDER BY j.created_at,j.id FOR UPDATE OF j,a SKIP LOCKED LIMIT $2
+				), claimed AS (
+				UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
+				FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
+				RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at
+				), scheduled AS (
+				UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
+				FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
+				) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
 			if err!=nil{return err}
 			defer rows.Close()
 			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt);err!=nil{return err};jobs=append(jobs,job)}
@@ -680,6 +692,7 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 	message:=cause.Error();if len(message)>500{message=message[:500]}
 	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		if floodWait>0 { if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err} }
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,message,delay)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
