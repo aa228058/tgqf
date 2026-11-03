@@ -200,3 +200,32 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
         return err
     })
 }
+
+
+// RetryJoinTask requeues only failed account rows whose Telegram accounts are
+// still authorized. The explicit task authorization must remain present.
+func (s *Service) RetryJoinTask(ctx context.Context, tenantID, id string) error {
+	if !validUUID(id) { return errors.New("join task not found") }
+	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts ja
+			SET status='queued', attempts=0, available_at=NOW(), lease_until=NULL,
+				last_error='', updated_at=NOW()
+			FROM telegram_accounts a, tenants t
+			WHERE ja.tenant_id=$1 AND ja.task_id=$2::uuid AND ja.status='failed'
+			  AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id
+			  AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
+			  AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW()`, tenantID, id)
+		if err != nil { return err }
+		count, err := result.RowsAffected()
+		if err != nil { return err }
+		if count == 0 { return errors.New("no failed join accounts are eligible for retry") }
+		result, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET status='queued', updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2::uuid AND status='failed'
+			  AND authorization_confirmed=TRUE AND authorized_by IS NOT NULL AND authorized_at IS NOT NULL`, tenantID, id)
+		if err != nil { return err }
+		count, err = result.RowsAffected()
+		if err != nil { return err }
+		if count == 0 { return errors.New("join task is not in a retryable state") }
+		return nil
+	})
+}
