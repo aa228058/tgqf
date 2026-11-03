@@ -68,7 +68,8 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 
 接口（租户 Bearer Token）：
 - GET /api/v1/messages：默认只返回未处理消息；支持 limit、offset、include_processed=true。
-- GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、用户名、成员数、认证标记、Telegram 头像标识、未处理数量和最近一条消息。群组资料按租户/账号/聊天隔离缓存，只在消息通过租户筛选并实际入库时更新；头像当前只保存 Telegram photo 标识，尚未生成可直接访问的图片 URL。
+- GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、用户名、成员数、认证标记、Telegram 头像标识、未处理数量和最近一条消息。
+- GET /api/v1/messages/events：SSE 实时事件流，使用 Bearer Token 认证；连接后推送 `message` 事件（JSON 包含 `type`、`account_id`、`chat_id`、`message_id`、`created_at`），每 25 秒发送心跳。浏览器端请用支持 Authorization 请求头的 fetch 流式读取，不要把长期令牌放进 URL。事件通过 Redis 按租户隔离发布，数据库仍是消息事实来源；断线重连后应重新拉取未处理列表以补齐遗漏。群组资料按租户/账号/聊天隔离缓存，只在消息通过租户筛选并实际入库时更新；头像当前只保存 Telegram photo 标识，尚未生成可直接访问的图片 URL。
 - PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
 - GET /api/v1/messages/settings：读取当前租户收集条件。
 - PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
