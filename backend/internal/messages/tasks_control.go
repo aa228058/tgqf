@@ -27,9 +27,8 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 				status := "paused"
 				if action == "retry" { status = "failed" }
 				query = `UPDATE message_reply_jobs j SET status='pending',available_at=NOW(),attempts=CASE WHEN $3='retry' THEN 0 ELSE attempts END,last_error='',updated_at=NOW() FROM tenants t,telegram_accounts a WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status=$4 AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
-				_, err := tx.ExecContext(ctx, query, tenantID, id, action, status)
-				if err != nil { return err }
-				return requireTaskRows(tx, ctx)
+				result, err := tx.ExecContext(ctx, query, tenantID, id, action, status)
+				return checkTaskRows(result, err)
 			}
 		case "keyword_action":
 			switch action {
@@ -100,6 +99,3 @@ func checkTaskRows(result sql.Result, err error) error {
 	return nil
 }
 
-// requireTaskRows is retained as a small helper for control paths whose query
-// is executed inline before returning from the transaction callback.
-func requireTaskRows(tx *sql.Tx, ctx context.Context) error { return nil }
