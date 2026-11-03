@@ -57,3 +57,14 @@ func TestNormalizeBulkGroupInput(t *testing.T) {
 	if _,_,err:=normalizeBulkGroupInput(nil,"x");err==nil { t.Fatal("empty account batch accepted") }
 	if _,_,err:=normalizeBulkGroupInput([]string{id},strings.Repeat("x",81));err==nil { t.Fatal("oversized group accepted") }
 }
+
+
+func TestNormalizeBulkRuntimeActionInput(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	ids, action, err := normalizeBulkRuntimeActionInput([]string{" " + id + " "}, " RECONNECT ")
+	if err != nil { t.Fatal(err) }
+	if len(ids) != 1 || ids[0] != id || action != "reconnect" { t.Fatalf("unexpected normalized result: %#v %q", ids, action) }
+	if _, _, err := normalizeBulkRuntimeActionInput([]string{id}, "delete"); err == nil { t.Fatal("unsupported action accepted") }
+	if _, _, err := normalizeBulkRuntimeActionInput(nil, "disconnect"); err == nil { t.Fatal("empty account selection accepted") }
+	if _, _, err := normalizeBulkRuntimeActionInput([]string{id, id}, "disconnect"); err == nil { t.Fatal("duplicate account IDs accepted") }
+}
