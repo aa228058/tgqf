@@ -55,9 +55,8 @@ func (h *Handler) startQR(w http.ResponseWriter,r *http.Request) {
 }
 func (h *Handler) pollQR(w http.ResponseWriter,r *http.Request) {
  u:=auth.UserFromContext(r.Context());id:=r.PathValue("id")
- items,err:=h.service.List(r.Context(),u.TenantID);if err!=nil{writeError(w,500,"failed to verify account");return}
- found:=false;for _,a:=range items{if a.ID==id&&a.Status=="pending"{found=true;break}}
- if !found{writeError(w,404,"pending account not found");return}
+ pending,err:=h.service.IsPending(r.Context(),u.TenantID,id);if err!=nil{writeError(w,500,"failed to verify account");return}
+ if !pending{writeError(w,404,"pending account not found");return}
  result,err:=h.telegram.PollQR(r.Context(),id);if err!=nil{writeError(w,502,"Telegram QR status check failed");return}
  if result.Pending{writeJSON(w,200,map[string]any{"status":"pending","qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}});return}
  _,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString)
