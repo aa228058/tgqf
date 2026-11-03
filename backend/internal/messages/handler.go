@@ -4,12 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 	"strconv"
 
 	"github.com/aa228058/tgqf/backend/internal/auth"
 )
+
+func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("request body must contain exactly one JSON value")
+		}
+		return err
+	}
+	return nil
+}
 
 type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
@@ -48,8 +65,7 @@ func(h *Handler)getSettings(w http.ResponseWriter,r *http.Request){
 
 func(h *Handler)updateSettings(w http.ResponseWriter,r *http.Request){
 	var settings CollectionSettings
-	decoder:=json.NewDecoder(http.MaxBytesReader(w,r.Body,1<<20));decoder.DisallowUnknownFields()
-	if err:=decoder.Decode(&settings);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid settings body"});return}
+	if err:=decodeMessageJSON(w,r,1<<20,&settings);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid settings body"});return}
 	user:=auth.UserFromContext(r.Context())
 	updated,err:=h.service.UpdateSettings(r.Context(),user.TenantID,settings)
 	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
@@ -66,8 +82,7 @@ func(h *Handler)listChats(w http.ResponseWriter,r *http.Request){
 
 func(h *Handler)createReply(w http.ResponseWriter,r *http.Request){
 	var body struct{Text string `json:"text"`}
-	decoder:=json.NewDecoder(http.MaxBytesReader(w,r.Body,16<<10));decoder.DisallowUnknownFields()
-	if err:=decoder.Decode(&body);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid reply body"});return}
+	if err:=decodeMessageJSON(w,r,16<<10,&body);err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid reply body"});return}
 	user:=auth.UserFromContext(r.Context())
 	job,err:=h.service.CreateReply(r.Context(),user.TenantID,r.PathValue("id"),body.Text)
 	if err!=nil{
