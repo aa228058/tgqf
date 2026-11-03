@@ -140,7 +140,7 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,status string,limit,offset int)([]ProfileUpdateJob,int,error) {
 	if limit<1||limit>100{limit=50};if offset<0{offset=0}
 	if batchID!=""&&!validAccountUUID(batchID){return nil,0,errors.New("invalid batch id")}
-	switch status {case "","pending","processing","paused","completed","failed":default:return nil,0,errors.New("invalid profile update status")}
+	switch status {case "","pending","processing","paused","completed","failed","cancelled":default:return nil,0,errors.New("invalid profile update status")}
 	out:=[]ProfileUpdateJob{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:=`tenant_id=$1 AND ($2='' OR batch_id=$2::uuid) AND ($3='' OR status=$3)`
@@ -263,6 +263,18 @@ func (s *Service) PauseProfileUpdate(ctx context.Context,job ProfileUpdateJob,re
 			WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,reason)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("profile update lease was lost")};return nil
 	})
+}
+
+func (s *Service) CancelProfileUpdate(ctx context.Context,tenantID,id string)error {
+ if !validAccountUUID(id){return errors.New("profile update job not found")}
+ return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW()
+   WHERE tenant_id=$1 AND id=$2 AND status IN ('pending','paused')`,tenantID,id)
+  if err!=nil{return err}
+  n,_:=res.RowsAffected()
+  if n==0{return errors.New("profile update job not found or is currently processing")}
+  return nil
+ })
 }
 
 func (s *Service) ResumeProfileUpdate(ctx context.Context,tenantID,id string)error {
