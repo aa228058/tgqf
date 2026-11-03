@@ -275,6 +275,7 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
 }
 
 func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Service, messageService *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
+	if err:=accountService.PauseInactiveProfileUpdateJobs(ctx);err!=nil { logger.Error("pause profile jobs for inactive tenants","error",err) }
 	tenantSet:=map[string]bool{}
 	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
 	for tenantID:=range tenantSet {
