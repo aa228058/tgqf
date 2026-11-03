@@ -54,7 +54,7 @@
 ## 3. 必须优先处理的 P0/P1
 
 ### P0 — 规格冲突和数据正确性
-- P0-01 移除 Worker 定时历史消息回填调用；不再调用 GetChatHistory 进行任何消息补采。保留实时消息事件处理。
+- [x] P0-01 已完成：移除 Worker 定时历史消息回填调用，并删除 Manager.GetChatHistory 历史读取封装；保留实时消息事件处理。提交：`fc028fdf`、`eb31f9ec`。待 CI 确认。
 - P0-02 Worker 启动时读取 telegram_device_profiles 已保存的 profile 并应用到 MTGo；缺失 profile 时幂等补齐后再启动。不得忽略持久化记录而自行重新生成。
 - P0-03 为租户到期/禁用定义统一运行时 gate：停止/暂停 Worker 账号和任务；续期后不自动恢复旧任务。
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
