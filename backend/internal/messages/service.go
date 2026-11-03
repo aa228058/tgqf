@@ -137,6 +137,8 @@ func validateSettings(settings CollectionSettings) (CollectionSettings,error) {
 	return settings,nil
 }
 
+func ShouldCatalogChat(chatType string) bool { return chatType == "private" || chatType == "group" || chatType == "channel" }
+
 func ShouldCollect(chatType string, isOutgoing, replyToOwn bool) bool {
 	if isOutgoing { return false }
 	switch chatType {
@@ -148,7 +150,7 @@ func ShouldCollect(chatType string, isOutgoing, replyToOwn bool) bool {
 
 func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (bool,error) {
 	if tenantID=="" || !validUUID(in.AccountID) || in.ChatID==0 || in.MessageID<=0 { return false,errors.New("invalid message identity") }
-	if in.ChatType != "private" && in.ChatType != "group" && in.ChatType != "channel" { return false,nil }
+	if !ShouldCatalogChat(in.ChatType) { return false,nil }
 	if len(in.Text)>16384 || len(in.MediaType)>40 { return false,errors.New("message payload too large") }
 	if in.MessageDate.IsZero() { in.MessageDate=time.Now().UTC() }
 	collected:=false
