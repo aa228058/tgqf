@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 	"strconv"
+	"strings"
 
 	"github.com/aa228058/tgqf/backend/internal/auth"
 )
@@ -183,51 +184,50 @@ func(h *Handler)getReply(w http.ResponseWriter,r *http.Request){
 	messageJSON(w,http.StatusOK,map[string]any{"reply":job})
 }
 
-func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
- user:=auth.UserFromContext(r.Context())
- sub:=h.service.SubscribeMessages(r.Context(),user.TenantID)
- if sub==nil {
-  messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"realtime message stream is unavailable"})
-  return
- }
- defer sub.Close()
- // Wait for Redis to confirm the tenant subscription before sending headers;
- // otherwise a message arriving during the handshake could be missed.
- subscribeCtx,cancelSubscribe:=context.WithTimeout(r.Context(),3*time.Second)
- _,subscribeErr:=sub.Receive(subscribeCtx)
- cancelSubscribe()
- if subscribeErr!=nil {
-  messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"realtime message stream could not subscribe"})
-  return
- }
- flusher,ok:=w.(http.Flusher)
- if !ok { http.Error(w,"streaming is not supported",http.StatusInternalServerError);return }
- w.Header().Set("Content-Type","text/event-stream")
- w.Header().Set("Cache-Control","no-cache, no-transform")
- w.Header().Set("Connection","keep-alive")
- w.Header().Set("X-Accel-Buffering","no")
- w.WriteHeader(http.StatusOK)
- _,_=fmt.Fprint(w,": connected\n\n")
- flusher.Flush()
- keepalive:=time.NewTicker(25*time.Second)
- defer keepalive.Stop()
- events:=sub.Channel()
- for {
-  select {
-  case <-r.Context().Done(): return
-  case event,open:=<-events:
-   if !open { return }
-   _,_=fmt.Fprintf(w,"event: message\ndata: %s\n\n",event.Payload)
-   flusher.Flush()
-  case <-keepalive.C:
-   _,_=fmt.Fprint(w,": keep-alive\n\n")
-   flusher.Flush()
-  }
- }
+func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	cursor := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if cursor == "" {
+		cursor = strings.TrimSpace(r.URL.Query().Get("last_event_id"))
+	}
+	if cursor == "" {
+		cursor = "$"
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprint(w, "retry: 3000\n: connected\n\n")
+	flusher.Flush()
+
+	for {
+		if err := r.Context().Err(); err != nil {
+			return
+		}
+		events, err := h.service.ReadMessageEvents(r.Context(), user.TenantID, cursor, 15*time.Second, 100)
+		if err != nil {
+			return
+		}
+		if len(events) == 0 {
+			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+			flusher.Flush()
+			continue
+		}
+		for _, event := range events {
+			if _, err := fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", event.ID, event.Payload); err != nil {
+				return
+			}
+			cursor = event.ID
+			flusher.Flush()
+		}
+	}
 }
-
-
-
 
 func (h *Handler) getLinkSettings(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
