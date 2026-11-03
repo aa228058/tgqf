@@ -87,7 +87,7 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 				FROM telegram_accounts a
 				LEFT JOIN tenant_proxies p ON p.tenant_id=a.tenant_id AND p.id=a.proxy_id
 				LEFT JOIN telegram_account_runtime rt ON rt.tenant_id=a.tenant_id AND rt.account_id=a.id
-				WHERE a.tenant_id=$1 AND a.status IN ('authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
+				WHERE a.tenant_id=$1 AND a.status IN ('pending','authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
 			for accountRows.Next() {
