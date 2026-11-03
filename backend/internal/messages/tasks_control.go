@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 )
 
@@ -17,22 +18,7 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 		return errors.New("unsupported task action")
 	}
 	if taskType == "group_join" {
-		var parentID string
-		if err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID)
-		}); err != nil {
-			return errors.New("join task not found")
-		}
-		switch action {
-		case "pause":
-			return s.PauseJoinTask(ctx, tenantID, parentID)
-		case "resume":
-			return s.ResumeJoinTask(ctx, tenantID, parentID)
-		case "cancel":
-			return s.CancelJoinTask(ctx, tenantID, parentID)
-		case "retry":
-			return s.RetryJoinTask(ctx, tenantID, parentID)
-		}
+		return s.changeJoinTaskAccountStatus(ctx, tenantID, id, action)
 	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		var query string
@@ -66,17 +52,16 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 		case "profile_update":
 			switch action {
 			case "pause":
-				query = `UPDATE account_profile_update_jobs SET status='paused',last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status='pending'`
+				query = `UPDATE account_profile_update_jobs SET status='paused',lease_until=NULL,last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status='pending'`
 			case "resume", "retry":
 				status := "paused"
 				if action == "retry" { status = "failed" }
-				query = `UPDATE account_profile_update_jobs j SET status='pending',attempts=CASE WHEN $3='retry' THEN 0 ELSE attempts END,next_run_at=NOW(),last_error='',updated_at=NOW() FROM tenants t,telegram_accounts a WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status=$4 AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=j.tenant_id AND a.id=j.account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
+				query = `UPDATE account_profile_update_jobs j SET status='pending',attempts=CASE WHEN $3='retry' THEN 0 ELSE attempts END,next_run_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenants t,telegram_accounts a WHERE j.tenant_id=$1 AND j.id=$2::uuid AND j.status=$4 AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=j.tenant_id AND a.id=j.account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
 				result, err := tx.ExecContext(ctx, query, tenantID, id, action, status)
 				return checkTaskRows(result, err)
 			case "cancel":
-				query = `UPDATE account_profile_update_jobs SET status='cancelled',last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused')`
+				query = `UPDATE account_profile_update_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid AND status IN ('pending','paused')`
 			}
-
 		default:
 			return errors.New("invalid task type")
 		}
@@ -86,6 +71,56 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 	})
 }
 
+// A group_join task-center row represents one account subtask, not its parent.
+// Mutating the parent here used to pause/cancel every account when the user
+// selected just one row, and repeated IDs from one parent produced misleading
+// partial failures. Keep each requested operation scoped to its child row.
+func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, rawID, action string) error {
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || id < 1 {
+		return errors.New("join task not found")
+	}
+	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		var query string
+		switch action {
+		case "pause":
+			query = `UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','processing')`
+		case "resume":
+			query = `UPDATE tenant_join_task_accounts ja SET status='queued',available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenant_join_tasks jt,tenants t,telegram_accounts a WHERE ja.tenant_id=$1 AND ja.id=$2 AND ja.status='paused' AND jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id AND jt.authorization_confirmed=TRUE AND jt.authorized_by IS NOT NULL AND jt.authorized_at IS NOT NULL AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
+		case "retry":
+			query = `UPDATE tenant_join_task_accounts ja SET status='queued',attempts=0,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenant_join_tasks jt,tenants t,telegram_accounts a WHERE ja.tenant_id=$1 AND ja.id=$2 AND ja.status='failed' AND jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id AND jt.authorization_confirmed=TRUE AND jt.authorized_by IS NOT NULL AND jt.authorized_at IS NOT NULL AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
+		case "cancel":
+			query = `UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','paused','processing','request_pending')`
+		default:
+			return errors.New("unsupported task action")
+		}
+		result, err := tx.ExecContext(ctx, query, tenantID, id)
+		if err := checkTaskRows(result, err); err != nil { return err }
+		var parentID string
+		if err := tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID); err != nil {
+			return err
+		}
+		return refreshJoinTaskControlStatus(ctx, tx, tenantID, parentID)
+	})
+}
+
+// refreshJoinTaskControlStatus derives the parent state from its children.
+// Pending approval remains active; paused children do not block other queued
+// children. A stale worker is fenced because pause/cancel clears its lease.
+func refreshJoinTaskControlStatus(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE tenant_join_tasks t SET status = CASE
+			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status IN ('queued','processing','request_pending')) THEN 'queued'
+			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='paused') THEN 'paused'
+			WHEN EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='failed') THEN 'failed'
+			WHEN NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status<>'cancelled') THEN 'cancelled'
+			ELSE 'completed'
+		END, updated_at=NOW()
+		WHERE t.tenant_id=$1 AND t.id=$2 AND t.status<>'draft'
+	`, tenantID, taskID)
+	return err
+}
+
 func checkTaskRows(result sql.Result, err error) error {
 	if err != nil { return err }
 	n, err := result.RowsAffected()
@@ -93,4 +128,3 @@ func checkTaskRows(result sql.Result, err error) error {
 	if n == 0 { return errors.New("task not found or current state does not allow action") }
 	return nil
 }
-
