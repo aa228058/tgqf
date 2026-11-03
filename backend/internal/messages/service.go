@@ -617,7 +617,7 @@ func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody
 	requestHash:=""
 	if key!="" { requestHash=replyRequestHash(messageID,textBody) }
 	var job ReplyJob
-	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
 		if errors.Is(err,sql.ErrNoRows){return errors.New("message not found")};if err!=nil{return err}
 		if key=="" {
