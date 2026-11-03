@@ -155,6 +155,7 @@ func CheckProxy(ctx context.Context, host string, port int) error {
 }
 
 func (s *Service) CheckProxy(ctx context.Context,tenantID,proxyID string)error{
+	if !validAccountUUID(proxyID){return errors.New("proxy not found")}
 	var protocol,host,username string
 	var port int
 	var passwordCipher []byte
@@ -169,7 +170,8 @@ checkErr:=checkProxyTunnel(ctx,protocol,host,port,username,password,"149.154.167
 latency:=time.Since(started).Milliseconds();if latency<0{latency=0}
 status:="success";message:="proxy authentication and Telegram data-center TCP tunnel succeeded"
 if checkErr!=nil{status="failed";message=checkErr.Error();if len(message)>500{message=message[:500]}}
-logErr:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+recordCtx,cancelRecord:=context.WithTimeout(context.WithoutCancel(ctx),2*time.Second);defer cancelRecord()
+	logErr:=withTenantTx(recordCtx,s.db,tenantID,func(tx *sql.Tx)error{
 	_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_proxy_checks(tenant_id,proxy_id,check_type,status,latency_ms,message) VALUES($1,$2,'telegram_dc_tunnel',$3,$4,$5)`,tenantID,proxyID,status,latency,message)
 	return err
 })
@@ -260,6 +262,7 @@ type ProxyCheck struct {
 }
 
 func (s *Service) ListProxyChecks(ctx context.Context,tenantID,proxyID string,limit int)([]ProxyCheck,error) {
+	if !validAccountUUID(proxyID){return nil,errors.New("proxy not found")}
 	if limit<1 || limit>100 { limit=50 }
 	out:=[]ProxyCheck{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
