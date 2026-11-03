@@ -34,6 +34,7 @@ type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
+	mux.Handle("GET /api/v1/tasks/summary",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskSummary)))
 	mux.Handle("POST /api/v1/tasks/{type}/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskAction)))
 	h.groupCorrectionRoutes(mux)
 	mux.Handle("GET /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
@@ -63,6 +64,16 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/message-replies/{id}",h.auth.Authenticated(http.HandlerFunc(h.getReply)))
 	mux.Handle("POST /api/v1/message-replies/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeReply)))
 }
+func (h *Handler) unifiedTaskSummary(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	summary, err := h.service.GetUnifiedTaskSummary(r.Context(), user.TenantID)
+	if err != nil {
+		messageJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load task summary"})
+		return
+	}
+	messageJSON(w, http.StatusOK, map[string]any{"summary": summary})
+}
+
 func (h *Handler) unifiedTasks(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
