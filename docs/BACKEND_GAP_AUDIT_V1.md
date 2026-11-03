@@ -296,6 +296,9 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 
 ## 20. 2026-11-04 Worker 心跳与异常退出监控（增量）
 
+- [x] 心跳改为独立 goroutine 定时写入，不再依赖主任务循环结束；耗时 Telegram RPC 不会单纯因阻塞主循环而造成健康实例被误判 stale。
+- [ ] 若数据库连续不可用超过 stale 阈值，实例仍会被标记 stale；这属于真实依赖故障信号，需结合日志/告警判断。
+
 - [x] 新增 migration `0038_worker_heartbeat.sql`，持久化 worker instance、主机名、PID、启动时间、最近心跳和停止时间。
 - [x] Worker 启动时登记实例，每 10 秒更新心跳；收到正常退出信号后标记 stopped。
 - [x] 新增超级管理员接口 `GET /api/v1/admin/workers`，展示 Worker 实例、最近心跳及运行状态。
