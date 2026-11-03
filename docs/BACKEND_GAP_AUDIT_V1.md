@@ -394,3 +394,12 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 新增 schema 歧义测试和输入字节不可变测试；已有测试覆盖 Telethon / Pyrogram 单行转换、重复行拒绝、损坏文件和超限文件。
 - [ ] 仍需统一 Go test/vet/build 及真实 MTGo 连接验证；本轮按约定不提前运行全量 CI。
 - [ ] 当前 SQLite 转换输出保持来源格式（Telethon 或 Pyrogram）供 MTGo Config.SessionString 自动识别；账号连接仍使用项目统一的 MTGo 客户端，不引入 gotd/td 运行时。
+
+
+## 28. 2026-11-04 统一任务中心动作能力提示（增量）
+
+- [x] 统一任务列表在每条任务上返回 `can_pause`、`can_resume`、`can_retry`、`can_cancel`，前端可按队列类型与当前状态显示真实可执行的动作，避免对 processing/sent/completed 等不可操作状态展示无效按钮。
+- [x] 按各队列现有状态迁移规则分别计算能力：普通回复/关键词动作、账号资料更新、加群子任务使用不同的暂停/取消状态集合，不把各队列状态错误地合并成一套通用规则。
+- [x] 新增纯状态矩阵测试，覆盖 pending、processing、failed、paused、sent、queued、request_pending 及未知任务类型。
+- [ ] 能力字段只是 UI 提示，不替代服务端事务中的租户隔离和状态条件更新；状态可能在列表读取后发生变化，动作接口仍以数据库更新结果为准。
+- [ ] 尚未执行 Go test/vet/build；按项目约定待后端功能整体完成后统一执行。
