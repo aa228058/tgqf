@@ -157,3 +157,29 @@
 - 未对部署环境、真实并发量、资源使用作推断。
 - 语音通话和联系人卡片未作真实协议链路验证。
 - 后续代码变更后需重新运行测试和更新本报告的状态。
+
+
+## 8. 2026-11-04 七项专项补齐进展（增量审计）
+
+本轮已继续推进以下代码，注意区分“代码已接入”和“真实 Telegram 端到端验收”：
+
+| 用户要求项 | 当前代码进展 | 当前验收结论 |
+|---|---|---|
+| 账号头像上传 | `POST /api/v1/accounts/profile-updates/photo`；multipart 1–5 MiB、JPEG/PNG magic/解码/尺寸校验；图片字节随逐账号资料任务持久化；MTGo UploadFile + SetProfilePhoto；Worker 按账号执行 | 后端实现已接入，需最新 CI 和真实账号上传验证 |
+| 账号资料修改前端页面 | 按用户要求暂不开始前端 | 未开发，等七项专项结束后再做 |
+| 用户名规则前端设置页面 | 按用户要求暂不开始前端；后端租户 GET/PUT 配置接口已存在 | 未开发，等七项专项结束后再做 |
+| 私密邀请链接加入 | migration 0026 增加密文列；AES-GCM 加密；仅允许 t.me/telegram.me 邀请 hash；任务 Worker 解密后通过 MTGo JoinChat 执行；不向普通 API 回显明文 | 代码已接入，需 CI、数据库迁移和真实私密群测试 |
+| 加群审批结果自动同步 | Worker 定期轮询待审批项；公开群通过 GetChatMember 判断；私密邀请通过 messages.checkChatInvite 判断已加入 | 已实现批准状态自动同步路径；私密邀请拒绝状态无法仅凭 checkChatInvite 明确区分，需进一步验证/补充可观测事件 |
+| 真实 Telegram 语音通话 | MTGo v0.22.0 提供 PhoneRequestCall/AcceptCall/ConfirmCall 等原始 TL RPC，但当前库未提供一对一 VoIP 密钥协商和音频媒体传输引擎 | **未完成**。不能将呼叫信令或拨号按钮冒充真实通话；需要接入并验证兼容的 VoIP media engine 后才能启用 |
+| 联系人原生卡片发送 | 增加 contact reply payload、migration 0027、`POST /api/v1/messages/{id}/contact`、队列 Worker 调用 MTGo SendContact | 原生联系人卡片代码已接入；需最新 CI 与真实 Telegram 收件端验收 |
+
+新增迁移：`0025_account_profile_photo_jobs.sql`、`0026_private_invite_join_tasks.sql`、`0027_native_contact_reply_jobs.sql`。
+
+新增/调整 API：
+- `POST /api/v1/accounts/profile-updates/photo`（multipart：`account_ids` 为 JSON UUID 数组，`photo` 为 JPEG/PNG）
+- `POST /api/v1/messages/{id}/contact`（JSON：`phone`、`first_name`、可选 `last_name`）
+- `POST /api/v1/join-tasks` 增加 `private_invite_link` 字段；私密链接只接受明确授权的私密邀请 hash。
+
+CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一致，已按编译错误修正；之后对应工作流已出现成功结果。其余后续提交工作流仍需以各自 head SHA 的最终状态为准。
+
+本轮仍不修改前端。语音通话继续保持不可用，不允许使用伪造音频或文字邀请替代真实通话。
