@@ -52,3 +52,16 @@ func TestNormalizeGroupLibraryFilters(t *testing.T) {
 		}
 	}
 }
+
+
+func TestLinkCollectionSettingsSourceSwitches(t *testing.T) {
+	settings:=DefaultLinkCollectionSettings()
+	if !settings.Allows("private") || !settings.Allows("group") || !settings.Allows("channel") {
+		t.Fatal("default link collection settings should allow all supported sources")
+	}
+	settings.FromPrivateMessages=false
+	if settings.Allows("private") { t.Fatal("private message source should be disabled") }
+	if !settings.Allows("group") || !settings.Allows("channel") { t.Fatal("other sources should remain enabled") }
+	settings.Enabled=false
+	if settings.Allows("group") || settings.Allows("channel") { t.Fatal("disabled collector must reject every source") }
+}
