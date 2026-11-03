@@ -4,6 +4,9 @@ import (
 	cryptorand "crypto/rand"
 	"errors"
 	"context"
+	"encoding/hex"
+	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -98,7 +101,21 @@ func main() {
 	statusSynced := make(map[string]bool)
 	ticker := time.NewTicker(30*time.Second)
 	defer ticker.Stop()
-	logger.Info("Telegram account worker started")
+	workerID := newWorkerInstanceID()
+	hostname, _ := os.Hostname()
+	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
+		logger.Error("register worker heartbeat", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := recordWorkerHeartbeat(shutdownCtx, store.DB, workerID, hostname, os.Getpid(), false); err != nil {
+			logger.Warn("mark worker stopped", "error", err)
+		}
+	}()
+	logger.Info("Telegram account worker started", "worker_id", workerID, "hostname", hostname)
+	lastHeartbeat := time.Now()
 	for {
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
@@ -106,6 +123,14 @@ func main() {
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
+		if time.Since(lastHeartbeat) >= 10*time.Second {
+			heartbeatCtx, cancelHeartbeat := context.WithTimeout(ctx, 3*time.Second)
+			if err := recordWorkerHeartbeat(heartbeatCtx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
+				logger.Error("persist worker heartbeat", "worker_id", workerID, "error", err)
+			}
+			cancelHeartbeat()
+			lastHeartbeat = time.Now()
+		}
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
@@ -428,4 +453,26 @@ func generateRandomTelegramUsername(settings accounts.UsernameGenerationSettings
 	username:=settings.Prefix+string(suffix)
 	if settings.Prefix=="" && username[0]>='0' && username[0]<='9' { username=string(letters[int(random[0])%len(letters)])+username[1:] }
 	return username,nil
+}
+
+
+func newWorkerInstanceID() string {
+	var raw [16]byte
+	if _, err := cryptorand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("worker-%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname string, processID int, running bool) error {
+	status := "running"
+	if !running { status = "stopped" }
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO worker_instances(instance_id,hostname,process_id,status,started_at,heartbeat_at,stopped_at)
+		VALUES($1,$2,$3,$4,NOW(),NOW(),CASE WHEN $4='stopped' THEN NOW() ELSE NULL END)
+		ON CONFLICT(instance_id) DO UPDATE SET hostname=EXCLUDED.hostname,process_id=EXCLUDED.process_id,
+			status=EXCLUDED.status,heartbeat_at=NOW(),
+			stopped_at=CASE WHEN EXCLUDED.status='stopped' THEN NOW() ELSE NULL END
+	`, instanceID, hostname, processID, status)
+	return err
 }
