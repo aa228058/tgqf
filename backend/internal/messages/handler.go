@@ -12,6 +12,7 @@ type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
@@ -47,4 +48,12 @@ func(h *Handler)updateSettings(w http.ResponseWriter,r *http.Request){
 	updated,err:=h.service.UpdateSettings(r.Context(),user.TenantID,settings)
 	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
 	messageJSON(w,http.StatusOK,map[string]any{"settings":updated})
+}
+
+func(h *Handler)listChats(w http.ResponseWriter,r *http.Request){
+	user:=auth.UserFromContext(r.Context())
+	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	items,total,err:=h.service.ListChats(r.Context(),user.TenantID,limit,offset)
+	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load message chats"});return}
+	messageJSON(w,http.StatusOK,map[string]any{"chats":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
