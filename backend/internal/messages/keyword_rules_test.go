@@ -102,3 +102,27 @@ func TestKeywordRuleRequiresKeywordsOrMediaType(t *testing.T) {
 	_,err:=normalizeKeywordRule(KeywordRule{Name:"empty",MatchMode:"any"})
 	if err==nil {t.Fatal("rule without keywords or media filter accepted")}
 }
+
+func TestKeywordRuleSenderAndChatMetadataFilters(t *testing.T) {
+	rule,err:=normalizeKeywordRule(KeywordRule{
+		Name:"trusted source",MatchMode:"any",Keywords:[]string{"offer"},
+		ChatTypes:[]string{"group"},ChatTitles:[]string{"Sales Room"},
+		ChatUsernames:[]string{"salesroom"},SenderIDs:[]int64{42},
+		SenderUsernames:[]string{"alice"},SenderNames:[]string{"Alice Smith"},
+	})
+	if err!=nil {t.Fatal(err)}
+	base:=Incoming{ChatType:"group",ChatTitle:"Sales Room",ChatUsername:"salesroom",SenderID:42,SenderUsername:"alice",SenderName:"Alice Smith",Text:"New offer"}
+	if _,ok:=keywordRuleMatches(rule,base);!ok {t.Fatal("matching sender and chat metadata should pass")}
+	cases:=[]struct{name string; mutate func(*Incoming)}{
+		{"wrong title",func(v *Incoming){v.ChatTitle="Other"}},
+		{"wrong chat username",func(v *Incoming){v.ChatUsername="other"}},
+		{"wrong sender id",func(v *Incoming){v.SenderID=99}},
+		{"wrong sender username",func(v *Incoming){v.SenderUsername="bob"}},
+		{"wrong sender name",func(v *Incoming){v.SenderName="Bob Jones"}},
+	}
+	for _,tc:=range cases {t.Run(tc.name,func(t *testing.T){in:=base;tc.mutate(&in);if _,ok:=keywordRuleMatches(rule,in);ok{t.Fatal("metadata mismatch passed")}})}
+}
+func TestNormalizeKeywordRuleRejectsInvalidSenderFilter(t *testing.T) {
+	_,err:=normalizeKeywordRule(KeywordRule{Name:"bad sender",MatchMode:"any",Keywords:[]string{"x"},SenderIDs:[]int64{0}})
+	if err==nil {t.Fatal("zero sender id accepted")}
+}
