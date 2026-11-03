@@ -241,10 +241,8 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
             VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(rule_id,telegram_account_id,chat_id,message_id) DO NOTHING RETURNING id`,tenantID,rule.ID,in.AccountID,in.ChatID,in.MessageID,string(raw)).Scan(&matchID)
         if errors.Is(err,sql.ErrNoRows) {continue}
         if err!=nil{return err}
-        actionText:=rule.ReplyText
-        chatActionKey:="group";if in.ChatType=="private"{chatActionKey="private"}
-        if specific:=rule.ReplyTextByChatType[chatActionKey];specific!=""{actionText=specific}
-        if actionText!="" && in.ChatType!="channel" {
+        actionText:=keywordReplyTextForChat(rule,in.ChatType)
+        if actionText!="" {
             _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text)
                 VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,actionText)
             if err!=nil{return err}
@@ -381,4 +379,17 @@ func (s *Service) ChangeKeywordActionStatus(ctx context.Context,tenantID,id,acti
         n,_:=result.RowsAffected();if n==0{return errors.New("keyword action not found or state does not allow action")}
         return nil
     })
+}
+
+
+func keywordReplyTextForChat(rule KeywordRule,chatType string) string {
+    key:=""
+    switch chatType {
+    case "private": key="private"
+    case "group","supergroup": key="group"
+    case "channel": return ""
+    default: return rule.ReplyText
+    }
+    if specific:=rule.ReplyTextByChatType[key];specific!="" {return specific}
+    return rule.ReplyText
 }
