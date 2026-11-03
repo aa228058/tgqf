@@ -2,7 +2,9 @@ package messages
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -589,17 +591,44 @@ func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phon
 	return job,err
 }
 
-func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody string) (ReplyJob,error) {
+func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody string, idempotencyKeys ...string) (ReplyJob,error) {
 	textBody=strings.TrimSpace(textBody)
 	if !validUUID(messageID) || textBody=="" || len([]rune(textBody))>4096 {
 		return ReplyJob{},errors.New("reply text must contain 1-4096 characters and message id must be valid")
+	}
+	key:=""
+	if len(idempotencyKeys)>0 { key=strings.TrimSpace(idempotencyKeys[0]) }
+	if key!="" && (len(key)<8 || len(key)>128 || strings.ContainsAny(key,"\\r\\n\\x00")) {
+		return ReplyJob{},errors.New("Idempotency-Key must contain 8-128 non-control characters")
+	}
+	requestHash:=hex.EncodeToString(sha256.New().Sum(nil))
+	if key!="" {
+		sum:=sha256.Sum256([]byte(strings.Join([]string{"message_reply",messageID,textBody},"\\x00")))
+		requestHash=hex.EncodeToString(sum[:])
 	}
 	var job ReplyJob
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
 		if errors.Is(err,sql.ErrNoRows){return errors.New("message not found")};if err!=nil{return err}
-		err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,textBody).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
-		if err==nil {job.TenantID=tenantID;job.Text=textBody}
+		if key=="" {
+			err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,textBody).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+		} else {
+			err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text,idempotency_key,request_hash)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+				ON CONFLICT(tenant_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+				RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,textBody,key,requestHash).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+			if errors.Is(err,sql.ErrNoRows) {
+					var existingHash string
+					err=tx.QueryRowContext(ctx,`SELECT id::text,status,attempts,created_at,request_hash,telegram_account_id::text,chat_id,reply_to_message_id,message_text
+						FROM message_reply_jobs WHERE tenant_id=$1 AND idempotency_key=$2`,tenantID,key).
+						Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt,&existingHash,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text)
+					if err==nil && existingHash!=requestHash { return errors.New("Idempotency-Key was already used with a different reply request") }
+			}
+		}
+		if err==nil {
+			job.TenantID=tenantID
+			if job.Text=="" { job.Text=textBody }
+		}
 		return err
 	})
 	return job,err
