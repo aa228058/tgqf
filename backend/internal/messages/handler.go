@@ -36,6 +36,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
+	mux.Handle("GET /api/v1/groups/{id}/sources",h.auth.Authenticated(http.HandlerFunc(h.listGroupSources)))
 	mux.Handle("GET /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.getSettings)))
 	mux.Handle("PUT /api/v1/messages/settings",h.auth.Authenticated(http.HandlerFunc(h.updateSettings)))
 	mux.Handle("PATCH /api/v1/messages/{id}/processed",h.auth.Authenticated(http.HandlerFunc(h.markProcessed)))
@@ -155,6 +156,16 @@ func (h *Handler) events(w http.ResponseWriter,r *http.Request) {
    flusher.Flush()
   }
  }
+}
+
+
+func (h *Handler) listGroupSources(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	id,err:=strconv.ParseInt(r.PathValue("id"),10,64)
+	if err!=nil||id<=0 { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid group id"});return }
+	items,err:=h.service.ListGroupSources(r.Context(),user.TenantID,id)
+	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load group sources"});return }
+	messageJSON(w,http.StatusOK,map[string]any{"sources":items})
 }
 
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
