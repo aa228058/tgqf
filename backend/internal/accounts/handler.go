@@ -36,7 +36,8 @@ func(h *Handler)Routes(m *http.ServeMux){
 }
 
 func safeCSVCell(value string) string {
-	if len(value)>0 && strings.ContainsRune("=+-@\\t\\r",rune(value[0])) { return "'"+value }
+	if len(value)==0 { return value }
+	switch value[0] { case '=', '+', '-', '@', '\t', '\r': return "'"+value }
 	return value
 }
 
