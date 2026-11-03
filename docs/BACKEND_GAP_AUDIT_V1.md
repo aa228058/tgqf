@@ -376,7 +376,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 ## 27. 2026-11-04 Telethon SQLite Session 导入（首个格式闭环）
 
 - [x] `POST /api/v1/accounts/import-file` 接受 `.session` 上传；单文件大小仍限制为 1 MiB，临时文件由系统以私有权限创建并在处理后清理。
-- [x] SQLite 通过 MTGo storage 的纯 Go SQLite 驱动只读打开，并设置 `PRAGMA query_only=ON`；不会对用户上传数据库执行 schema 初始化或写入。
+- [x] SQLite 通过与 MTGo storage 同源的 `modernc.org/sqlite` 纯 Go 驱动只读打开，并设置 `PRAGMA query_only=ON`；不会对用户上传数据库执行 schema 初始化或写入。
 - [x] 校验 `sessions` 表结构，要求 Telethon 标准列 `dc_id/server_address/port/auth_key`，且恰好一条 session 记录；校验 DC、IP、端口和 256 字节 auth key。
 - [x] 使用 `session-converter v0.6.0` 的 `EncodeTelethon` 生成标准 Telethon StringSession；MTGo `v0.22.0` 支持自动识别该格式，继续沿用现有账号创建、设备资料创建及 Session 加密存储流程。
 - [x] 因 Telethon SQLite session 不保存账号手机号，上传表单必须额外提交 `phone`，可选提交 `display_name`、`group_name`；不从 auth key 猜测手机号或伪造 MTGO1 元数据。
