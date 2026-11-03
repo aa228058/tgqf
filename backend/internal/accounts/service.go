@@ -323,3 +323,40 @@ func (s *Service) ClearRuntimeReconnectState(ctx context.Context, tenantID, acco
   return err
  })
 }
+
+func normalizeBulkGroupInput(ids []string, group string) ([]string, string, error) {
+	group = strings.TrimSpace(group)
+	if len(group) > 80 { return nil, "", errors.New("group name must be at most 80 characters") }
+	if len(ids) == 0 || len(ids) > 100 { return nil, "", errors.New("select between 1 and 100 accounts") }
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' { return nil, "", errors.New("invalid account id") }
+		for i, ch := range id { if i==8 || i==13 || i==18 || i==23 { continue }; if !((ch>='0'&&ch<='9')||(ch>='a'&&ch<='f')) { return nil, "", errors.New("invalid account id") } }
+		if seen[id] { return nil, "", errors.New("duplicate account id") }
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, group, nil
+}
+
+// SetGroupBatch updates group labels atomically for accounts in the current tenant.
+func (s *Service) SetGroupBatch(ctx context.Context, tenantID string, ids []string, group string) (int, error) {
+	ids, group, err := normalizeBulkGroupInput(ids, group)
+	if err != nil { return 0, err }
+	updated := 0
+	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		for _, id := range ids {
+			result, err := tx.ExecContext(ctx, `UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, id, group)
+			if err != nil { return err }
+			n, err := result.RowsAffected()
+			if err != nil { return err }
+			if n != 1 { return errors.New("one or more accounts were not found in this tenant") }
+			updated += int(n)
+		}
+		return nil
+	})
+	if err != nil { return 0, err }
+	return updated, nil
+}
