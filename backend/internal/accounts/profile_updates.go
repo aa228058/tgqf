@@ -39,7 +39,7 @@ func normalizeProfileUpdate(in ProfileUpdateInput) (ProfileUpdateInput,error) {
 	in.FirstName=strings.TrimSpace(in.FirstName)
 	in.LastName=strings.TrimSpace(in.LastName)
 	in.About=strings.TrimSpace(in.About)
-	if !validUUID(in.AccountID) { return in,errors.New("invalid account id") }
+	if !validAccountUUID(in.AccountID) { return in,errors.New("invalid account id") }
 	if in.FirstName=="" && in.LastName=="" && in.About=="" { return in,errors.New("at least one non-empty profile field is required") }
 	if utf8.RuneCountInString(in.FirstName)>64 || utf8.RuneCountInString(in.LastName)>64 { return in,errors.New("first and last names must be at most 64 characters") }
 	if utf8.RuneCountInString(in.About)>70 { return in,errors.New("profile bio must be at most 70 characters") }
@@ -47,7 +47,7 @@ func normalizeProfileUpdate(in ProfileUpdateInput) (ProfileUpdateInput,error) {
 }
 
 func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID string,inputs []ProfileUpdateInput)([]ProfileUpdateJob,error) {
-	if tenantID=="" || !validUUID(userID) { return nil,errors.New("authenticated tenant user is required") }
+	if tenantID=="" || !validAccountUUID(userID) { return nil,errors.New("authenticated tenant user is required") }
 	if len(inputs)<1 || len(inputs)>20 { return nil,errors.New("profile update batch must contain 1-20 accounts") }
 	normalized:=make([]ProfileUpdateInput,len(inputs))
 	seen:=map[string]bool{}
@@ -81,7 +81,7 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 
 func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,status string,limit,offset int)([]ProfileUpdateJob,int,error) {
 	if limit<1||limit>100{limit=50};if offset<0{offset=0}
-	if batchID!=""&&!validUUID(batchID){return nil,0,errors.New("invalid batch id")}
+	if batchID!=""&&!validAccountUUID(batchID){return nil,0,errors.New("invalid batch id")}
 	switch status {case "","pending","processing","completed","failed":default:return nil,0,errors.New("invalid profile update status")}
 	out:=[]ProfileUpdateJob{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
@@ -157,7 +157,7 @@ func (s *Service) FailProfileUpdate(ctx context.Context,job ProfileUpdateJob,cau
 }
 
 func (s *Service) RetryProfileUpdate(ctx context.Context,tenantID,id string)error {
-	if !validUUID(id){return errors.New("profile update job not found")}
+	if !validAccountUUID(id){return errors.New("profile update job not found")}
 	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='pending',attempts=0,next_run_at=NOW(),last_error='',updated_at=NOW()
 			WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='failed'
@@ -168,3 +168,12 @@ func (s *Service) RetryProfileUpdate(ctx context.Context,tenantID,id string)erro
 }
 
 func maxInt64(a,b int64)int64{if a>b{return a};return b}
+
+func validAccountUUID(value string) bool {
+	if len(value)!=36{return false}
+	for i,ch:=range value {
+		if i==8||i==13||i==18||i==23 {if ch!='-'{return false};continue}
+		if !((ch>='0'&&ch<='9')||(ch>='a'&&ch<='f')||(ch>='A'&&ch<='F')){return false}
+	}
+	return true
+}
