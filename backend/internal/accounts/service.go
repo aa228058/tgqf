@@ -54,6 +54,36 @@ func insertDeviceProfile(ctx context.Context,tx *sql.Tx,tenantID,accountID strin
  _,err:=tx.ExecContext(ctx,`INSERT INTO telegram_device_profiles(tenant_id,telegram_account_id,platform,device_model,system_version,app_version,lang_code,system_lang_code,lang_pack,generation_seed,package_id) VALUES($1,$2,'ios',$3,$4,$5,$6,$7,$8,$9,$10)`,tenantID,accountID,profile.DeviceModel,profile.SystemVersion,profile.AppVersion,profile.LangCode,profile.SystemLangCode,profile.LangPack,accountID,profile.PackageID)
  return err
 }
+func storedDeviceProfile(accountID, deviceModel, systemVersion, appVersion, langCode, systemLangCode, langPack, packageID string) (device.Profile, error) {
+	profile := device.IOS.Generate(accountID)
+	if deviceModel != "" { profile.DeviceModel = deviceModel }
+	if systemVersion != "" { profile.SystemVersion = systemVersion }
+	if appVersion != "" { profile.AppVersion = appVersion }
+	if langCode != "" { profile.LangCode = langCode }
+	if systemLangCode != "" { profile.SystemLangCode = systemLangCode }
+	if langPack != "" { profile.LangPack = langPack }
+	if packageID != "" { profile.PackageID = packageID }
+	if profile.DeviceModel == "" || profile.SystemVersion == "" || profile.AppVersion == "" {
+		return device.Profile{}, errors.New("stored device profile is incomplete")
+	}
+	return profile, nil
+}
+
+// GetDeviceProfile returns the persisted device identity for one account.
+func (s *Service) GetDeviceProfile(ctx context.Context, tenantID, accountID string) (device.Profile, error) {
+	var profile device.Profile
+	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		var deviceModel, systemVersion, appVersion, langCode, systemLangCode, langPack, packageID string
+		if err := tx.QueryRowContext(ctx, `SELECT device_model,system_version,app_version,lang_code,system_lang_code,lang_pack,package_id
+			FROM telegram_device_profiles WHERE tenant_id=$1 AND telegram_account_id=$2`, tenantID, accountID).
+			Scan(&deviceModel,&systemVersion,&appVersion,&langCode,&systemLangCode,&langPack,&packageID); err != nil { return err }
+		var err error
+		profile, err = storedDeviceProfile(accountID,deviceModel,systemVersion,appVersion,langCode,systemLangCode,langPack,packageID)
+		return err
+	})
+	return profile, err
+}
+
 func envValue(key,fallback string)string{if v:=strings.TrimSpace(os.Getenv(key));v!=""{return v};return fallback}
 
 
@@ -64,6 +94,7 @@ type RuntimeAccount struct {
  ID string
  Session string
  ProxyJSON string
+ DeviceProfile device.Profile
  ReconnectAttempts int
  ReconnectAt time.Time
 }
@@ -83,10 +114,13 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 			accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
 				p.protocol,p.host,p.port,p.username,p.password_ciphertext,
-				COALESCE(rt.reconnect_attempts,0),rt.reconnect_at
+				COALESCE(rt.reconnect_attempts,0),rt.reconnect_at,
+				COALESCE(dp.device_model,''),COALESCE(dp.system_version,''),COALESCE(dp.app_version,''),
+				COALESCE(dp.lang_code,''),COALESCE(dp.system_lang_code,''),COALESCE(dp.lang_pack,''),COALESCE(dp.package_id,'')
 				FROM telegram_accounts a
 				LEFT JOIN tenant_proxies p ON p.tenant_id=a.tenant_id AND p.id=a.proxy_id
 				LEFT JOIN telegram_account_runtime rt ON rt.tenant_id=a.tenant_id AND rt.account_id=a.id
+				LEFT JOIN telegram_device_profiles dp ON dp.tenant_id=a.tenant_id AND dp.telegram_account_id=a.id
 				WHERE a.tenant_id=$1 AND a.status IN ('authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
@@ -97,7 +131,10 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 				var port sql.NullInt64
 				var reconnectAt sql.NullTime
 				item.TenantID = tenantID
-				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher,&item.ReconnectAttempts,&reconnectAt); err != nil { return err }
+				var deviceModel, systemVersion, appVersion, langCode, systemLangCode, langPack, packageID string
+				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher,&item.ReconnectAttempts,&reconnectAt,&deviceModel,&systemVersion,&appVersion,&langCode,&systemLangCode,&langPack,&packageID); err != nil { return err }
+				item.DeviceProfile, err = storedDeviceProfile(item.ID, deviceModel, systemVersion, appVersion, langCode, systemLangCode, langPack, packageID)
+				if err != nil { return fmt.Errorf("load device profile for account %s: %w", item.ID, err) }
 				plain, err := decrypt(sessionCipher); if err != nil { return fmt.Errorf("decrypt session for account %s: %w", item.ID, err) }
 				item.Session = string(plain)
 				if reconnectAt.Valid { item.ReconnectAt = reconnectAt.Time }
