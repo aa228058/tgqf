@@ -9,6 +9,8 @@ import (
  "strings"
  "time"
  "os"
+ "net"
+ "strconv"
  device "github.com/mtgo-labs/device-manager"
 )
 type Service struct{db *sql.DB}
@@ -77,17 +79,30 @@ func (s *Service) LoadAuthorizedRuntimeAccounts(ctx context.Context) ([]RuntimeA
 	var out []RuntimeAccount
 	for _, tenantID := range tenantIDs {
 		err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-			accountRows, err := tx.QueryContext(ctx, `SELECT id::text,session_ciphertext,proxy_ciphertext FROM telegram_accounts WHERE tenant_id=$1 AND status IN ('authorized','error') AND session_ciphertext IS NOT NULL`, tenantID)
+			accountRows, err := tx.QueryContext(ctx, `SELECT a.id::text,a.session_ciphertext,a.proxy_ciphertext,
+				p.protocol,p.host,p.port,p.username,p.password_ciphertext
+				FROM telegram_accounts a
+				LEFT JOIN tenant_proxies p ON p.tenant_id=a.tenant_id AND p.id=a.proxy_id
+				WHERE a.tenant_id=$1 AND a.status IN ('authorized','error') AND a.session_ciphertext IS NOT NULL`, tenantID)
 			if err != nil { return err }
 			defer accountRows.Close()
 			for accountRows.Next() {
 				var item RuntimeAccount
-				var sessionCipher, proxyCipher []byte
+				var sessionCipher, proxyCipher, proxyPasswordCipher []byte
+				var protocol, host, username sql.NullString
+				var port sql.NullInt64
 				item.TenantID = tenantID
-				if err := accountRows.Scan(&item.ID, &sessionCipher, &proxyCipher); err != nil { return err }
+				if err := accountRows.Scan(&item.ID,&sessionCipher,&proxyCipher,&protocol,&host,&port,&username,&proxyPasswordCipher); err != nil { return err }
 				plain, err := decrypt(sessionCipher); if err != nil { return fmt.Errorf("decrypt session for account %s: %w", item.ID, err) }
 				item.Session = string(plain)
-				if len(proxyCipher) > 0 { proxy, err := decrypt(proxyCipher); if err != nil { return fmt.Errorf("decrypt proxy for account %s: %w", item.ID, err) }; item.ProxyJSON = string(proxy) }
+				if protocol.Valid {
+					password := ""
+					if len(proxyPasswordCipher)>0 { secret,err:=decrypt(proxyPasswordCipher);if err!=nil{return fmt.Errorf("decrypt proxy password for account %s: %w",item.ID,err)};password=string(secret) }
+					config,err:=json.Marshal(map[string]any{"protocol":protocol.String,"addr":net.JoinHostPort(host.String,strconv.FormatInt(port.Int64,10)),"username":username.String,"password":password})
+					if err!=nil{return err};item.ProxyJSON=string(config)
+				} else if len(proxyCipher)>0 {
+					proxy,err:=decrypt(proxyCipher);if err!=nil{return fmt.Errorf("decrypt proxy for account %s: %w",item.ID,err)};item.ProxyJSON=string(proxy)
+				}
 				out = append(out, item)
 			}
 			return accountRows.Err()
