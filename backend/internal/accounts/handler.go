@@ -28,6 +28,10 @@ type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMe
 type phoneStartRequest struct{Phone string `json:"phone"`;GroupName string `json:"group_name"`;Proxy json.RawMessage `json:"proxy"`}
 type phoneCodeRequest struct{Code string `json:"code"`}
 type phonePasswordRequest struct{Password string `json:"password"`}
+type bulkPhoneStartItem struct { Phone string `json:"phone"`; GroupName string `json:"group_name"`; Proxy json.RawMessage `json:"proxy"` }
+type bulkPhoneStartRequest struct { Accounts []bulkPhoneStartItem `json:"accounts"` }
+type bulkPhoneCancelRequest struct { AccountIDs []string `json:"account_ids"` }
+type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account `json:"account,omitempty"`; Status string `json:"status"`; DeliveryType string `json:"delivery_type,omitempty"`; ResendAfterSeconds int `json:"resend_after_seconds,omitempty"`; Error string `json:"error,omitempty"` }
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
@@ -55,7 +59,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("PUT /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateProxy)))
  m.Handle("DELETE /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.deleteProxy)))
  m.Handle("POST /api/v1/proxies/{id}/check",h.auth.Authenticated(http.HandlerFunc(h.checkProxy)))
- if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
+ if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/bulk/start",h.auth.Authenticated(http.HandlerFunc(h.startBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
 }
 
 func safeCSVCell(value string) string {
@@ -277,6 +281,84 @@ func (h *Handler) startPhoneLogin(w http.ResponseWriter,r *http.Request) {
 	result,err:=h.telegram.StartPhoneLogin(r.Context(),a.ID,q.Phone,proxyJSON,profile)
 	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram phone login");return}
 	writeJSON(w,201,map[string]any{"account":a,"status":"code_sent","delivery_type":result.DeliveryType,"resend_after_seconds":result.Timeout})
+}
+
+func normalizeBulkPhoneStart(input bulkPhoneStartRequest) (bulkPhoneStartRequest,error) {
+	if len(input.Accounts)<1 || len(input.Accounts)>20 { return input,errors.New("phone login batch must contain 1-20 accounts") }
+	seen:=map[string]bool{}
+	for i:=range input.Accounts {
+		item:=&input.Accounts[i]
+		item.Phone=strings.TrimSpace(item.Phone)
+		item.GroupName=strings.TrimSpace(item.GroupName)
+		if len(item.Phone)<5 || len(item.Phone)>32 || len(item.GroupName)>80 { return input,fmt.Errorf("account %d: invalid phone or group name",i+1) }
+		for j,r:=range item.Phone { if r=='+' && j==0 { continue }; if r<'0'||r>'9' { return input,fmt.Errorf("account %d: phone must contain only digits and an optional leading plus",i+1) } }
+		canonical:=strings.TrimPrefix(item.Phone,"+")
+		if seen[canonical] { return input,errors.New("duplicate phone number in batch") }
+		seen[canonical]=true
+		if len(item.Proxy)>16384 { return input,fmt.Errorf("account %d: proxy configuration is too large",i+1) }
+		if len(item.Proxy)>0 && string(item.Proxy)!="null" && string(item.Proxy)!="{}" { var value map[string]any; if err:=json.Unmarshal(item.Proxy,&value);err!=nil || value==nil { return input,fmt.Errorf("account %d: proxy must be a JSON object",i+1) } }
+	}
+	return input,nil
+}
+
+func normalizeBulkPhoneAccountIDs(ids []string)([]string,error) {
+	if len(ids)<1 || len(ids)>20 { return nil,errors.New("phone login cancellation requires 1-20 account IDs") }
+	out:=make([]string,0,len(ids));seen:=map[string]bool{}
+	for _,id:=range ids { id=strings.TrimSpace(id);if !validAccountUUID(id)||seen[id] { return nil,errors.New("invalid or duplicate account ID") };seen[id]=true;out=append(out,id) }
+	return out,nil
+}
+
+// startBulkPhoneLogin starts independent MTGo OTP challenges for a bounded batch.
+// Each account is isolated: one Telegram failure does not discard other challenges.
+func (h *Handler) startBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
+	var input bulkPhoneStartRequest
+	if !decode(w,r,&input) { writeError(w,http.StatusBadRequest,"invalid phone login batch");return }
+	input,err:=normalizeBulkPhoneStart(input);if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+	u:=auth.UserFromContext(r.Context())
+	results:=make([]bulkPhoneStartResult,0,len(input.Accounts));started:=0
+	for _,item:=range input.Accounts {
+		result:=bulkPhoneStartResult{Phone:item.Phone,Status:"failed"}
+		account,createErr:=h.service.CreatePending(r.Context(),u.TenantID,item.GroupName,item.Proxy)
+		if createErr!=nil {
+			result.Error="could not create pending account"
+			if strings.Contains(createErr.Error(),"account limit reached") { result.Error=createErr.Error() }
+			results=append(results,result);continue
+		}
+		profile,profileErr:=h.service.LoadDeviceProfile(r.Context(),u.TenantID,account.ID)
+		proxyJSON,proxyErr:=h.service.LoadPendingProxyJSON(r.Context(),u.TenantID,account.ID)
+		if profileErr!=nil || proxyErr!=nil {
+			_ = h.service.Delete(context.Background(),u.TenantID,account.ID)
+			result.Error="could not load persisted account settings";results=append(results,result);continue
+		}
+		challenge,startErr:=h.telegram.StartPhoneLogin(r.Context(),account.ID,item.Phone,proxyJSON,profile)
+		if startErr!=nil {
+			_ = h.telegram.CancelPhoneLogin(account.ID)
+			_ = h.service.Delete(context.Background(),u.TenantID,account.ID)
+			result.Error="Telegram could not start phone login";results=append(results,result);continue
+		}
+		result.Account=&account;result.Status="code_sent";result.DeliveryType=challenge.DeliveryType;result.ResendAfterSeconds=challenge.Timeout
+		started++;results=append(results,result)
+	}
+	status:=http.StatusAccepted
+	if started==0 { status=http.StatusBadGateway }
+	writeJSON(w,status,map[string]any{"requested":len(input.Accounts),"started":started,"failed":len(input.Accounts)-started,"results":results,"next_step":"verify each account with POST /api/v1/accounts/{id}/phone/verify; use /phone/2fa when Telegram requests a password"})
+}
+
+// cancelBulkPhoneLogin removes only pending phone-login accounts belonging to the caller's tenant.
+func (h *Handler) cancelBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
+	var input bulkPhoneCancelRequest
+	if !decode(w,r,&input) { writeError(w,http.StatusBadRequest,"invalid cancellation request");return }
+	ids,err:=normalizeBulkPhoneAccountIDs(input.AccountIDs);if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+	u:=auth.UserFromContext(r.Context())
+	results:=make([]map[string]string,0,len(ids));cancelled:=0
+	for _,id:=range ids {
+		pending,checkErr:=h.service.IsPending(r.Context(),u.TenantID,id)
+		if checkErr!=nil || !pending { results=append(results,map[string]string{"account_id":id,"status":"not_pending"});continue }
+		if stopErr:=h.telegram.CancelPhoneLogin(id);stopErr!=nil { results=append(results,map[string]string{"account_id":id,"status":"stop_failed"});continue }
+		if deleteErr:=h.service.Delete(r.Context(),u.TenantID,id);deleteErr!=nil { results=append(results,map[string]string{"account_id":id,"status":"delete_failed"});continue }
+		cancelled++;results=append(results,map[string]string{"account_id":id,"status":"cancelled"})
+	}
+	writeJSON(w,http.StatusOK,map[string]any{"requested":len(ids),"cancelled":cancelled,"results":results})
 }
 
 func (h *Handler) verifyPhoneCode(w http.ResponseWriter,r *http.Request) {
