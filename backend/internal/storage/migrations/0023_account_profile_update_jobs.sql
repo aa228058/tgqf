@@ -8,7 +8,7 @@ CREATE TABLE account_profile_update_jobs (
     last_name TEXT NOT NULL DEFAULT '',
     about TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending','processing','completed','failed')),
+        CHECK (status IN ('pending','processing','paused','completed','failed')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     lease_until TIMESTAMPTZ,
@@ -23,7 +23,7 @@ CREATE TABLE account_profile_update_jobs (
 );
 CREATE UNIQUE INDEX account_profile_update_one_active_idx
     ON account_profile_update_jobs(tenant_id,account_id)
-    WHERE status IN ('pending','processing');
+    WHERE status IN ('pending','processing','paused');
 CREATE INDEX account_profile_update_claim_idx
     ON account_profile_update_jobs(tenant_id,status,next_run_at,created_at);
 CREATE INDEX account_profile_update_batch_idx
