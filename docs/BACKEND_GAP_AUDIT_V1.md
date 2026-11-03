@@ -411,3 +411,12 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 返回总任务数、processing 数量、租约已过期的 processing 数量，以及按 task type/status 分组的计数；带有统计生成时间。
 - [x] 统计直接读取各队列表，不创建第二份任务状态，也不改变 Worker 的 claim/lease/重试行为。
 - [ ] 尚未运行 Go test/vet/build 或 PostgreSQL 集成测试；需在最终统一验收时验证迁移后 schema、RLS 和大队列统计查询性能。
+
+
+## 30. 2026-11-04 统一任务中心批量控制接口
+
+- [x] 新增 POST /api/v1/tasks/bulk/{type}/{action}，支持 message_reply、keyword_action、profile_update、group_join 四类任务的 pause/resume/retry/cancel 批量动作。
+- [x] 请求在执行前整体校验任务类型、动作、ID格式、重复ID及数量（1-100）；普通队列使用 UUID，加群队列使用正整数子任务行 ID。
+- [x] 每条任务复用既有 ChangeUnifiedTaskStatus 服务端状态条件与租户事务，不绕过队列控制逻辑；响应逐条返回成功/失败及原因，部分成功使用 HTTP 207。
+- [ ] 批量控制采用逐项独立事务，明确为部分成功语义，不承诺全有或全无；需要 UI 对失败项展示原因，并允许用户重新提交失败项。
+- [ ] 尚未运行 Go test/vet/build 或 PostgreSQL 集成测试；最终统一验收需覆盖混合有效/无效状态、跨租户 ID、并发 Worker claim 与批量取消竞争。
