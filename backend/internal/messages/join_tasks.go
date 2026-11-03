@@ -70,8 +70,8 @@ func (s *Service) CreateJoinTask(ctx context.Context,tenantID,actorID string,inp
         var active bool
         if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,tenantID).Scan(&active);err!=nil{return err}
         if !active{return errors.New("tenant subscription inactive")}
-        if input.TargetGroupID>0 {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_groups WHERE id=$1)",input.TargetGroupID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("target group not found")}}
-        if input.TargetLinkID>0 {var sourceExists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_group_links l JOIN public_group_link_sources s ON s.link_id=l.id AND s.tenant_id=$1 WHERE l.id=$2 AND l.status<>$3 AND ($4=0 OR l.group_id=$4))",tenantID,input.TargetLinkID,"invalid",input.TargetGroupID).Scan(&sourceExists);err!=nil{return err};if !sourceExists{return errors.New("target link was not discovered by this tenant")}}
+        if input.TargetGroupID>0 {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_groups WHERE id=$1 AND NULLIF(username,'') IS NOT NULL)",input.TargetGroupID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("target group not found")}}
+        if input.TargetLinkID>0 {var sourceExists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM public_group_links l JOIN public_group_link_sources s ON s.link_id=l.id AND s.tenant_id=$1 WHERE l.id=$2 AND l.link_type='public' AND l.status<>$3 AND ($4=0 OR l.group_id=$4))",tenantID,input.TargetLinkID,"invalid",input.TargetGroupID).Scan(&sourceExists);err!=nil{return err};if !sourceExists{return errors.New("target link was not discovered by this tenant")}}
         for _,accountID:=range input.AccountIDs {
             var authorized bool
             if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='authorized' AND session_ciphertext IS NOT NULL)`,tenantID,accountID).Scan(&authorized);err!=nil{return err}
@@ -150,7 +150,7 @@ func (s *Service) PauseJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be paused")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','processing')",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','processing')",tenantID,id)
         return err
     })
 }
@@ -174,9 +174,8 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued','paused')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be cancelled")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','request_pending')",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','processing','request_pending')",tenantID,id)
         if err!=nil{return err}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND lease_until IS NOT NULL",tenantID,id)
         return err
     })
 }
