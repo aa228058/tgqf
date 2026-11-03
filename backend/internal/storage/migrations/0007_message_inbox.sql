@@ -5,6 +5,7 @@ CREATE TABLE unified_messages (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
     chat_type TEXT NOT NULL CHECK (chat_type IN ('private','group','channel')),
+    chat_title TEXT NOT NULL DEFAULT '',
     sender_id BIGINT NOT NULL DEFAULT 0,
     reply_to_message_id BIGINT,
     reply_to_own_message BOOLEAN NOT NULL DEFAULT FALSE,
