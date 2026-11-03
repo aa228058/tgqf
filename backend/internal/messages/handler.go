@@ -33,6 +33,7 @@ type Handler struct { service *Service; auth *auth.Handler }
 func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
+	mux.Handle("POST /api/v1/tasks/{type}/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskAction)))
 	h.groupCorrectionRoutes(mux)
 	mux.Handle("GET /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
 	mux.Handle("POST /api/v1/keyword-rules",h.auth.Authenticated(http.HandlerFunc(h.keywordRules)))
@@ -77,6 +78,21 @@ func (h *Handler) unifiedTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	messageJSON(w, http.StatusOK, map[string]any{"tasks": items, "total": total, "limit": normalizeLimit(limit), "offset": max(0, offset)})
+}
+
+
+func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	taskType, id, action := r.PathValue("type"), r.PathValue("id"), r.PathValue("action")
+	if err := h.service.ChangeUnifiedTaskStatus(r.Context(), user.TenantID, taskType, id, action); err != nil {
+		status := http.StatusConflict
+		if err.Error() == "invalid task type" || err.Error() == "unsupported task action" || err.Error() == "invalid task" {
+			status = http.StatusBadRequest
+		}
+		messageJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	messageJSON(w, http.StatusOK, map[string]any{"type": taskType, "id": id, "status": "updated"})
 }
 
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
