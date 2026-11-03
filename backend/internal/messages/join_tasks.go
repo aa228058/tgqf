@@ -174,7 +174,9 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued','paused')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be cancelled")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused')")
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','request_pending')",tenantID,id)
+        if err!=nil{return err}
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND lease_until IS NOT NULL",tenantID,id)
         return err
     })
 }
