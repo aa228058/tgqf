@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"sync"
 	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/accounts"
@@ -59,16 +60,17 @@ func main() {
 	defer ticker.Stop()
 	logger.Info("Telegram account worker started")
 	for {
-		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
+		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		select { case <-ctx.Done(): return; case <-ticker.C: }
 	}
 }
 
-func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, now time.Time) error {
+func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
 	accountsList, err := accountsService.LoadAuthorizedRuntimeAccounts(ctx)
 	if err != nil { return err }
 	allowed := make(map[string]accounts.RuntimeAccount, len(accountsList))
-	for _, account := range accountsList { allowed[account.ID] = account }
+	for _, account := range accountsList { allowed[account.ID] = account; accountTenants.Store(account.ID, account.TenantID) }
+	accountTenants.Range(func(key, value any) bool { if _, ok := allowed[key.(string)]; !ok { accountTenants.Delete(key) }; return true })
 
 	for _, id := range manager.ManagedAccountIDs() {
 		if _, ok := allowed[id]; !ok {
@@ -76,6 +78,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 			delete(lastSavedSessions, id)
 			delete(reconnects, id)
 			delete(statusSynced, id)
+			accountTenants.Delete(id)
 		}
 	}
 	for id, account := range allowed {
