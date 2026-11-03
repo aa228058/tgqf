@@ -24,7 +24,7 @@
 3. **全局公共群组总库第一阶段已实现**：public_groups 全局实体、来源与租户贡献统计、实时入库和共享目录查询已接入；资料纠错审核及人工合并审计也已实现。
 4. **消息实时接口仍是 SSE，不是 WebSocket**；本轮改为 Redis Streams 持久事件流，支持 Last-Event-ID 断点续传及每租户有界保留，仍需 Redis 集成测试和 WebSocket 接口。
 5. 未发现完整关键词规则引擎、命中后的私聊/群组自动动作编排、媒体动作、原生联系人卡片、真实语音通话链路。
-6. 自动加群已支持公开用户名/公开链接及加密保存的私密邀请链接执行；遇到需审批的邀请请求会记录待审批状态，并由 Worker 定期通过 MTGo 查询成员状态同步批准/拒绝结果（仍需真实 Telegram 账号验收）；Session 文件上传导入已支持 JSON/CSV/TXT（最多 20 条），批量手机号登录仍缺失；姓名/简介批量资料修改已有后端任务执行第一阶段，头像上传尚未实现。
+6. 自动加群已支持公开用户名/公开链接及加密保存的私密邀请链接执行；遇到需审批的邀请请求会记录待审批状态，并由 Worker 定期通过 MTGo 查询成员状态同步批准/拒绝结果（仍需真实 Telegram 账号验收）；Session 文件上传导入已支持 JSON/CSV/TXT（最多 20 条），MTGo 手机验证码登录及 2FA 已新增基础 API 闭环（需多账号/真实账号验收），批量手机号登录编排仍缺失；姓名/简介批量资料修改已有后端任务执行第一阶段，头像上传尚未实现。
 7. 前端目前仍需独立开发完整管理页面；本审计不修改前端。
 
 ## 2. 按模块核对
@@ -33,7 +33,7 @@
 |---|---|---|---|
 | 多租户/认证 | tenants、users、activation_cards、auth_sessions、RLS；auth handlers | 已有基础实现，待完整验收 | 多设备会话、密码变更撤销策略、到期停任务/恢复暂停语义需集成测试 |
 | 超管/卡密 | admin handlers、activation_cards | 部分实现 | 租户生命周期完整操作、审计、续期暂停任务闭环需核验 |
-| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | 手机验证码/2FA、批量登录等缺失；Session 文件导入支持 JSON/CSV/TXT，传统 Telethon SQLite .session 文件不兼容 MTGo 格式 |
+| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 登录 API 已实现（OTP 与 2FA 挑战暂存于进程内，需处理服务重启恢复并完成真实账号验收）；批量登录编排仍缺失；Session 文件导入支持 JSON/CSV/TXT，传统 Telethon SQLite .session 文件需独立转换/导入流程 |
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
@@ -61,7 +61,7 @@
 - P0-04 补充消息采集测试，证明仅实时事件进入收件箱；不回填历史。
 
 ### P1 — 基础能力补齐
-- P1-01 完成账号登录方式：手机号验证码、2FA、Session 导入、批量导入/登录；每账号独立登录状态机。
+- P1-01 进行中：MTGo 手机验证码及 2FA 登录 API 已实现（`POST /accounts/phone/start`、`POST /accounts/{id}/phone/verify`、`POST /accounts/{id}/phone/2fa`），challenge 在 Manager 内存保存，成功后复用加密 Session 持久化；批量登录编排、重启恢复、SQLite `.session` 导入和真实账号验收仍未完成。
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
 - [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
 - P1-04 账号标签/搜索/分页/批量操作/导出/断开重连。
