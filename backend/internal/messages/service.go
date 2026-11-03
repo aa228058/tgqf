@@ -7,10 +7,46 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-type Service struct { db *sql.DB }
-func New(db *sql.DB) *Service { return &Service{db:db} }
+type Service struct {
+ db *sql.DB
+ redis *redis.Client
+}
+func New(db *sql.DB, cache ...*redis.Client) *Service {
+ s := &Service{db:db}
+ if len(cache)>0 { s.redis=cache[0] }
+ return s
+}
+
+// MessageCreatedEvent is published after a new message has committed to PostgreSQL.
+type MessageCreatedEvent struct {
+ Type string `json:"type"`
+ AccountID string `json:"account_id"`
+ ChatID int64 `json:"chat_id"`
+ MessageID int64 `json:"message_id"`
+ CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Service) publishCreated(ctx context.Context, tenantID string, in Incoming) {
+ if s.redis==nil { return }
+ payload,err:=json.Marshal(MessageCreatedEvent{
+  Type:"message.created", AccountID:in.AccountID, ChatID:in.ChatID,
+  MessageID:in.MessageID, CreatedAt:time.Now().UTC(),
+ })
+ if err!=nil { return }
+ publishCtx,cancel:=context.WithTimeout(ctx,2*time.Second)
+ defer cancel()
+ _=s.redis.Publish(publishCtx,"tgqf:tenant:"+tenantID+":messages",string(payload)).Err()
+}
+
+// SubscribeMessages subscribes to one tenant's realtime message stream.
+func (s *Service) SubscribeMessages(ctx context.Context, tenantID string) *redis.PubSub {
+ if s.redis==nil { return nil }
+ return s.redis.Subscribe(ctx,"tgqf:tenant:"+tenantID+":messages")
+}
 
 type Incoming struct {
 	AccountID string
@@ -133,12 +169,15 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 			photo_id=COALESCE(NULLIF(EXCLUDED.photo_id,''),tenant_message_chats.photo_id),
 			last_seen_at=NOW(),updated_at=NOW()`,tenantID,in.AccountID,in.ChatID,strings.TrimSpace(in.ChatTitle),in.ChatType,strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified,strings.TrimSpace(in.ChatPhotoID))
 		if err!=nil{return err}
-		_,err=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
+		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
 			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,in.MessageDate)
-		if err==nil { collected=true }
-		return err
+		if insertErr!=nil { return insertErr }
+		inserted,_:=result.RowsAffected()
+		collected=inserted>0
+		return nil
 	})
 	if err!=nil{return false,err}
+	if collected { s.publishCreated(ctx,tenantID,in) }
 	return collected,nil
 }
 
