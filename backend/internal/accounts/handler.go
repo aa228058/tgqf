@@ -2,10 +2,13 @@ package accounts
 
 import (
  "encoding/json"
+ "encoding/csv"
+ "fmt"
  "io"
  "net/http"
  "strconv"
  "strings"
+ "time"
  "context"
  "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 
@@ -18,6 +21,7 @@ type qrStartRequest struct{GroupName string `json:"group_name"`;Proxy json.RawMe
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
+ m.Handle("GET /api/v1/accounts/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportCSV)))
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
@@ -30,6 +34,29 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/proxies/{id}/check",h.auth.Authenticated(http.HandlerFunc(h.checkProxy)))
  if h.telegram!=nil { m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
 }
+
+func safeCSVCell(value string) string {
+	if len(value)>0 && strings.ContainsRune("=+-@\\t\\r",rune(value[0])) { return "'"+value }
+	return value
+}
+
+func(h *Handler)exportCSV(w http.ResponseWriter,r *http.Request){
+	u:=auth.UserFromContext(r.Context())
+	query:=AccountListOptions{Query:r.URL.Query().Get("q"),GroupName:r.URL.Query().Get("group"),Status:r.URL.Query().Get("status"),Limit:100}
+	items,total,err:=h.service.ListPage(r.Context(),u.TenantID,query)
+	if err!=nil{writeError(w,http.StatusBadRequest,err.Error());return}
+	w.Header().Set("Content-Type","text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=telegram-accounts-%s.csv",time.Now().UTC().Format("20060102-150405")))
+	w.WriteHeader(http.StatusOK)
+	writer:=csv.NewWriter(w)
+	_ = writer.Write([]string{"id","phone","display_name","group_name","status","has_session","has_proxy","last_error","created_at","updated_at"})
+	for offset:=0;offset<total;offset+=100{
+		if offset>0{query.Offset=offset;items,_,err=h.service.ListPage(r.Context(),u.TenantID,query);if err!=nil{return}}
+		for _,a:=range items{_ = writer.Write([]string{safeCSVCell(a.ID),safeCSVCell(a.Phone),safeCSVCell(a.DisplayName),safeCSVCell(a.GroupName),safeCSVCell(a.Status),fmt.Sprint(a.HasSession),fmt.Sprint(a.HasProxy),safeCSVCell(a.LastError),a.CreatedAt.UTC().Format(time.RFC3339),a.UpdatedAt.UTC().Format(time.RFC3339)})}
+	}
+	writer.Flush()
+}
+
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"));items,total,err:=h.service.ListPage(r.Context(),u.TenantID,AccountListOptions{Query:r.URL.Query().Get("q"),GroupName:r.URL.Query().Get("group"),Status:r.URL.Query().Get("status"),Limit:limit,Offset:offset});if err!=nil{writeError(w,400,err.Error());return};if limit<1||limit>100{limit=50};if offset<0{offset=0};writeJSON(w,200,map[string]any{"accounts":items,"total":total,"limit":limit,"offset":offset})}
 func(h *Handler)create(w http.ResponseWriter,r *http.Request){var q createRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());a,err:=h.service.Create(r.Context(),u.TenantID,q.Phone,q.DisplayName,q.GroupName,q.Session,q.Proxy);if err!=nil{if strings.Contains(err.Error(),"account limit reached"){writeError(w,409,err.Error());return};if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){writeError(w,503,"session encryption is not configured");return};writeError(w,400,err.Error());return};writeJSON(w,201,map[string]any{"account":a})}
 func(h *Handler)delete(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());if err:=h.service.Delete(r.Context(),u.TenantID,r.PathValue("id"));err!=nil{writeError(w,404,"account not found");return};w.WriteHeader(204)}
