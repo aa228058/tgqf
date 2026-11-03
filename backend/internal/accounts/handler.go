@@ -1,6 +1,7 @@
 package accounts
 
 import (
+ "errors"
  "encoding/json"
  "encoding/csv"
  "fmt"
