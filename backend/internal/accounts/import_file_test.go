@@ -60,16 +60,16 @@ func makeTelethonSessionSQLite(t *testing.T, rows int) []byte {
 }
 
 func TestParseTelethonSQLiteSession(t *testing.T) {
-    encoded,err:=parseTelethonSQLiteSession(makeTelethonSessionSQLite(t,1))
+    encoded,sourceFormat,err:=parseSQLiteSession(makeTelethonSessionSQLite(t,1))
     if err!=nil{t.Fatal(err)}
     decoded,format,err:=tgconv.Decode(encoded)
     if err!=nil{t.Fatal(err)}
-    if format!=tgconv.FormatTelethon||decoded.DCID!=4||decoded.ServerAddress!="149.154.167.50"||decoded.Port!=443||len(decoded.AuthKey)!=256{t.Fatalf("unexpected decoded Telethon session: format=%s session=%+v",format,decoded)}
+    if sourceFormat!="telethon"||format!=tgconv.FormatTelethon||decoded.DCID!=4||decoded.ServerAddress!="149.154.167.50"||decoded.Port!=443||len(decoded.AuthKey)!=256{t.Fatalf("unexpected decoded Telethon session: format=%s session=%+v",format,decoded)}
 }
 
 func TestParseTelethonSQLiteSessionRejectsInvalidDatabases(t *testing.T) {
-    if _,err:=parseTelethonSQLiteSession([]byte("not sqlite"));err==nil{t.Fatal("expected invalid SQLite rejection")}
-    if _,err:=parseTelethonSQLiteSession(makeTelethonSessionSQLite(t,2));err==nil{t.Fatal("expected multi-session database rejection")}
+    if _,_,err:=parseSQLiteSession([]byte("not sqlite"));err==nil{t.Fatal("expected invalid SQLite rejection")}
+    if _,_,err:=parseSQLiteSession(makeTelethonSessionSQLite(t,2));err==nil{t.Fatal("expected multi-session database rejection")}
 }
 
 func TestParseAccountImportFileTelethonSession(t *testing.T) {
@@ -87,4 +87,25 @@ func TestValidateImportedSession(t *testing.T) {
     for _,invalid:=range []string{"","not-a-session",strings.Repeat("x",65537)} {
         if err:=validateImportedSession(invalid);err==nil{t.Errorf("invalid session accepted: %q",invalid)}
     }
+}
+
+func makePyrogramSessionSQLite(t *testing.T) []byte {
+    t.Helper()
+    path:=t.TempDir()+"/pyrogram.session"
+    db,err:=sql.Open("sqlite",path)
+    if err!=nil{t.Fatal(err)}
+    if _,err=db.Exec(`CREATE TABLE sessions (dc_id INTEGER, api_id INTEGER, test_mode INTEGER, auth_key BLOB, date INTEGER, user_id INTEGER, is_bot INTEGER, is_premium INTEGER DEFAULT 0)`);err!=nil{t.Fatal(err)}
+    key:=make([]byte,256);for i:=range key{key[i]=byte(255-i)}
+    if _,err=db.Exec(`INSERT INTO sessions(dc_id,api_id,test_mode,auth_key,date,user_id,is_bot) VALUES(?,?,?,?,?,?,?)`,2,12345,0,key,1700000000,987654321,0);err!=nil{t.Fatal(err)}
+    if err:=db.Close();err!=nil{t.Fatal(err)}
+    data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
+    return data
+}
+
+func TestParsePyrogramSQLiteSession(t *testing.T) {
+    encoded,sourceFormat,err:=parseSQLiteSession(makePyrogramSessionSQLite(t))
+    if err!=nil{t.Fatal(err)}
+    decoded,format,err:=tgconv.Decode(encoded)
+    if err!=nil{t.Fatal(err)}
+    if sourceFormat!="pyrogram"||format!=tgconv.FormatPyrogram||decoded.DCID!=2||decoded.AppID!=12345||decoded.UserID!=987654321||len(decoded.AuthKey)!=256{t.Fatalf("unexpected Pyrogram session: source=%s format=%s session=%+v",sourceFormat,format,decoded)}
 }
