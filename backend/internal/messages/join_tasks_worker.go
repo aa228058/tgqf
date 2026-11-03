@@ -67,7 +67,7 @@ func (s *Service) CompleteJoinTaskAccount(ctx context.Context,job JoinTaskJob,ch
     })
 }
 
-func (s *Service) RescheduleJoinTaskFloodWait(ctx context.Context,job JoinTaskJob,wait time.Duration,reason string)error {
+func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,wait time.Duration,reason string)error {
     if wait<=0{return errors.New("positive FloodWait duration is required")}
     delay:=wait.Truncate(time.Second)+time.Second
     if wait%time.Second!=0 {delay=wait.Truncate(time.Second)+2*time.Second}
