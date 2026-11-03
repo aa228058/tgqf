@@ -161,11 +161,11 @@ func (s *Service) ListKeywordMatches(ctx context.Context,tenantID,ruleID string,
 }
 
 func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID string,in Incoming)error {
-    if in.IsOutgoing || strings.TrimSpace(in.Text)=="" {return nil}
-    rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,match_mode,keywords,exclude_terms,chat_types,case_sensitive,enabled
+    if in.IsOutgoing || (strings.TrimSpace(in.Text)=="" && strings.TrimSpace(in.MediaType)=="") {return nil}
+    rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,match_mode,keywords,exclude_terms,chat_types,account_ids,chat_ids,media_types,case_sensitive,enabled
         FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE ORDER BY created_at,id LIMIT 100`,tenantID);if err!=nil{return err}
     rules:=[]KeywordRule{}
-    for rows.Next(){var r KeywordRule;var keywords,excluded,types []byte;if err:=rows.Scan(&r.ID,&r.Name,&r.MatchMode,&keywords,&excluded,&types,&r.CaseSensitive,&r.Enabled);err!=nil{rows.Close();return err};if err:=json.Unmarshal(keywords,&r.Keywords);err!=nil{rows.Close();return err};if err:=json.Unmarshal(excluded,&r.ExcludeTerms);err!=nil{rows.Close();return err};if err:=json.Unmarshal(types,&r.ChatTypes);err!=nil{rows.Close();return err};rules=append(rules,r)}
+    for rows.Next(){var r KeywordRule;var keywords,excluded,types,accounts,chats,media []byte;if err:=rows.Scan(&r.ID,&r.Name,&r.MatchMode,&keywords,&excluded,&types,&accounts,&chats,&media,&r.CaseSensitive,&r.Enabled);err!=nil{rows.Close();return err};if err:=json.Unmarshal(keywords,&r.Keywords);err!=nil{rows.Close();return err};if err:=json.Unmarshal(excluded,&r.ExcludeTerms);err!=nil{rows.Close();return err};if err:=json.Unmarshal(types,&r.ChatTypes);err!=nil{rows.Close();return err};if err:=json.Unmarshal(accounts,&r.AccountIDs);err!=nil{rows.Close();return err};if err:=json.Unmarshal(chats,&r.ChatIDs);err!=nil{rows.Close();return err};if err:=json.Unmarshal(media,&r.MediaTypes);err!=nil{rows.Close();return err};rules=append(rules,r)}
     if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
     for _,rule:=range rules {matched,ok:=keywordRuleMatches(rule,in);if !ok{continue};raw,err:=json.Marshal(matched);if err!=nil{return err}
         if _,err=tx.ExecContext(ctx,`INSERT INTO tenant_keyword_matches(tenant_id,rule_id,telegram_account_id,chat_id,message_id,matched_terms)
