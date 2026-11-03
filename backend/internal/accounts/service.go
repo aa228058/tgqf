@@ -37,7 +37,7 @@ func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session str
 func nullBytes(v []byte)any{if len(v)==0{return nil};return v}
 func(s *Service)List(ctx context.Context,tenantID string)([]Account,error){
  out:=[]Account{}
- err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{rows,err:=tx.QueryContext(ctx,`SELECT id::text,COALESCE(phone,''),display_name,group_name,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE tenant_id=$1 ORDER BY created_at DESC`,tenantID);if err!=nil{return err};defer rows.Close();for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)};return rows.Err()})
  return out,err
 }
 
