@@ -13,6 +13,8 @@ import (
 	"github.com/aa228058/tgqf/backend/internal/config"
 	"github.com/aa228058/tgqf/backend/internal/storage"
 	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
+	"github.com/aa228058/tgqf/backend/internal/messages"
+	"github.com/mtgo-labs/mtgo/telegram/types"
 )
 
 type reconnectState struct {
@@ -50,8 +52,41 @@ func main() {
 	defer store.Close()
 
 	accountService := accounts.New(store.DB)
+	messageService := messages.New(store.DB)
+	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
+	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64) {
+		if message == nil || message.Chat == nil { return }
+		chatType := ""
+		replyToOwn := false
+		switch message.Chat.Type {
+		case types.ChatTypePrivate, types.ChatTypeDirect:
+			chatType = "private"
+		case types.ChatTypeGroup, types.ChatTypeSupergroup, types.ChatTypeForum:
+			chatType = "group"
+			if message.ReplyToID > 0 && message.ReplyToMessage != nil {
+				replyToOwn = message.ReplyToMessage.Out || message.ReplyToMessage.FromID == ownUserID
+			}
+		case types.ChatTypeBot, types.ChatTypeChannel:
+			return
+		default:
+			return
+		}
+		tenantValue, ok := accountTenants.Load(accountID)
+		if !ok { return }
+		textBody := message.Text
+		if textBody == "" { textBody = message.Caption }
+		mediaType := ""
+		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
+		_, err := messageService.Ingest(ctx, tenantValue.(string), messages.Incoming{
+			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
+			ChatType: chatType, ChatTitle: message.Chat.FullName(), SenderID: message.FromID,
+			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
+			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
+		})
+		if err != nil { logger.Warn("store filtered Telegram message", "account_id", accountID, "message_id", message.ID, "error", err) }
+	})
 
 	lastSavedSessions := make(map[string]string)
 	reconnects := make(map[string]reconnectState)
