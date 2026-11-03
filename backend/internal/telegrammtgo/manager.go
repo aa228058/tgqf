@@ -325,9 +325,7 @@ func (m *Manager) ManagedAccountIDs() []string {
  // Private invite hashes are intentionally not accepted by this worker path.
  func (m *Manager) JoinChat(ctx context.Context,accountID,link string)(int64,error) {
      link=strings.TrimSpace(link)
-     if link==""||strings.Contains(link,"+")||strings.Contains(link,"joinchat/") {
-         return 0,errors.New("only public Telegram usernames and links are supported by this join executor")
-     }
+     if link=="" { return 0,errors.New("Telegram join target is empty") }
      m.mu.RLock()
      client:=m.clients[accountID]
      m.mu.RUnlock()
