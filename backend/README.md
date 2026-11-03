@@ -68,12 +68,12 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 
 接口（租户 Bearer Token）：
 - GET /api/v1/messages：默认只返回未处理消息；支持 limit、offset、include_processed=true。
-- GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、用户名、成员数、认证标记、Telegram 头像标识、未处理数量和最近一条消息。
-- GET /api/v1/messages/events：SSE 实时事件流，使用 Bearer Token 认证；连接后推送 `message` 事件（JSON 包含 `type`、`account_id`、`chat_id`、`message_id`、`created_at`），每 25 秒发送心跳。浏览器端请用支持 Authorization 请求头的 fetch 流式读取，不要把长期令牌放进 URL。事件通过 Redis 按租户隔离发布，数据库仍是消息事实来源；断线重连后应重新拉取未处理列表以补齐遗漏。群组资料按租户/账号/聊天隔离缓存，只在消息通过租户筛选并实际入库时更新；头像当前只保存 Telegram photo 标识，尚未生成可直接访问的图片 URL。
+- GET /api/v1/messages/chats：按账号和聊天分组，返回聊天标题、用户名、成员数、认证标记、未处理数量和最近一条消息。
+- GET /api/v1/messages/events：SSE 实时事件流，使用 Bearer Token 认证；连接后推送 `message` 事件（JSON 包含 `type`、`account_id`、`chat_id`、`message_id`、`created_at`），每 25 秒发送心跳。浏览器端请用支持 Authorization 请求头的 fetch 流式读取，不要把长期令牌放进 URL。事件通过 Redis 按租户隔离发布，数据库仍是消息事实来源；断线重连后应重新拉取未处理列表以补齐遗漏。群组资料按租户/账号/聊天隔离缓存，只在消息通过租户筛选并实际入库时更新
 - PATCH /api/v1/messages/{id}/processed：标记已处理，消息从默认未处理列表消失。
 - GET /api/v1/messages/settings：读取当前租户收集条件。
 - PUT /api/v1/messages/settings：更新条件。字段 enabled、include_all_accounts、account_ids、chat_ids、include_text、include_media、keywords。include_all_accounts=false 时仅收 account_ids 中账号；chat_ids 非空时仅收指定聊天；keywords 非空时文字需命中任一关键词。
 - POST /api/v1/messages/{id}/reply：提交对该条汇总消息的回复，字段 text，返回 202 和 reply job ID；实际发送由独立 Worker 执行。
 - GET /api/v1/message-replies/{id}：查询回复任务状态（pending、processing、sent、failed）、尝试次数和 Telegram 返回的消息 ID。
 
-消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料缓存已接入实时消息；Telegram 头像目前只保存 photo 标识，尚未提供图片 URL。Worker 每 5 分钟对每个在线账号最近活跃的最多 20 个已知聊天回查最近 50 条消息，补齐短暂断线期间遗漏的记录；仍未发现过的新聊天不会自动枚举，完整历史导入需后续单独实现。历史回填复用相同固定规则和租户筛选，群组只收明确回复当前账号本人消息的内容。
+消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料缓存已接入实时消息Worker 每 5 分钟对每个在线账号最近活跃的最多 20 个已知聊天回查最近 50 条消息，补齐短暂断线期间遗漏的记录；仍未发现过的新聊天不会自动枚举，完整历史导入需后续单独实现。历史回填复用相同固定规则和租户筛选，群组只收明确回复当前账号本人消息的内容。
