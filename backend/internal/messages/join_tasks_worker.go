@@ -49,7 +49,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                     ))
                     AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
                 ORDER BY a.available_at,a.created_at,a.id
-                LIMIT $2 FOR UPDATE OF a,acc SKIP LOCKED
+                LIMIT $2 FOR UPDATE OF t,a,acc SKIP LOCKED
             ), claimed AS (
                 UPDATE tenant_join_task_accounts a
                 SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
@@ -77,6 +77,7 @@ func (s *Service) CompleteJoinTaskAccount(ctx context.Context,job JoinTaskJob,ch
     if applicationStatus=="already_member" {status="already_member";applicationStatus="not_required"}
     if applicationStatus!="request_pending"&&applicationStatus!="already_member"&&applicationStatus!="not_required" {return errors.New("invalid join task result")}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,telegram_chat_id=NULLIF($3,0),lease_until=NULL,last_error='',updated_at=NOW()
             WHERE tenant_id=$4 AND task_id=$5 AND id=$6 AND status='processing' AND lease_until=$7`,status,applicationStatus,chatID,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
@@ -96,6 +97,7 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
     if seconds<=0{return errors.New("positive FloodWait duration is required")}
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         // Validate and consume the exact lease before mutating account-wide
         // cooldown state. A stale worker must not delay newer work after its
         // lease has been reclaimed by another worker.
@@ -117,11 +119,20 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
 func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason string)error {
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='failed',lease_until=NULL,last_error=$1,updated_at=NOW()
             WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='processing' AND lease_until=$5`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
     })
+}
+
+func lockJoinTaskParent(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
+    var exists bool
+    err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenant_join_tasks WHERE tenant_id=$1 AND id=$2 FOR UPDATE)`, tenantID, taskID).Scan(&exists)
+    if err != nil { return err }
+    if !exists { return errors.New("join task not found") }
+    return nil
 }
 
 func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string)error {
