@@ -131,6 +131,7 @@ func (h *Handler) cancelQR(w http.ResponseWriter,r *http.Request) {
  found:=false;for _,a:=range items{if a.ID==id&&a.Status=="pending"{found=true;break}}
  if !found{writeError(w,404,"pending account not found");return}
  _=h.telegram.CancelQR(id)
+ _=h.telegram.CancelPhoneLogin(id)
  if err:=h.service.Delete(r.Context(),u.TenantID,id);err!=nil{writeError(w,500,"failed to cancel QR login");return}
  w.WriteHeader(http.StatusNoContent)
 }
