@@ -127,16 +127,20 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
     if !textPresent {return nil,false}
     if len(rule.KeywordGroups)>0 {
-        groupMatches:=make([]bool,0,len(rule.KeywordGroups))
+        matchedGroups:=make([][]string,0,len(rule.KeywordGroups))
         for _,group:=range rule.KeywordGroups {
             groupRule:=rule;groupRule.Keywords=group;groupRule.KeywordGroups=nil
             matched,ok:=keywordRuleMatches(groupRule,in)
-            _=matched
-            groupMatches=append(groupMatches,ok)
+            if ok {matchedGroups=append(matchedGroups,matched)} else {matchedGroups=append(matchedGroups,nil)}
         }
-        if rule.GroupOperator=="all" {for _,ok:=range groupMatches{if !ok{return nil,false}};return []string{"group:all"},true}
-        for _,ok:=range groupMatches{if ok{return []string{"group:any"},true}}
-        return nil,false
+        if rule.GroupOperator=="all" {
+            result:=[]string{}
+            for _,group:=range matchedGroups {if len(group)==0{return nil,false};for _,term:=range group{result=append(result,"group:"+term)}}
+            return result,true
+        }
+        result:=[]string{}
+        for _,group:=range matchedGroups {for _,term:=range group{result=append(result,"group:"+term)}}
+        return result,len(result)>0
     }
     switch rule.MatchMode {
     case "any":
