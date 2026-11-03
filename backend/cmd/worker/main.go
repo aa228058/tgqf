@@ -230,14 +230,18 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
     for tenantID:=range tenantSet {
         jobs,err:=service.ClaimJoinTaskAccounts(ctx,tenantID,10)
         if err!=nil {logger.Error("claim Telegram join tasks","tenant_id",tenantID,"error",err);continue}
+        blockedTasks:=map[string]bool{}
+        blockedAccounts:=map[string]bool{}
         for _,job:=range jobs {
             if ctx.Err()!=nil{return}
+            if blockedTasks[job.TaskID]||blockedAccounts[job.AccountID]{continue}
             if !service.TenantCanOperate(ctx,job.TenantID) {
                 if err:=service.FailJoinTaskAccount(ctx,job,"tenant subscription inactive; task requires manual review");err!=nil{logger.Error("close join task for inactive tenant","task_id",job.TaskID,"error",err)}
                 continue
             }
             if !manager.IsConnected(job.AccountID) {
                 if err:=service.RescheduleJoinTaskAccount(ctx,job,30*time.Second,"Telegram account is temporarily disconnected");err!=nil{logger.Error("reschedule join task for offline account","task_id",job.TaskID,"error",err)}
+                blockedTasks[job.TaskID]=true;blockedAccounts[job.AccountID]=true
                 continue
             }
             joinCtx,cancel:=context.WithTimeout(ctx,60*time.Second)
@@ -247,6 +251,7 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
                 if wait,ok:=tgerr.AsFloodWait(joinErr);ok {
                     logger.Warn("Telegram join FloodWait; preserving server cooldown","task_id",job.TaskID,"account_id",job.AccountID,"wait",wait.String())
                     if err:=service.RescheduleJoinTaskAccount(ctx,job,wait,joinErr.Error());err!=nil{logger.Error("reschedule join task after FloodWait","task_id",job.TaskID,"error",err)}
+                    blockedTasks[job.TaskID]=true;blockedAccounts[job.AccountID]=true
                     continue
                 }
                 upper:=strings.ToUpper(joinErr.Error())
