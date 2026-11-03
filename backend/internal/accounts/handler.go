@@ -26,6 +26,9 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
  m.Handle("POST /api/v1/accounts/import",h.auth.Authenticated(http.HandlerFunc(h.importBatch)))
  m.Handle("POST /api/v1/accounts/import-file",h.auth.Authenticated(http.HandlerFunc(h.importFile)))
+ m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
+ m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
+ m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
  m.Handle("DELETE /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.delete)))
  m.Handle("PATCH /api/v1/accounts/{id}/group",h.auth.Authenticated(http.HandlerFunc(h.setGroup)))
  m.Handle("PATCH /api/v1/accounts/{id}/proxy",h.auth.Authenticated(http.HandlerFunc(h.bindProxy)))
@@ -116,4 +119,42 @@ func (h *Handler) cancelQR(w http.ResponseWriter,r *http.Request) {
  _=h.telegram.CancelQR(id)
  if err:=h.service.Delete(r.Context(),u.TenantID,id);err!=nil{writeError(w,500,"failed to cancel QR login");return}
  w.WriteHeader(http.StatusNoContent)
+}
+
+type profileUpdateBatchRequest struct { Accounts []ProfileUpdateInput `json:"accounts"` }
+
+func (h *Handler) createProfileUpdates(w http.ResponseWriter,r *http.Request) {
+	var body profileUpdateBatchRequest
+	if !decode(w,r,&body) { writeError(w,http.StatusBadRequest,"invalid profile update batch");return }
+	user:=auth.UserFromContext(r.Context())
+	jobs,err:=h.service.CreateProfileUpdateBatch(r.Context(),user.TenantID,user.ID,body.Accounts)
+	if err!=nil {
+		status:=http.StatusBadRequest
+		if strings.Contains(err.Error(),"already active") { status=http.StatusConflict }
+		if strings.Contains(err.Error(),"inactive") { status=http.StatusForbidden }
+		writeError(w,status,err.Error());return
+	}
+	batchID:=""
+	if len(jobs)>0 { batchID=jobs[0].BatchID }
+	writeJSON(w,http.StatusAccepted,map[string]any{"batch_id":batchID,"jobs":jobs})
+}
+
+func (h *Handler) listProfileUpdates(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	jobs,total,err:=h.service.ListProfileUpdateJobs(r.Context(),user.TenantID,r.URL.Query().Get("batch_id"),r.URL.Query().Get("status"),limit,offset)
+	if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+	if limit<1||limit>100 { limit=50 };if offset<0 { offset=0 }
+	writeJSON(w,http.StatusOK,map[string]any{"jobs":jobs,"total":total,"limit":limit,"offset":offset})
+}
+
+func (h *Handler) retryProfileUpdate(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	if err:=h.service.RetryProfileUpdate(r.Context(),user.TenantID,r.PathValue("id"));err!=nil {
+		status:=http.StatusConflict
+		if strings.Contains(err.Error(),"not found") { status=http.StatusNotFound }
+		if strings.Contains(err.Error(),"inactive") { status=http.StatusForbidden }
+		writeError(w,status,err.Error());return
+	}
+	writeJSON(w,http.StatusOK,map[string]string{"status":"pending"})
 }
