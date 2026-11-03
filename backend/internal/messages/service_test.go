@@ -65,3 +65,16 @@ func TestLinkCollectionSettingsSourceSwitches(t *testing.T) {
 	settings.Enabled=false
 	if settings.Allows("group") || settings.Allows("channel") { t.Fatal("disabled collector must reject every source") }
 }
+
+
+func TestReplyRetryScheduleHonorsFloodWaitWithoutConsumingRetryBudget(t *testing.T) {
+	status,seconds:=replyRetrySchedule(9,2*time.Hour+1500*time.Millisecond)
+	if status!="pending" { t.Fatalf("FloodWait status=%q, want pending",status) }
+	if seconds!=7203 { t.Fatalf("FloodWait delay=%d seconds, want 7203",seconds) }
+}
+
+func TestReplyRetryScheduleUsesNormalFailureBudgetWithoutFloodWait(t *testing.T) {
+	status,seconds:=replyRetrySchedule(5,0)
+	if status!="failed" { t.Fatalf("status=%q, want failed",status) }
+	if seconds!=150 { t.Fatalf("delay=%d seconds, want 150",seconds) }
+}
