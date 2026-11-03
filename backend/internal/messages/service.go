@@ -265,6 +265,7 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 		if len(jobs)>=maxJobs {break}
 		err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 			remaining:=maxJobs-len(jobs)
+			if remaining>2 { remaining=2 }
 			rows,err:=tx.QueryContext(ctx,`WITH picked AS (
 				SELECT id FROM message_reply_jobs
 				WHERE tenant_id=$1 AND ((status='pending' AND available_at<=NOW()) OR (status='processing' AND lease_until<NOW()))
@@ -309,4 +310,12 @@ func (s *Service) GetReply(ctx context.Context,tenantID,jobID string)(ReplyJob,e
 		return tx.QueryRowContext(ctx,`SELECT id::text,tenant_id::text,telegram_account_id::text,chat_id,reply_to_message_id,message_text,attempts,status,COALESCE(telegram_message_id,0),last_error,created_at FROM message_reply_jobs WHERE tenant_id=$1 AND id=$2`,tenantID,jobID).Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts,&job.Status,&job.TelegramMessageID,&job.LastError,&job.CreatedAt)
 	})
 	return job,err
+}
+
+func (s *Service) ReleaseReply(ctx context.Context,job ReplyJob,delay time.Duration) error {
+	if delay<5*time.Second {delay=5*time.Second};if delay>5*time.Minute{delay=5*time.Minute}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='pending',attempts=GREATEST(attempts-1,0),available_at=NOW()+($3 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,int(delay.Seconds()))
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
+	})
 }
