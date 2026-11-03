@@ -526,11 +526,32 @@ type ReplyJob struct {
 	ChatID int64 `json:"chat_id"`
 	ReplyToMessageID int64 `json:"reply_to_message_id"`
 	Text string `json:"text"`
+	MessageType string `json:"message_type"`
+	ContactPhone string `json:"contact_phone,omitempty"`
+	ContactFirstName string `json:"contact_first_name,omitempty"`
+	ContactLastName string `json:"contact_last_name,omitempty"`
 	Attempts int `json:"attempts"`
 	Status string `json:"status"`
 	TelegramMessageID int64 `json:"telegram_message_id,omitempty"`
 	LastError string `json:"last_error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Service) CreateContactReply(ctx context.Context,tenantID,messageID,phone,firstName,lastName string)(ReplyJob,error) {
+	phone=strings.TrimSpace(phone);firstName=strings.TrimSpace(firstName);lastName=strings.TrimSpace(lastName)
+	if !validUUID(messageID)||len(phone)<3||len(phone)>32||len(firstName)<1||len(firstName)>64||len(lastName)>64||strings.ContainsAny(phone,"\\r\\n") {
+		return ReplyJob{},errors.New("contact requires a valid message id, phone, first name, and optional last name")
+	}
+	var job ReplyJob
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&job.AccountID,&job.ChatID,&job.ReplyToMessageID)
+		if errors.Is(err,sql.ErrNoRows){return errors.New("message not found")};if err!=nil{return err}
+		err=tx.QueryRowContext(ctx,`INSERT INTO message_reply_jobs(tenant_id,unified_message_id,telegram_account_id,chat_id,reply_to_message_id,message_text,message_type,contact_phone,contact_first_name,contact_last_name)
+			VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) RETURNING id::text,status,attempts,created_at`,tenantID,messageID,job.AccountID,job.ChatID,job.ReplyToMessageID,phone,firstName,lastName).Scan(&job.ID,&job.Status,&job.Attempts,&job.CreatedAt)
+		if err==nil {job.TenantID=tenantID;job.MessageType="contact";job.ContactPhone=phone;job.ContactFirstName=firstName;job.ContactLastName=lastName}
+		return err
+	})
+	return job,err
 }
 
 func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody string) (ReplyJob,error) {
@@ -583,10 +604,10 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 			)
 			UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
 			FROM picked WHERE j.id=picked.id
-			RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts,j.status,j.created_at`,tenantID,remaining)
+			RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at`,tenantID,remaining)
 			if err!=nil{return err}
 			defer rows.Close()
-			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts,&job.Status,&job.CreatedAt);err!=nil{return err};jobs=append(jobs,job)}
+			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt);err!=nil{return err};jobs=append(jobs,job)}
 			return rows.Err()
 		})
 		if err!=nil{return nil,err}
