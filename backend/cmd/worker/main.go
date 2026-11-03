@@ -59,7 +59,6 @@ func main() {
 	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool) {
 		if message == nil || message.Chat == nil { return }
 		chatType := ""
-		replyToOwn := false
 		switch message.Chat.Type {
 		case types.ChatTypePrivate, types.ChatTypeDirect:
 			chatType = "private"
