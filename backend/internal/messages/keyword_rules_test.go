@@ -85,3 +85,20 @@ func TestNormalizeKeywordRuleRejectsInvalidFilters(t *testing.T) {
 	_,err=normalizeKeywordRule(KeywordRule{Name:"bad media",MatchMode:"any",Keywords:[]string{"x"},MediaTypes:[]string{"executable"}})
 	if err==nil {t.Fatal("unsupported media filter accepted")}
 }
+
+func TestKeywordRuleMediaOnly(t *testing.T) {
+	rule,err:=normalizeKeywordRule(KeywordRule{
+		Name:"photo intake",MatchMode:"any",MediaTypes:[]string{"photo"},
+		ChatTypes:[]string{"private"},
+	})
+	if err!=nil {t.Fatalf("media-only rule rejected: %v",err)}
+	matched,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo"})
+	if !ok || len(matched)!=1 || matched[0]!="media:photo" {t.Fatalf("media-only match = %v, %v",matched,ok)}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"video"});ok {t.Fatal("wrong media type matched")}
+	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo",IsOutgoing:true});ok {t.Fatal("outgoing media matched")}
+}
+
+func TestKeywordRuleRequiresKeywordsOrMediaType(t *testing.T) {
+	_,err:=normalizeKeywordRule(KeywordRule{Name:"empty",MatchMode:"any"})
+	if err==nil {t.Fatal("rule without keywords or media filter accepted")}
+}
