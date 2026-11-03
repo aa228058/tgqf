@@ -81,6 +81,11 @@ func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, raw
 		return errors.New("join task not found")
 	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		var parentID string
+		if err := tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID); err != nil {
+			return errors.New("join task not found")
+		}
+		if err := lockJoinTaskParent(ctx, tx, tenantID, parentID); err != nil { return err }
 		var query string
 		switch action {
 		case "pause":
@@ -96,10 +101,6 @@ func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, raw
 		}
 		result, err := tx.ExecContext(ctx, query, tenantID, id)
 		if err := checkTaskRows(result, err); err != nil { return err }
-		var parentID string
-		if err := tx.QueryRowContext(ctx, `SELECT task_id::text FROM tenant_join_task_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, id).Scan(&parentID); err != nil {
-			return err
-		}
 		return refreshJoinTaskControlStatus(ctx, tx, tenantID, parentID)
 	})
 }
