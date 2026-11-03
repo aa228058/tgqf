@@ -56,7 +56,7 @@ func validProxyHost(host string) bool {
 	if net.ParseIP(host) != nil {
 		return true
 	}
-	if host == "" || len(host) > 253 || strings.ContainsAny(host, " /\\\\\\t\\r\\n:@") {
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, " /\\\t\r\n:@") {
 		return false
 	}
 	name := strings.TrimSuffix(host, ".")
