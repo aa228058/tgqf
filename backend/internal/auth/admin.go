@@ -52,6 +52,7 @@ func (s *Service) ListTenants(ctx context.Context,limit int)([]TenantInfo,error)
 func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{
  if status!="active"&&status!="disabled"{return errors.New("status must be active or disabled")}
  tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+ if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,id);err!=nil{return err}
  res,err:=tx.ExecContext(ctx,`UPDATE tenants SET status=$2,updated_at=NOW() WHERE id=$1`,id,status);if err!=nil{return err}
  n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")}
  if status=="disabled" {
@@ -62,6 +63,7 @@ func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{
 func (s *Service) SetTenantAccountLimit(ctx context.Context,id string,limit int)error{if limit<1||limit>10000{return errors.New("account_limit must be 1-10000")};res,err:=s.db.ExecContext(ctx,`UPDATE tenants SET account_limit=$2,updated_at=NOW() WHERE id=$1`,id,limit);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")};return nil}
 func (s *Service) SetTenantExpiry(ctx context.Context,id string,expiry time.Time)error{
  tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+ if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,id);err!=nil{return err}
  if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing') AND EXISTS (SELECT 1 FROM tenants WHERE id=$1 AND (status<>'active' OR expires_at IS NULL OR expires_at<=NOW()))`,id);err!=nil{return err}
  res,err:=tx.ExecContext(ctx,`UPDATE tenants SET expires_at=$2,status=CASE WHEN status='disabled' THEN status ELSE 'active' END,updated_at=NOW() WHERE id=$1`,id,expiry);if err!=nil{return err}
  n,_:=res.RowsAffected();if n==0{return fmt.Errorf("tenant not found")}
