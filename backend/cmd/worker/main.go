@@ -27,6 +27,13 @@ func reconnectDelay(attempt int) time.Duration {
 	return delay
 }
 
+func scheduleReconnect(state *reconnectState, now time.Time) time.Duration {
+	state.attempts++
+	delay := reconnectDelay(state.attempts)
+	state.nextTry = now.Add(delay)
+	return delay
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -79,9 +86,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 			if now.Before(state.nextTry) { continue }
 			_ = manager.Stop(id)
 			if err := manager.Start(id, account.Session, account.ProxyJSON); err != nil {
-				state.attempts++
-				delay := reconnectDelay(state.attempts)
-				state.nextTry = now.Add(delay)
+				delay := scheduleReconnect(&state, now)
 				reconnects[id] = state
 				statusSynced[id] = false
 				logger.Warn("Telegram account connection failed; retry scheduled", "account_id", id, "attempt", state.attempts, "retry_in", delay.String(), "error", err)
