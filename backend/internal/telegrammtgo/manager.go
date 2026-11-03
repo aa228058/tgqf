@@ -336,6 +336,17 @@ func (m *Manager) ManagedAccountIDs() []string {
      return chat.ID,nil
  }
 
+// CheckOwnChatMembership checks the managed account's current membership state.
+func (m *Manager) CheckOwnChatMembership(ctx context.Context, accountID string, chatID int64) (string,error) {
+	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
+	if client==nil || !client.IsConnected(){return "",errors.New("Telegram account is not connected")}
+	me:=client.Me();if me==nil{return "",errors.New("Telegram account identity is unavailable")}
+	member,err:=client.GetChatMember(ctx,chatID,me.ID)
+	if err!=nil{return "",err}
+	if member==nil{return "unknown",nil}
+	return string(member.Status),nil
+}
+
 // UpdateProfilePhoto uploads and sets an account's Telegram profile photo.
 func (m *Manager) UpdateProfilePhoto(ctx context.Context, accountID string, photo []byte, fileName string) error {
 	if len(photo)==0 { return errors.New("profile photo is empty") }
