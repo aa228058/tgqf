@@ -141,7 +141,7 @@ func TestKeywordRuleGroupedORAndANDExpressions(t *testing.T) {
 		KeywordGroups:[][]string{{"alpha","beta"},{"gamma"}},
 	})
 	if err!=nil {t.Fatalf("grouped rule rejected: %v",err)}
-	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"alpha and gamma"});!ok {t.Fatal("AND of matching OR groups should pass")}
+	if matched,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"alpha and gamma"});!ok {t.Fatal("AND of matching OR groups should pass")} else if len(matched)!=2||matched[0]!="group:alpha"||matched[1]!="group:gamma" {t.Fatalf("unexpected grouped match details: %v",matched)}
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"alpha only"});ok {t.Fatal("AND group should fail when one group is absent")}
 	rule.GroupOperator="any"
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",Text:"beta only"});!ok {t.Fatal("OR between groups should pass when one group matches")}
