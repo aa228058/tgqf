@@ -106,7 +106,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, string(script)); err == nil {
+		for _, statement := range strings.Split(string(script), ";") {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				break
+			}
+		}
+		if err == nil {
 			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version)
 		}
 		if err != nil {
