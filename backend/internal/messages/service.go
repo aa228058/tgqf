@@ -630,12 +630,31 @@ func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessa
 	})
 }
 
+func replyRetrySchedule(attempts int, floodWait time.Duration) (string, int64) {
+	if floodWait > 0 {
+		seconds := int64(floodWait / time.Second)
+		if floodWait%time.Second != 0 { seconds++ }
+		return "pending", seconds + 1
+	}
+	status := "pending"
+	if attempts >= 5 { status = "failed" }
+	delay := attempts * 30
+	if delay > 900 { delay = 900 }
+	if delay < 30 { delay = 30 }
+	return status, int64(delay)
+}
+
 func (s *Service) FailReply(ctx context.Context, job ReplyJob, cause error) error {
+	return s.FailReplyWithFloodWait(ctx, job, cause, 0)
+}
+
+// FailReplyWithFloodWait preserves Telegram's server-mandated cooldown. A
+// FloodWait never consumes the normal retry budget or triggers account rotation.
+func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, cause error, floodWait time.Duration) error {
 	if cause==nil{cause=errors.New("unknown Telegram send error")}
 	message:=cause.Error();if len(message)>500{message=message[:500]}
+	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		status:="pending";if job.Attempts>=5{status="failed"}
-		delay:=job.Attempts*30;if delay>900{delay=900};if delay<30{delay=30}
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing'`,job.TenantID,job.ID,status,message,delay)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
 	})
