@@ -433,6 +433,22 @@ func (s *Service) TenantCanOperate(ctx context.Context, tenantID string) bool {
 	return err==nil && allowed
 }
 
+
+func (s *Service) ResumeReply(ctx context.Context, tenantID, jobID string) error {
+	if !validUUID(jobID) { return errors.New("reply job not found") }
+	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs j
+			SET status='pending',available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW()
+			FROM tenants t,telegram_accounts a
+			WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='paused'
+			AND t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()
+			AND a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
+			AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`,tenantID,jobID)
+		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("paused reply cannot be resumed; verify tenant, account, and job status")}
+		return nil
+	})
+}
+
 func (s *Service) PauseReply(ctx context.Context, job ReplyJob, reason string) error {
 	reason=strings.TrimSpace(reason);if reason==""{reason="tenant inactive; manual review required"};if len(reason)>500{reason=reason[:500]}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
