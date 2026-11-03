@@ -61,10 +61,10 @@ func (h *Handler) checkProxy(w http.ResponseWriter,r *http.Request) {
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
 	if err:=h.service.CheckProxy(ctx,u.TenantID,r.PathValue("id"));err!=nil{
 		if strings.Contains(err.Error(),"proxy not found"){writeError(w,http.StatusNotFound,err.Error());return}
-		writeJSON(w,http.StatusBadGateway,map[string]any{"reachable":false,"message":"proxy TCP connection failed"})
+		writeJSON(w,http.StatusBadGateway,map[string]any{"reachable":false,"message":"proxy protocol authentication or Telegram data-center tunnel failed"})
 		return
 	}
-	writeJSON(w,http.StatusOK,map[string]any{"reachable":true,"check":"tcp"})
+	writeJSON(w,http.StatusOK,map[string]any{"reachable":true,"check":"proxy_auth_and_telegram_dc_tcp"})
 }
 
 func (h *Handler) updateProxy(w http.ResponseWriter,r *http.Request) {
