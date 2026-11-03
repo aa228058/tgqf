@@ -153,3 +153,23 @@ func TestNormalizeKeywordRuleRejectsInvalidGroups(t *testing.T) {
 	_,err=normalizeKeywordRule(KeywordRule{Name:"bad operator",MatchMode:"any",Keywords:[]string{"x"},GroupOperator:"xor"})
 	if err==nil {t.Fatal("unsupported group operator accepted")}
 }
+
+func TestNormalizeKeywordRuleChatSpecificReplies(t *testing.T) {
+	rule,err:=normalizeKeywordRule(KeywordRule{
+		Name:"separate actions",MatchMode:"any",Keywords:[]string{"hello"},
+		ReplyText:"general",
+		ReplyTextByChatType:map[string]string{"PRIVATE":"private reply","group":"group reply"},
+	})
+	if err!=nil {t.Fatalf("chat-specific replies rejected: %v",err)}
+	if got:=keywordReplyTextForChat(rule,"private");got!="private reply" {t.Fatalf("private action = %q",got)}
+	if got:=keywordReplyTextForChat(rule,"supergroup");got!="group reply" {t.Fatalf("group action = %q",got)}
+	if got:=keywordReplyTextForChat(rule,"channel");got!="" {t.Fatalf("channel action should be disabled, got %q",got)}
+	if got:=keywordReplyTextForChat(rule,"private_user");got!="general" {t.Fatalf("fallback action = %q",got)}
+}
+
+func TestNormalizeKeywordRuleRejectsInvalidChatSpecificReplies(t *testing.T) {
+	_,err:=normalizeKeywordRule(KeywordRule{Name:"bad key",MatchMode:"any",Keywords:[]string{"x"},ReplyTextByChatType:map[string]string{"channel":"not allowed"}})
+	if err==nil {t.Fatal("unsupported chat-specific action key accepted")}
+	_,err=normalizeKeywordRule(KeywordRule{Name:"too long",MatchMode:"any",Keywords:[]string{"x"},ReplyTextByChatType:map[string]string{"private":strings.Repeat("x",4097)}})
+	if err==nil {t.Fatal("oversized chat-specific reply accepted")}
+}
