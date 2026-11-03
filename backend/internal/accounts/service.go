@@ -163,6 +163,16 @@ func (s *Service) CreatePending(ctx context.Context, tenantID, group string, pro
  return a,nil
 }
 
+func (s *Service) IsPending(ctx context.Context, tenantID, accountID string) (bool, error) {
+	var pending bool
+	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2 AND status='pending'
+		)`, tenantID, accountID).Scan(&pending)
+	})
+	return pending, err
+}
+
 func (s *Service) CompleteQRAuthorization(ctx context.Context, tenantID, accountID, phone, displayName, session string) (Account,error) {
  phone=strings.TrimSpace(phone);displayName=strings.TrimSpace(displayName);session=strings.TrimSpace(session)
  if tenantID==""||len(phone)<5||len(phone)>32||session==""||len(session)>65536||len(displayName)>120{return Account{},errors.New("invalid Telegram authorization result")}
