@@ -47,3 +47,24 @@ func (h *Handler) keywordMatches(w http.ResponseWriter,r *http.Request) {
     if err!=nil{status:=http.StatusInternalServerError;if errors.Is(err,ErrInvalidKeywordRule){status=http.StatusBadRequest};messageJSON(w,status,map[string]string{"error":"failed to load keyword matches"});return}
     messageJSON(w,http.StatusOK,map[string]any{"matches":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
+
+
+func (h *Handler) keywordActions(w http.ResponseWriter,r *http.Request) {
+    user:=auth.UserFromContext(r.Context())
+    limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+    items,total,err:=h.service.ListKeywordActions(r.Context(),user.TenantID,r.URL.Query().Get("status"),limit,offset)
+    if err!=nil {messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
+    messageJSON(w,http.StatusOK,map[string]any{"actions":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
+}
+
+func (h *Handler) keywordActionControl(w http.ResponseWriter,r *http.Request) {
+    user:=auth.UserFromContext(r.Context())
+    action:=r.PathValue("action")
+    if action!="pause"&&action!="resume"&&action!="retry" {messageJSON(w,http.StatusBadRequest,map[string]string{"error":"unsupported keyword action"});return}
+    if err:=h.service.ChangeKeywordActionStatus(r.Context(),user.TenantID,r.PathValue("id"),action);err!=nil {
+        status:=http.StatusConflict
+        if err.Error()=="keyword action not found" {status=http.StatusNotFound}
+        messageJSON(w,status,map[string]string{"error":err.Error()});return
+    }
+    messageJSON(w,http.StatusOK,map[string]string{"status":"updated"})
+}
