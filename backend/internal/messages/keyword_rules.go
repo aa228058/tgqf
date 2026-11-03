@@ -20,6 +20,9 @@ type KeywordRule struct {
     Keywords []string `json:"keywords"`
     ExcludeTerms []string `json:"exclude_terms"`
     ChatTypes []string `json:"chat_types"`
+    AccountIDs []string `json:"account_ids"`
+    ChatIDs []int64 `json:"chat_ids"`
+    MediaTypes []string `json:"media_types"`
     CaseSensitive bool `json:"case_sensitive"`
     Enabled bool `json:"enabled"`
     CreatedAt time.Time `json:"created_at"`
@@ -59,6 +62,17 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.Keywords,err=normalizeTerms(rule.Keywords,rule.MatchMode=="regex");if err!=nil{return rule,err}
     rule.ExcludeTerms,err=normalizeTerms(rule.ExcludeTerms,false);if err!=nil{return rule,err}
     if rule.ChatTypes==nil {rule.ChatTypes=[]string{"private","group","channel"}}
+    if rule.AccountIDs==nil {rule.AccountIDs=[]string{}}
+    if rule.ChatIDs==nil {rule.ChatIDs=[]int64{}}
+    if rule.MediaTypes==nil {rule.MediaTypes=[]string{}}
+    if len(rule.AccountIDs)>100 || len(rule.ChatIDs)>1000 || len(rule.MediaTypes)>8 {return rule,fmt.Errorf("%w: keyword filter limits exceeded",ErrInvalidKeywordRule)}
+    seenAccounts:=map[string]bool{}
+    for _,id:=range rule.AccountIDs {if !validUUID(id)||seenAccounts[id] {return rule,fmt.Errorf("%w: invalid or duplicate account filter",ErrInvalidKeywordRule)};seenAccounts[id]=true}
+    seenChats:=map[int64]bool{}
+    for _,id:=range rule.ChatIDs {if id==0||seenChats[id] {return rule,fmt.Errorf("%w: invalid or duplicate chat filter",ErrInvalidKeywordRule)};seenChats[id]=true}
+    allowedMedia:=map[string]bool{"photo":true,"video":true,"document":true,"audio":true,"voice":true,"video_note":true,"animation":true,"sticker":true}
+    seenMedia:=map[string]bool{}
+    for i,kind:=range rule.MediaTypes {kind=strings.ToLower(strings.TrimSpace(kind));if !allowedMedia[kind]||seenMedia[kind] {return rule,fmt.Errorf("%w: unsupported or duplicate media type",ErrInvalidKeywordRule)};seenMedia[kind]=true;rule.MediaTypes[i]=kind}
     if len(rule.ChatTypes)==0 || len(rule.ChatTypes)>3 {return rule,fmt.Errorf("%w: chat_types must include one or more supported types",ErrInvalidKeywordRule)}
     allowed:=map[string]bool{"private":true,"group":true,"channel":true};seenTypes:=map[string]bool{}
     normalizedTypes:=make([]string,0,len(rule.ChatTypes))
@@ -69,6 +83,9 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
 
 func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if in.IsOutgoing || strings.TrimSpace(in.Text)=="" {return nil,false}
+    if len(rule.AccountIDs)>0 {found:=false;for _,id:=range rule.AccountIDs {if id==in.AccountID {found=true;break}};if !found{return nil,false}}
+    if len(rule.ChatIDs)>0 {found:=false;for _,id:=range rule.ChatIDs {if id==in.ChatID {found=true;break}};if !found{return nil,false}}
+    if len(rule.MediaTypes)>0 {found:=false;for _,kind:=range rule.MediaTypes {if kind==in.MediaType {found=true;break}};if !found{return nil,false}}
     allowed:=false;for _,kind:=range rule.ChatTypes {if kind==in.ChatType {allowed=true;break}}
     if !allowed {return nil,false}
     text:=in.Text;terms:=rule.Keywords;excluded:=rule.ExcludeTerms
@@ -100,8 +117,8 @@ func (s *Service) CreateKeywordRule(ctx context.Context, tenantID string, rule K
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE",tenantID).Scan(&count);err!=nil{return err}
         if rule.Enabled && count>=100{return errors.New("active keyword rule limit reached (100)")}
         for _,accountID:=range rule.AccountIDs {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,accountID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("keyword filter account does not belong to tenant")}}
-        return tx.QueryRowContext(ctx,`INSERT INTO tenant_keyword_rules(tenant_id,name,match_mode,keywords,exclude_terms,chat_types,case_sensitive,enabled)
-            VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8)
+        return tx.QueryRowContext(ctx,`INSERT INTO tenant_keyword_rules(tenant_id,name,match_mode,keywords,exclude_terms,chat_types,account_ids,chat_ids,media_types,case_sensitive,enabled)
+            VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11)
             RETURNING id::text,created_at,updated_at`,tenantID,rule.Name,rule.MatchMode,string(keywords),string(excluded),string(types),rule.CaseSensitive,rule.Enabled).Scan(&rule.ID,&rule.CreatedAt,&rule.UpdatedAt)
     })
     return rule,err
@@ -126,9 +143,9 @@ func (s *Service) UpdateKeywordRule(ctx context.Context,tenantID,id string,rule 
 func (s *Service) ListKeywordRules(ctx context.Context,tenantID string)([]KeywordRule,error) {
     out:=[]KeywordRule{}
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-        rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,match_mode,keywords,exclude_terms,chat_types,case_sensitive,enabled,created_at,updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,match_mode,keywords,exclude_terms,chat_types,account_ids,chat_ids,media_types,case_sensitive,enabled,created_at,updated_at
             FROM tenant_keyword_rules WHERE tenant_id=$1 ORDER BY created_at DESC,id LIMIT 200`,tenantID);if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var r KeywordRule;var keywords,excluded,types []byte;if err:=rows.Scan(&r.ID,&r.Name,&r.MatchMode,&keywords,&excluded,&types,&r.CaseSensitive,&r.Enabled,&r.CreatedAt,&r.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(keywords,&r.Keywords);err!=nil{return err};if err:=json.Unmarshal(excluded,&r.ExcludeTerms);err!=nil{return err};if err:=json.Unmarshal(types,&r.ChatTypes);err!=nil{return err};out=append(out,r)}
+        for rows.Next(){var r KeywordRule;var keywords,excluded,types,accounts,chats,media []byte;if err:=rows.Scan(&r.ID,&r.Name,&r.MatchMode,&keywords,&excluded,&types,&accounts,&chats,&media,&r.CaseSensitive,&r.Enabled,&r.CreatedAt,&r.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(keywords,&r.Keywords);err!=nil{return err};if err:=json.Unmarshal(excluded,&r.ExcludeTerms);err!=nil{return err};if err:=json.Unmarshal(types,&r.ChatTypes);err!=nil{return err};if err:=json.Unmarshal(accounts,&r.AccountIDs);err!=nil{return err};if err:=json.Unmarshal(chats,&r.ChatIDs);err!=nil{return err};if err:=json.Unmarshal(media,&r.MediaTypes);err!=nil{return err};out=append(out,r)}
         return rows.Err()
     })
     return out,err
