@@ -258,6 +258,17 @@ type KeywordActionJob struct {
 
 func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]KeywordActionJob,error) {
     if limit<1||limit>50 {limit=20}
+    inactiveRows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status<>'active' OR expires_at IS NULL OR expires_at<=NOW()`)
+    if err!=nil{return nil,err}
+    inactiveTenants:=[]string{}
+    for inactiveRows.Next(){var id string;if err:=inactiveRows.Scan(&id);err!=nil{inactiveRows.Close();return nil,err};inactiveTenants=append(inactiveTenants,id)}
+    if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
+    for _,tenantID:=range inactiveTenants {
+        if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+            return err
+        });err!=nil{return nil,err}
+    }
     rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY id`)
     if err!=nil{return nil,err}
     var tenants []string
