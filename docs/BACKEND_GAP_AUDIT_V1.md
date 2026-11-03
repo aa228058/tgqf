@@ -64,7 +64,7 @@
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
 - [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
 - P1-04 账号标签/搜索/分页/批量操作/导出/断开重连。
-- [x] P1-05 第一阶段：姓名/简介资料修改已进入逐账号任务队列，批次 ID 统一，Worker 调用 MTGo UpdateProfile，逐账号记录成功/失败、普通错误退避重试、FloodWait 精确等待；租户停用/到期时暂停，恢复后需人工显式恢复。头像上传仍待专项实现。
+- [x] P1-05 第一阶段：姓名/简介/随机用户名资料修改已进入逐账号任务队列，批次 ID 统一，Worker 调用 MTGo UpdateProfile，逐账号记录成功/失败、普通错误退避重试、FloodWait 精确等待；租户停用/到期时暂停，恢复后需人工显式恢复。头像上传仍待专项实现。
 
 ### P1 — 全局公共群组总库
 - [x] P1-06 第一阶段：新增 `public_groups`，按 Telegram chat type + chat ID 去重，维护全局资料。
@@ -98,6 +98,7 @@
 - `POST /api/v1/accounts/import`（单次最多 20 个 JSON Session 记录，逐条结果；Session 仍按账号独立加密保存）
 - `POST /api/v1/accounts/import-file`（multipart 文件上传，支持 JSON/CSV/TXT；单文件最大 1 MiB、最多 20 条；Session 按账号独立加密，响应不包含 Session）
 - `POST /api/v1/accounts/profile-updates`（每批 1–20 个已授权账号，可分别设置姓名/简介，并通过 `generate_username: true` 启用随机用户名；用户名冲突自动重新生成最多 8 次，返回统一 batch_id 和逐账号任务）
+- `GET /api/v1/accounts/username-generation-settings`、`PUT /api/v1/accounts/username-generation-settings`（租户配置随机用户名前缀、随机长度和字符集；任务创建时保存规则快照）
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`（失败任务重试、暂停任务人工恢复）
 - `PATCH /api/v1/accounts/{id}/group`
