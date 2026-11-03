@@ -49,11 +49,18 @@ type AccountListOptions struct {
 	Offset int
 }
 
-func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListOptions)([]Account,int,error){
+
+func normalizeAccountListOptions(opts AccountListOptions)(AccountListOptions,error){
 	opts.Query=strings.TrimSpace(opts.Query);opts.GroupName=strings.TrimSpace(opts.GroupName);opts.Status=strings.ToLower(strings.TrimSpace(opts.Status))
-	if len(opts.Query)>120||len(opts.GroupName)>80{return nil,0,errors.New("invalid account filter")}
-	switch opts.Status {case "","pending","authorized","error","disconnected":default:return nil,0,errors.New("invalid account status filter")}
+	if len(opts.Query)>120||len(opts.GroupName)>80{return opts,errors.New("invalid account filter")}
+	switch opts.Status {case "","pending","authorized","error","disconnected":default:return opts,errors.New("invalid account status filter")}
 	if opts.Limit<1||opts.Limit>100{opts.Limit=50};if opts.Offset<0{opts.Offset=0}
+	return opts,nil
+}
+
+func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListOptions)([]Account,int,error){
+	var err error
+	opts,err=normalizeAccountListOptions(opts);if err!=nil{return nil,0,err}
 	out:=[]Account{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:="tenant_id=$1 AND ($2='' OR phone ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') AND ($3='' OR group_name=$3) AND ($4='' OR status=$4)"
