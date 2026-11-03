@@ -391,6 +391,17 @@ func (m *Manager) UpdateProfile(ctx context.Context, accountID, firstName, lastN
 	return nil
 }
 
+// SendContactReply sends a native Telegram contact card as a reply.
+func (m *Manager) SendContactReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, phone, firstName, lastName string) (int64,error) {
+	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {return 0,errors.New("invalid Telegram reply message id")}
+	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
+	if client==nil || !client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
+	sent,err:=client.SendContact(ctx,chatID,phone,firstName,lastName,&params.SendContact{ReplyToMessageID:int32(replyToMessageID)})
+	if err!=nil{return 0,fmt.Errorf("send native Telegram contact card: %w",err)}
+	if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty contact message")}
+	return int64(sent.ID),nil
+}
+
 func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
 	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {
 		return 0,errors.New("invalid Telegram reply message id")
