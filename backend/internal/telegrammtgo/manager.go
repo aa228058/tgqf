@@ -337,6 +337,20 @@ func (m *Manager) ManagedAccountIDs() []string {
      return chat.ID,nil
  }
 
+// UpdateUsername sets a Telegram account's public username.
+func (m *Manager) UpdateUsername(ctx context.Context, accountID, username string) error {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return errors.New("Telegram account is not connected")
+	}
+	if err := client.SetUsername(ctx, username); err != nil {
+		return fmt.Errorf("update Telegram username: %w", err)
+	}
+	return nil
+}
+
 // UpdateProfile applies an explicitly queued first/last name and bio update.
 func (m *Manager) UpdateProfile(ctx context.Context, accountID, firstName, lastName, about string) error {
 	m.mu.RLock()
