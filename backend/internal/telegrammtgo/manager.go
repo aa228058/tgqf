@@ -2,6 +2,7 @@ package telegrammtgo
 
 import (
 	"encoding/base64"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -336,6 +337,19 @@ func (m *Manager) ManagedAccountIDs() []string {
      if chat==nil||chat.ID==0{return 0,errors.New("Telegram returned no joined chat identity")}
      return chat.ID,nil
  }
+
+// UpdateProfilePhoto uploads and sets an account's Telegram profile photo.
+func (m *Manager) UpdateProfilePhoto(ctx context.Context, accountID string, photo []byte, fileName string) error {
+	if len(photo)==0 { return errors.New("profile photo is empty") }
+	m.mu.RLock()
+	client:=m.clients[accountID]
+	m.mu.RUnlock()
+	if client==nil || !client.IsConnected() { return errors.New("Telegram account is not connected") }
+	if fileName=="" { fileName="profile.jpg" }
+	input:=telegram.Reader(bytes.NewReader(photo),fileName,int64(len(photo)))
+	if err:=client.SetProfilePhoto(ctx,input);err!=nil{return fmt.Errorf("update Telegram profile photo: %w",err)}
+	return nil
+}
 
 // UpdateUsername sets a Telegram account's public username.
 func (m *Manager) UpdateUsername(ctx context.Context, accountID, username string) error {
