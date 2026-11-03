@@ -37,12 +37,12 @@
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | 创建账号时写入 telegram_device_profiles | 部分实现 | Manager.Start/StartQR 仍直接 DeviceProfile(accountID) 重新生成，未读取数据库 profile |
 | 账号列表/分组 | accounts GET/POST/DELETE、group patch | 部分实现 | 标签、搜索、分页、批量选择、导出、断开/重连 API 未形成完整集合 |
-| 代理管理 | proxies CRUD、bind、check | 已有基础实现 | 检测仅 TCP 可达，不代表代理认证或 Telegram 实际可连；全局默认代理/新账号继承未见 |
+| 代理管理 | proxies CRUD、bind、check、tenant default proxy | 第一阶段已实现 | 默认代理可设置/清除，新建手机号账号和 QR 登录账号继承默认代理，单账号可覆盖；检测仍仅 TCP 可达，不代表代理认证或 Telegram 实际可连 |
 | 批量资料修改 | 未发现相关路由/服务 | 未实现 | 头像、姓名、简介的单/批量修改和逐账号任务结果 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为 SSE；产品任务中心要求 WebSocket，不能把 SSE 误称 WebSocket |
-| 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；链接采集、多来源合并审核、权限字段仍待补齐 |
-| 链接采集器 | 未发现独立采集规则/链接实体/发现服务 | 未实现 | 新消息链接识别、来源开关、状态检测、自动入公共总库 |
+| 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
+| 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 第一阶段已实现 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；状态默认 pending；来源开关、在线验证与关联群组资料仍待补齐 |
 | 自动加群 | 未发现加入/邀请申请任务服务 | 未实现 | 多账号分配、邀请加入、申请状态、FloodWait 状态机 |
 | 关键词监听 | 未发现规则模型/规则 API/匹配引擎 | 未实现 | OR/AND/正则/排除词/分组组合和消息类型筛选 |
 | 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
@@ -62,7 +62,7 @@
 ### P1 — 基础能力补齐
 - P1-01 完成账号登录方式：手机号验证码、2FA、Session 导入、批量导入/登录；每账号独立登录状态机。
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
-- P1-03 代理增强：全局默认代理、新账号继承、账号覆盖；区分 TCP、代理握手/认证、Telegram 连接检测。
+- [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
 - P1-04 账号标签/搜索/分页/批量操作/导出/断开重连。
 - P1-05 批量头像/姓名/简介修改接入统一任务执行底座。
 
@@ -73,7 +73,7 @@
 - P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 改为读取共享目录，并提供来源数、贡献租户数；多链接、人工纠错、合并审计仍待补齐。
 
 ### P2 — 自动化业务闭环
-- P2-01 新消息链接采集和公共库入库。
+- [x] P2-01 第一阶段：实时新消息链接识别与公共链接目录入库；私密邀请链接加密存储，不回溯历史。链接来源和待验证状态可查询。来源开关、实际 Telegram 验证及自动关联群组实体仍待补齐。
 - P2-02 自动加群任务状态机和 FloodWait 安全等待。
 - P2-03 关键词规则模型、匹配表达式和实时新消息评估。
 - P2-04 私聊/群组动作链完全隔离；先实现安全、可审计的文本/媒体动作。
@@ -95,6 +95,7 @@
 - `PATCH /api/v1/accounts/{id}/proxy`
 - `GET/POST/PUT/DELETE /api/v1/proxies`
 - `POST /api/v1/proxies/{id}/check`
+- `PUT /api/v1/proxies/default`（设置默认代理；传空 `proxy_id` 清除）
 - `POST /api/v1/accounts/qr/start`
 - `GET /api/v1/accounts/{id}/qr/status`
 - `DELETE /api/v1/accounts/{id}/qr`
@@ -108,13 +109,15 @@
 - `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 - `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源和账号信息，不泄露其他租户的账号数据）
+- `GET /api/v1/group-links`（共享链接目录；支持 `type`、`status` 筛选；私密邀请码不向 API 明文返回）
 
 ## 5. CI 与代码状态
 
 最近 Go 后端工作流：
-- P0-01 对应提交的检查已通过。
-- 设备资料与租户暂停相关连续提交正在触发 CI；最新提交需以 GitHub Actions 实际结果为准。
-- 曾发现设备资料服务中重复定义 `LoadDeviceProfile` 导致 Go 测试失败，已删除重复定义并由最新工作流重新验证。
+- P0-01、P0-02、P0-03 相关实现的 Go 检查已通过。
+- 全局群组目录和链接采集器第一阶段的 Go test、vet、API build 已通过（`f90a2966`）。
+- 默认代理继承及 QR 登录代理加载相关最新提交仍在 CI 中，须以最终工作流结果为准。
+- 曾出现链接目录查询代码拼接错误，已恢复干净服务文件并修复；`f90a2966` 对应完整检查通过。
 
 这只能证明对应提交的 CI 检查通过，不证明未实现模块已完成，也不代表生产环境端到端验证通过。
 
