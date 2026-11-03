@@ -1,3 +1,5 @@
+CREATE UNIQUE INDEX unified_messages_tenant_id_id_uq ON unified_messages(tenant_id,id);
+
 CREATE TABLE message_reply_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
