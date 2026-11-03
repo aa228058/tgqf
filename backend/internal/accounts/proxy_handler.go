@@ -65,3 +65,15 @@ func (h *Handler) checkProxy(w http.ResponseWriter,r *http.Request) {
 	}
 	writeJSON(w,http.StatusOK,map[string]any{"reachable":true,"check":"tcp"})
 }
+
+func (h *Handler) updateProxy(w http.ResponseWriter,r *http.Request) {
+	var input ProxyInput
+	if !decode(w,r,&input){writeError(w,http.StatusBadRequest,"invalid request body");return}
+	u:=auth.UserFromContext(r.Context())
+	item,err:=h.service.UpdateProxy(r.Context(),u.TenantID,r.PathValue("id"),input)
+	if err!=nil{
+		if strings.Contains(err.Error(),"SESSION_ENCRYPTION_KEY"){writeError(w,http.StatusServiceUnavailable,"proxy encryption is not configured");return}
+		writeError(w,http.StatusBadRequest,err.Error());return
+	}
+	writeJSON(w,http.StatusOK,map[string]any{"proxy":item})
+}
