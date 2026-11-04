@@ -84,6 +84,32 @@ export function AccountsPage({token}:{token:string}){
  const toggle=(id:string)=>setSelected(current=>current.includes(id)?current.filter(x=>x!==id):[...current,id]);
  const allSelected=accounts.length>0&&accounts.every(a=>selected.includes(a.id));
 
+ async function createProfileBatch(event:FormEvent){
+  event.preventDefault();setError("");setNotice("");
+  if(profileSelected.length<1||profileSelected.length>20){setError("请选择 1–20 个已授权账号");return}
+  if(!profileForm.first_name.trim()&&!profileForm.last_name.trim()&&!profileForm.about.trim()&&!profileForm.generate_username){setError("请至少填写一个资料字段或启用自动生成用户名");return}
+  setBusy(true);
+  try{const r=await api<{batch_id:string;jobs:ProfileJob[]}>("/api/v1/accounts/profile-updates",token,{method:"POST",body:JSON.stringify({accounts:profileSelected.map(account_id=>({account_id,...profileForm}))})});setNotice(`资料更新任务已创建：${r.jobs.length} 个账号`);await loadProfileJobs()}
+  catch(e){setError(e instanceof Error?e.message:"资料更新任务创建失败")}
+  finally{setBusy(false)}
+ }
+ async function createAvatarBatch(event:FormEvent){
+  event.preventDefault();setError("");setNotice("");
+  if(profileSelected.length<1||profileSelected.length>20){setError("请选择 1–20 个已授权账号");return}
+  if(!avatarFile){setError("请选择 JPEG 或 PNG 头像文件");return}
+  if(avatarFile.size>5*1024*1024){setError("头像文件不能超过 5 MiB");return}
+  setBusy(true);
+  try{const body=new FormData();body.append("account_ids",JSON.stringify(profileSelected));body.append("photo",avatarFile);const r=await api<{batch_id:string;jobs:ProfileJob[];photo_format:string}>("/api/v1/accounts/profile-updates/photo",token,{method:"POST",body});setNotice(`头像更新任务已创建：${r.jobs.length} 个账号（${r.photo_format.toUpperCase()}）`);setAvatarFile(null);await loadProfileJobs()}
+  catch(e){setError(e instanceof Error?e.message:"头像上传任务创建失败")}
+  finally{setBusy(false)}
+ }
+ async function controlProfileJob(job:ProfileJob,action:"retry"|"resume"|"cancel"){
+  if(action==="cancel"&&!window.confirm("确定取消这条资料更新任务吗？"))return;
+  setBusy(true);setError("");
+  try{await api(`/api/v1/accounts/profile-updates/${job.id}/${action}`,token,{method:"POST"});setNotice("资料更新任务操作已提交");await loadProfileJobs()}
+  catch(e){setError(e instanceof Error?e.message:"资料更新任务操作失败")}
+  finally{setBusy(false)}
+ }
  async function startQR(event:FormEvent){
   event.preventDefault();setBusy(true);setError("");setNotice("");
   try{
