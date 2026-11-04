@@ -586,13 +586,7 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 			} else if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY") {
 				status="invalid"
 			}
-		} else {
-			switch result {
-			case "member","valid": status="valid"
-			case "request_pending": status="approval_required"
-			default: status="unknown"
-			}
-		}
+}
 		var retryAfter time.Duration
 		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
 		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,accountID,link.LinkID,status,errorText,link.LeaseUntil,retryAfter);err!=nil {
