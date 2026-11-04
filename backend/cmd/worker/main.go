@@ -318,6 +318,7 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
         }
         sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
         var telegramMessageID int64
+        var telegramMessageIDs []int64
         var sendErr error
         switch job.ActionType {
         case "", "text":
@@ -339,14 +340,15 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             if sendErr==nil {
                 var ids []int64
                 ids,sendErr=manager.SendMediaAlbumReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,album)
-                if sendErr==nil && len(ids)>0 { telegramMessageID=ids[0] }
+                if sendErr==nil && len(ids)>0 { telegramMessageIDs=ids; telegramMessageID=ids[0] }
             }
         default:
             sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
         }
         cancel()
+        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
         floodWait,_:=tgerr.AsFloodWait(sendErr)
-        if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait);err!=nil {
+        if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait,telegramMessageIDs);err!=nil {
             logger.Error("persist keyword action result","job_id",job.ID,"error",err)
             continue
         }
