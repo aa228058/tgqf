@@ -615,3 +615,33 @@ input,select,textarea{min-height:40px}
   .reply-composer textarea{min-height:88px;font-size:14px}
   .reply-composer button{width:100%;min-height:44px;align-self:stretch}
 }
+
+
+/* Task center: compact, labeled mobile cards with visible execution controls. */
+@media(max-width:700px){
+  .task-table-wrap{overflow:visible}
+  .task-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0 10px}
+  .task-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .task-table tbody{display:grid;gap:10px}
+  .task-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;padding:8px 13px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+  .task-table td{display:block;min-width:0;padding:9px 0;border:0;border-bottom:1px solid var(--line);font-size:12px;overflow-wrap:anywhere;white-space:normal}
+  .task-table td::before{content:attr(data-label);display:block;margin-bottom:5px;color:var(--muted);font-size:10px;font-weight:650}
+  .task-table td[data-label="任务"],.task-table td[data-label="最近错误"],.task-table td[data-label="操作"]{grid-column:1/-1}
+  .task-table td[data-label="选择"]{display:flex;align-items:center;gap:8px}
+  .task-table td[data-label="选择"]::before{display:inline;margin:0}
+  .task-table td[data-label="选择"] input{width:18px;height:18px;min-height:18px}
+  .task-table td[data-label="最近错误"]{color:var(--danger);overflow-wrap:anywhere}
+  .task-table td.empty{grid-column:1/-1;border:0;text-align:center;padding:18px}
+  .task-table td.empty::before{content:none}
+  .task-table td:last-child{border-bottom:0}
+  .task-table .row-actions{display:flex;flex-wrap:wrap;gap:7px}
+  .task-table .row-actions button{min-height:40px;padding:8px 11px;flex:1 1 auto}
+  .pagination{align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .pagination>div{width:100%;display:flex;align-items:center;gap:8px}
+  .pagination>div button{flex:1;min-height:42px}
+  .filters input,.filters select{min-height:42px}
+}
+@media(max-width:420px){
+  .task-table tbody tr{grid-template-columns:minmax(0,1fr)}
+  .task-table td[data-label="任务"],.task-table td[data-label="最近错误"],.task-table td[data-label="操作"]{grid-column:1}
+}
