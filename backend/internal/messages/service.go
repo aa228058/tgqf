@@ -697,6 +697,7 @@ func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID,accountID s
 type PrivateInviteCheck struct {
  LinkID int64
  Hash string
+ CheckError string
  LeaseUntil time.Time
 }
 
@@ -728,8 +729,7 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
    var ciphertext []byte
    if err := rows.Scan(&item.LinkID,&ciphertext,&item.LeaseUntil); err != nil { return err }
    hash, err := decryptJoinInviteHash(ciphertext)
-   if err != nil { continue }
-   item.Hash = hash
+   if err != nil { item.CheckError = "decrypt private invite failed: " + err.Error() } else { item.Hash = hash }
    out = append(out,item)
   }
   return rows.Err()
