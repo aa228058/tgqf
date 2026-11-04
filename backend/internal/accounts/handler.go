@@ -42,6 +42,8 @@ type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
+ m.Handle("GET /api/v1/accounts/{id}/groups",h.auth.Authenticated(http.HandlerFunc(h.listAccountGroups)))
+ m.Handle("POST /api/v1/accounts/{id}/groups/sync",h.auth.Authenticated(http.HandlerFunc(h.syncAccountGroups)))
  m.Handle("PATCH /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateDisplayName)))
  m.Handle("GET /api/v1/accounts/{id}/profile",h.auth.Authenticated(http.HandlerFunc(h.getTelegramProfile)))
  m.Handle("GET /api/v1/accounts/{id}/device-profile",h.auth.Authenticated(http.HandlerFunc(h.getDeviceProfile)))
