@@ -280,7 +280,7 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status)
 				VALUES('invite',$1,$2,'pending')
-				ON CONFLICT(invite_hash) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL
+				ON CONFLICT(invite_hash) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,next_check_at=NULL,check_attempts=0,check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
 				RETURNING id`,link.InviteHash,link.InviteCiphertext).Scan(&id);err!=nil{return err}
 		}else{continue}
 		_,err:=tx.ExecContext(ctx,`INSERT INTO public_group_link_sources(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id)
@@ -570,6 +570,8 @@ type GroupLinkItem struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	LastCheckError string `json:"last_check_error,omitempty"`
+	CheckAttempts int `json:"check_attempts"`
+	NextCheckAt *time.Time `json:"next_check_at,omitempty"`
 }
 
 func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status string, limit, offset int) ([]GroupLinkItem, int, error) {
