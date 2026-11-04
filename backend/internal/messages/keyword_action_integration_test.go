@@ -130,9 +130,4 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 	if outgoingCount!=1{t.Fatalf("persisted keyword action message rows=%d, want 1",outgoingCount)}
 	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`,activeTenant).Scan(&outboxCount);err!=nil{t.Fatal(err)}
 	if outboxCount!=1{t.Fatalf("keyword action realtime outbox rows=%d, want 1",outboxCount)}
-	var outgoingCount,outboxCount int
-	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM unified_messages WHERE telegram_account_id=$1 AND chat_id=101 AND message_id=501 AND is_outgoing=TRUE`,accountA).Scan(&outgoingCount);err!=nil{t.Fatal(err)}
-	if outgoingCount!=1{t.Fatalf("persisted keyword action message rows=%d, want 1",outgoingCount)}
-	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`,activeTenant).Scan(&outboxCount);err!=nil{t.Fatal(err)}
-	if outboxCount!=1{t.Fatalf("keyword action realtime outbox rows=%d, want 1",outboxCount)}
 }
