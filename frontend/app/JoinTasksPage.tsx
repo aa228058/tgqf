@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SharedGroupPicker } from "./SharedGroupPicker";
 
@@ -24,7 +26,7 @@ async function api<T>(path: string, token: string, init?: RequestInit): Promise<
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return readAPIJSON<T>(response);
 }
 const statusName: Record<string,string> = {
   draft:"草稿", queued:"排队中", paused:"已暂停", completed:"已完成",
