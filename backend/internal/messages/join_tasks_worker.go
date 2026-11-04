@@ -196,7 +196,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
  err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
   rows,err:=tx.QueryContext(ctx,`WITH due AS (
     SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
-           g.telegram_chat_id AS chat_id
+           COALESCE(a.telegram_chat_id,g.telegram_chat_id) AS chat_id
     FROM tenant_join_task_accounts a
     JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
@@ -204,7 +204,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
     WHERE a.tenant_id=$1 AND a.status='request_pending'
       AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
-      AND g.telegram_chat_id IS NOT NULL
+      AND COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL
       AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
       AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
     ORDER BY a.updated_at,a.id
