@@ -376,6 +376,35 @@ func (s *Service) GetMediaIdentity(ctx context.Context,tenantID,messageID string
  return out,err
 }
 
+// ListMediaAlbum returns all messages sharing the source message's Telegram
+// GroupedID. Non-album messages are returned as a one-item slice.
+func (s *Service) ListMediaAlbum(ctx context.Context,tenantID,messageID string)([]Message,error) {
+	if !validUUID(messageID){return nil,errors.New("message not found")}
+	out:=[]Message{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		var accountID string
+		var chatID,groupedID int64
+		if err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,COALESCE(grouped_id,0)
+			FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&accountID,&chatID,&groupedID);err!=nil{return err}
+		filter:=`m.tenant_id=$1 AND m.telegram_account_id=$2 AND m.chat_id=$3`
+		args:=[]any{tenantID,accountID,chatID}
+		if groupedID!=0 {filter+=` AND m.grouped_id=$4`;args=append(args,groupedID)} else {filter+=` AND m.id=$4`;args=append(args,messageID)}
+		rows,err:=tx.QueryContext(ctx,`SELECT m.id::text,m.telegram_account_id::text,
+			COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,
+			COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.media_metadata,COALESCE(m.grouped_id,0),
+			m.message_date,m.processed_at
+			FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id
+			WHERE `+filter+` ORDER BY m.message_id ASC`,args...)
+		if err!=nil{return err}
+		defer rows.Close()
+		for rows.Next(){var item Message;if err:=rows.Scan(&item.ID,&item.AccountID,&item.AccountName,&item.ChatID,&item.MessageID,&item.ChatType,&item.ChatTitle,&item.SenderID,&item.ReplyToMessageID,&item.Text,&item.MediaType,&item.MediaMetadata,&item.GroupedID,&item.MessageDate,&item.ProcessedAt);err!=nil{return err};out=append(out,item)}
+		return rows.Err()
+	})
+	if errors.Is(err,sql.ErrNoRows){return nil,errors.New("message not found")}
+	if err!=nil{return nil,err}
+	return out,nil
+}
+
 func (s *Service) MarkProcessed(ctx context.Context,tenantID,messageID string)error{
 	if !validUUID(messageID){return errors.New("message not found")}
 	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
