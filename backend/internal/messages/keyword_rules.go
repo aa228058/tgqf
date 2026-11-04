@@ -516,6 +516,6 @@ func keywordReplyTextForChat(rule KeywordRule,chatType string) string {
 }
 
 
-func keywordAlbumJSON(items []KeywordMediaAlbumItem) string { b,err:=json.Marshal(items);if err!=nil{return "[]"};return string(b) }
+func keywordAlbumJSON(items []KeywordMediaAlbumItem) string { if len(items)==0{return "[]"};b,err:=json.Marshal(items);if err!=nil{return "[]"};return string(b) }
 
 func keywordNullableMediaAssetID(value string) any { if value == "" { return nil }; return value }
