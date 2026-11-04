@@ -84,7 +84,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			PRIMARY KEY(tenant_id,id))`,
 		`CREATE TABLE tenant_link_collection_settings (tenant_id UUID PRIMARY KEY,enabled BOOLEAN NOT NULL DEFAULT TRUE,from_private_messages BOOLEAN NOT NULL DEFAULT TRUE,from_groups BOOLEAN NOT NULL DEFAULT TRUE,from_channels BOOLEAN NOT NULL DEFAULT TRUE,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE tenant_join_tasks (
-			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,name TEXT NOT NULL,target_group_id BIGINT,target_link_id BIGINT,status TEXT NOT NULL,
+			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,name TEXT NOT NULL,target_group_id BIGINT,target_link_id BIGINT,private_invite_hash_ciphertext BYTEA,status TEXT NOT NULL,
 			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE tenant_join_task_accounts (
 			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,task_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
