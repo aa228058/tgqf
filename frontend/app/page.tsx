@@ -48,6 +48,7 @@ export default function Home() {
   const [status, setStatus] = useState("");
   const [type, setType] = useState("");
   const [accountID, setAccountID] = useState("");
+  const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -66,6 +67,7 @@ export default function Home() {
       if (status) params.set("status", status);
       if (type) params.set("type", type);
       if (accountID.trim()) params.set("account_id", accountID.trim());
+      if (query.trim()) params.set("q", query.trim());
       const [taskResult, summaryResult] = await Promise.allSettled([
         request<TaskResponse>(`/api/v1/tasks?${params}`, currentToken),
         request<{ summary: Summary }>("/api/v1/tasks/summary", currentToken),
@@ -84,7 +86,7 @@ export default function Home() {
     } finally {
       if (sequence === requestSequence.current && !quiet) setBusy(false);
     }
-  }, [offset, status, type, accountID]);
+  }, [offset, status, type, accountID, query]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tgqf_access_token");
@@ -104,7 +106,7 @@ export default function Home() {
       });
   }, []);
   useEffect(() => { if (signedIn && token && user?.role !== "super_admin") void load(token); }, [signedIn, token, user?.role, load]);
-  useEffect(() => { setSelected([]); }, [offset, status, type, accountID]);
+  useEffect(() => { setSelected([]); }, [offset, status, type, accountID, query]);
   useEffect(() => {
     if (!signedIn || !token || user?.role === "super_admin") return;
     const refresh = () => { if (document.visibilityState === "visible" && !actionLock.current) void load(token, true); };
@@ -177,6 +179,7 @@ export default function Home() {
         <select value={type} onChange={e => { setType(e.target.value); setOffset(0); }}><option value="">全部任务类型</option>{Object.entries(typeNames).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select>
         <select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }}><option value="">全部状态</option>{Object.entries(statusNames).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select>
         <input value={accountID} onChange={e => { setAccountID(e.target.value); setOffset(0); }} placeholder="按账号 ID 筛选" />
+        <input value={query} maxLength={120} onChange={e => { setQuery(e.target.value); setOffset(0); }} placeholder="搜索任务、账号、错误信息或 ID" />
         <button className="secondary" onClick={() => void load(token)} disabled={busy}>筛选</button>
       </div>
       {selected.length > 0 && <div className="bulkbar"><span>已选 {selected.length} 条{!selectedType ? "（批量操作要求同一任务类型）" : ""}</span><button disabled={!selectedType || busy} onClick={() => void bulk("pause")}>暂停</button><button disabled={!selectedType || busy} onClick={() => void bulk("resume")}>恢复</button><button disabled={!selectedType || busy} onClick={() => void bulk("retry")}>重试</button><button className="danger-text" disabled={!selectedType || busy} onClick={() => void bulk("cancel")}>取消</button><button className="ghost" onClick={() => setSelected([])}>清除选择</button></div>}
