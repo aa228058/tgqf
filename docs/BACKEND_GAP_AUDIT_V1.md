@@ -502,3 +502,14 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] Telegram 发送成功后，即使租户恰在 RPC 期间到期，仍持久化真实 sent 结果；发送失败则暂停任务，不在失效租户下继续重试。
 - [x] FloodWait 即使发生在租户到期边界，也保留账号级 Telegram 冷却，不能因暂停任务而丢失服务端等待要求。
 - [x] 新增 PostgreSQL 集成测试覆盖账号授权筛选、失效租户 live lease 保护、RPC 成功/失败写回和 FloodWait 冷却。
+
+
+## 2026-11-04 统一任务中心与加群子任务控制增量
+
+- [x] 修复任务中心对单个 group_join 子任务执行 pause/cancel 时直接清空 processing 租约的问题。
+- [x] 新增 migration 0054：`pause_requested` / `cancel_requested`。对正在执行的 Telegram RPC 只登记控制请求，不撤销租约；RPC 返回后根据实际结果和请求状态落库。
+- [x] 父级加群任务 pause/cancel 同样保留 in-flight lease；暂停后恢复会清除未完成的 pause request。
+- [x] Worker 处理重试/FloodWait/永久失败时消费 pause/cancel request；任务取消后不会因瞬时异常重新入队，暂停后不会继续自动重试。
+- [x] Worker 崩溃后，控制请求对应的 processing 租约到期时自动转为 paused/cancelled，不会被当作普通任务重新领取。
+- [x] 统一任务父级状态改为根据子任务状态派生，已取消父任务不会被子任务状态刷新重新激活。
+- [x] 增加 PostgreSQL 集成测试覆盖单子任务暂停/取消、父任务暂停及 in-flight RPC 结果落库。
