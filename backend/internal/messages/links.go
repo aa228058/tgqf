@@ -52,6 +52,9 @@ func ExtractTelegramLinks(text string) []DiscoveredLink {
 		username:=strings.Trim(raw,"/")
 		if strings.Contains(username,"/") { continue }
 		username=strings.TrimPrefix(username,"@")
+		// Telegram usernames are case-insensitive. Canonicalizing before persistence
+		// prevents case variants from creating duplicate shared-catalogue links.
+		username=strings.ToLower(username)
 		if len(username)<5 || len(username)>32 { continue }
 		if reservedTelegramPaths[strings.ToLower(username)] { continue }
 		key:="public:"+strings.ToLower(username)
