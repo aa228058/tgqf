@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/accounts"
+	"github.com/aa228058/tgqf/backend/internal/storage"
 )
 
 func TestReconnectDelay(t *testing.T) {
@@ -137,5 +141,66 @@ func TestIsPermanentJoinFailure(t *testing.T) {
 				t.Fatalf("isPermanentJoinFailure(%v)=%v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWorkerHeartbeatRestartLifecycle(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	redisURL := os.Getenv("TEST_REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		if os.Getenv("CI") == "true" {
+			t.Fatal("TEST_DATABASE_URL and TEST_REDIS_URL are required in CI")
+		}
+		t.Skip("PostgreSQL and Redis integration services are not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	store, err := storage.Open(ctx, databaseURL, redisURL)
+	if err != nil {
+		t.Fatalf("open integration services: %v", err)
+	}
+	defer store.Close()
+
+	instanceID := fmt.Sprintf("phase3-restart-%d", time.Now().UnixNano())
+	defer store.DB.ExecContext(context.Background(), "DELETE FROM worker_instances WHERE instance_id=$1", instanceID)
+
+	if err := recordWorkerHeartbeat(ctx, store.DB, instanceID, "ci-host", 101, true); err != nil {
+		t.Fatalf("record initial worker start: %v", err)
+	}
+	var status string
+	var originalStarted time.Time
+	var stoppedAt *time.Time
+	if err := store.DB.QueryRowContext(ctx, "SELECT status,started_at,stopped_at FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&status, &originalStarted, &stoppedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || stoppedAt != nil {
+		t.Fatalf("initial worker state status=%q stopped_at=%v", status, stoppedAt)
+	}
+
+	if err := recordWorkerHeartbeat(ctx, store.DB, instanceID, "ci-host", 101, false); err != nil {
+		t.Fatalf("record graceful worker stop: %v", err)
+	}
+	if err := store.DB.QueryRowContext(ctx, "SELECT status,stopped_at FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&status, &stoppedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "stopped" || stoppedAt == nil {
+		t.Fatalf("stopped worker state status=%q stopped_at=%v", status, stoppedAt)
+	}
+
+	if err := recordWorkerHeartbeat(ctx, store.DB, instanceID, "ci-host", 202, true); err != nil {
+		t.Fatalf("record worker restart: %v", err)
+	}
+	if err := store.DB.QueryRowContext(ctx, "SELECT status,process_id,started_at,stopped_at FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&status, new(int), &originalStarted, &stoppedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || stoppedAt != nil {
+		t.Fatalf("restarted worker state status=%q stopped_at=%v", status, stoppedAt)
+	}
+	var processID int
+	if err := store.DB.QueryRowContext(ctx, "SELECT process_id FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&processID); err != nil {
+		t.Fatal(err)
+	}
+	if processID != 202 {
+		t.Fatalf("restarted process id=%d, want 202", processID)
 	}
 }
