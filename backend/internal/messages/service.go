@@ -592,6 +592,55 @@ func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status
 }
 
 
+type PrivateInviteCheck struct {
+ LinkID int64
+ Hash string
+}
+
+func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, accountID string, limit int) ([]PrivateInviteCheck, error) {
+ if !validUUID(accountID) { return nil, errors.New("invalid Telegram account id") }
+ if limit < 1 || limit > 100 { limit = 50 }
+ out := []PrivateInviteCheck{}
+ err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+  rows, err := tx.QueryContext(ctx, `SELECT l.id, l.invite_ciphertext
+   FROM public_group_links l
+   JOIN public_group_link_sources src ON src.link_id=l.id
+   WHERE l.link_type='invite' AND src.tenant_id=$1 AND src.telegram_account_id=$2
+    AND (l.last_checked_at IS NULL OR l.last_checked_at < NOW()-INTERVAL '6 hours')
+   ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id
+   LIMIT $3`, tenantID, accountID, limit)
+  if err != nil { return err }
+  defer rows.Close()
+  for rows.Next() {
+   var item PrivateInviteCheck
+   var ciphertext []byte
+   if err := rows.Scan(&item.LinkID,&ciphertext); err != nil { return err }
+   hash, err := decryptJoinInviteHash(ciphertext)
+   if err != nil { continue }
+   item.Hash = hash
+   out = append(out,item)
+  }
+  return rows.Err()
+ })
+ return out,err
+}
+
+func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string, linkID int64, status, checkError string) error {
+ allowed := map[string]bool{"valid":true,"approval_required":true,"invalid":true,"unknown":true}
+ if linkID <= 0 || !allowed[status] { return errors.New("invalid private invite check result") }
+ if len(checkError)>500 { checkError=checkError[:500] }
+ return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error {
+  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,'')
+   WHERE l.id=$1 AND l.link_type='invite' AND EXISTS(
+    SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError)
+  if err!=nil{return err}
+  n,_:=result.RowsAffected()
+  if n==0{return errors.New("private invite link not found")}
+  return nil
+ })
+}
+
+
 var ErrNoReplyJob = errors.New("no pending reply job")
 
 type ReplyJob struct {
