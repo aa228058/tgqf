@@ -72,3 +72,23 @@ func TestExtractTelegramLinksRejectsOverlongPublicUsername(t *testing.T) {
 		t.Fatalf("overlong username must not be collected: %#v", got)
 	}
 }
+
+
+func TestExtractTelegramLinksCanonicalizesCaseInsensitivePublicUsernames(t *testing.T) {
+	got := ExtractTelegramLinks("https://t.me/PublicGroup and https://telegram.me/publicgroup and t.me/PUBLICGROUP")
+	if len(got) != 1 {
+		t.Fatalf("case variants should deduplicate to one public link, got %#v", got)
+	}
+	if got[0].PublicURL != "https://t.me/publicgroup" {
+		t.Fatalf("expected canonical lowercase URL, got %q", got[0].PublicURL)
+	}
+}
+
+func TestExtractTelegramLinksCanonicalizesOnlyPublicUsernames(t *testing.T) {
+	os.Setenv("SESSION_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	defer os.Unsetenv("SESSION_ENCRYPTION_KEY")
+	got := ExtractTelegramLinks("t.me/+AbCdEf123456 t.me/+abcdef123456")
+	if len(got) != 2 {
+		t.Fatalf("invite hashes are case-sensitive and must remain distinct, got %#v", got)
+	}
+}
