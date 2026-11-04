@@ -460,7 +460,8 @@ type KeywordActionRecord struct {
     MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
     Status string `json:"status"`
     Attempts int `json:"attempts"`
-    TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`\n    TelegramMessageIDs []int64 `json:"telegram_message_ids"`
+    TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
+    TelegramMessageIDs []int64 `json:"telegram_message_ids"`
     LastError string `json:"last_error"`
     AvailableAt time.Time `json:"available_at"`
     CreatedAt time.Time `json:"created_at"`
