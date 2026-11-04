@@ -672,3 +672,32 @@ func (s *Service) FinishKeywordVoiceCall(ctx context.Context, job KeywordActionJ
         return nil
     })
 }
+
+
+// UpdateKeywordVoiceCallState applies a Telegram update only to the matching
+// tenant/account/call tuple. found=false lets the worker retry an update that
+// races the initial call-result persistence.
+func (s *Service) UpdateKeywordVoiceCallState(ctx context.Context, tenantID, accountID string, callID int64, state string) (bool, error) {
+    switch state {
+    case "ringing", "accepted", "discarded", "ended", "failed", "unknown":
+    default:
+        return false, errors.New("invalid Telegram voice call state")
+    }
+    found := false
+    err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+        result, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
+            SET voice_call_state=$4, updated_at=NOW()
+            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND action_type='voice_call'`,
+            tenantID, accountID, callID, state)
+        if err != nil {
+            return err
+        }
+        count, err := result.RowsAffected()
+        if err != nil {
+            return err
+        }
+        found = count > 0
+        return nil
+    })
+    return found, err
+}
