@@ -2,8 +2,8 @@ package auth
 
 import (
  "context"
- "database/sql"
  "crypto/rand"
+ "database/sql"
  "encoding/hex"
  "errors"
  "fmt"
