@@ -27,8 +27,8 @@ func normalizeGroupCatalogueImportRecord(item GroupCatalogueImportRecord) (Group
 	if item.Title == "" || utf8.RuneCountInString(item.Title) > 255 {
 		return item, errors.New("title must contain 1 to 255 characters")
 	}
-	if item.MemberCount < 0 {
-		return item, errors.New("member_count cannot be negative")
+	if item.MemberCount < 0 || item.MemberCount > 2147483647 {
+		return item, errors.New("member_count must be between 0 and 2147483647")
 	}
 	if item.Username != "" {
 		if len(item.Username) < 5 || len(item.Username) > 32 {
