@@ -18,10 +18,10 @@ const items:{key:Key;label:string;icon:string;description:string}[] = [
 ];
 
 export function AppShell({
-  user,onLogout,children,workbench,accounts,messages,groups,join,monitor,runtime,settings,adminContent
+  user,onLogout,children,workbench,accounts,messages,groups,join,monitor,runtime,settings,adminContent,onCreateJoinTask
 }:{
   user:AppUser;onLogout:()=>void;children:ReactNode;
-  workbench?:ReactNode;accounts?:ReactNode;messages?:ReactNode;groups?:ReactNode;
+  workbench?:ReactNode;accounts?:ReactNode;messages?:ReactNode;
   join?:ReactNode;monitor?:ReactNode;runtime?:ReactNode;settings?:ReactNode;adminContent?:ReactNode;
   groups?:ReactNode|((onCreateJoinTask:(groupID:number)=>void)=>ReactNode);
   onCreateJoinTask?:(groupID:number)=>void;
