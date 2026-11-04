@@ -119,7 +119,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.ActionType=strings.ToLower(strings.TrimSpace(rule.ActionType)); if rule.ActionType=="" { rule.ActionType="text" }
     rule.ContactPhone=strings.TrimSpace(rule.ContactPhone); rule.ContactFirstName=strings.TrimSpace(rule.ContactFirstName); rule.ContactLastName=strings.TrimSpace(rule.ContactLastName)
     rule.MediaAssetID=strings.TrimSpace(rule.MediaAssetID); rule.MediaType=strings.ToLower(strings.TrimSpace(rule.MediaType)); rule.MediaCaption=strings.TrimSpace(rule.MediaCaption)
-    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" { return rule,fmt.Errorf("%w: action_type must be text, contact, media, or media_album",ErrInvalidKeywordRule) }
+    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" && rule.ActionType!="voice_call" { return rule,fmt.Errorf("%w: action_type must be text, contact, media, media_album, or voice_call",ErrInvalidKeywordRule) }
     if rule.ActionType=="contact" {
         if rule.ContactPhone=="" || rule.ContactFirstName=="" || len(rule.ContactPhone)>64 || len(rule.ContactFirstName)>128 || len(rule.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact action requires phone and first name",ErrInvalidKeywordRule) }
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: contact action cannot include text replies",ErrInvalidKeywordRule) }
@@ -137,6 +137,14 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: media action cannot include text replies",ErrInvalidKeywordRule) }
         if rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" { return rule,fmt.Errorf("%w: media action cannot include contact fields",ErrInvalidKeywordRule) }
     } else if rule.MediaAssetID!="" || rule.MediaType!="" || rule.MediaCaption!="" { return rule,fmt.Errorf("%w: media fields require media action",ErrInvalidKeywordRule) }
+    if rule.ActionType=="voice_call" {
+        if len(rule.ChatTypes)!=1 || rule.ChatTypes[0]!="private" {
+            return rule,fmt.Errorf("%w: voice_call actions are only allowed for private chats",ErrInvalidKeywordRule)
+        }
+        if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 || rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" || rule.MediaAssetID!="" || rule.MediaType!="" || rule.MediaCaption!="" || len(rule.MediaAlbumItems)>0 {
+            return rule,fmt.Errorf("%w: voice_call action cannot include message payloads",ErrInvalidKeywordRule)
+        }
+    }
     if rule.ActionType=="contact" || rule.ActionType=="media" || rule.ActionType=="media_album" {
         for _,chatType:=range rule.ChatTypes { if chatType=="channel" { return rule,fmt.Errorf("%w: contact actions support private and group chats only",ErrInvalidKeywordRule) } }
     }
@@ -306,7 +314,11 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
         if errors.Is(err,sql.ErrNoRows) {continue}
         if err!=nil{return err}
         actionText:=keywordReplyTextForChat(rule,in.ChatType)
-        if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
+        if rule.ActionType=="voice_call" && in.ChatType=="private" && in.SenderID>0 {
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,target_user_id)
+                VALUES($1,$2,$3,$4,$5,'','voice_call',$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,in.SenderID)
+            if err!=nil{return err}
+        } else if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
             _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,contact_phone,contact_first_name,contact_last_name)
                 VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName)
             if err!=nil{return err}
@@ -409,14 +421,14 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
             ), claimed AS (
                 UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '3 minutes',updated_at=NOW()
                 FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
-                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.attempts,j.lease_until
+                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,COALESCE(j.target_user_id,0),j.attempts,j.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
             ) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
             if err!=nil{return err}
             beforeClaimed:=len(jobs)
-            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};jobs=append(jobs,job)}
+            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.TargetUserID,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};jobs=append(jobs,job)}
             rowsErr:=picked.Err()
             closeErr:=picked.Close()
             if rowsErr!=nil{return rowsErr};if closeErr!=nil{return closeErr}
