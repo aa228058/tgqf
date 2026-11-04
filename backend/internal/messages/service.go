@@ -389,6 +389,7 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 var ErrInvalidGroupLibraryQuery = errors.New("invalid group library query")
 
 type GroupLibraryItem struct {
+	ID int64 `json:"id"`
 	ChatID int64 `json:"chat_id"`
 	Title string `json:"title"`
 	ChatType string `json:"chat_type"`
@@ -398,6 +399,17 @@ type GroupLibraryItem struct {
 	SourceCount int `json:"source_count"`
 	ContributorCount int `json:"contributor_count"`
 	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+type GroupLibraryFilter struct {
+	ChatType string
+	Query string
+	Verified *bool
+	MinMembers int
+	MaxMembers int
+	MinSources int
+	MinContributors int
+	Sort string
 }
 
 func normalizeGroupLibraryFilters(chatType, query string) (string, string, error) {
@@ -413,31 +425,40 @@ func normalizeGroupLibraryFilters(chatType, query string) (string, string, error
 // ListGroupLibrary returns the shared system catalogue. Tenant identity is
 // retained for authorization context, but the catalogue itself is global.
 func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, query string, limit, offset int) ([]GroupLibraryItem, int, error) {
-	if limit < 1 || limit > 100 { limit = 50 }
-	if offset < 0 { offset = 0 }
-	chatType, query, err := normalizeGroupLibraryFilters(chatType, query)
-	if err != nil { return nil, 0, err }
-	items := []GroupLibraryItem{}
-	total := 0
-	err = withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		filter := "1=1"
-		args := []any{}
-		if chatType != "" { args=append(args,chatType);filter+=" AND g.chat_type=$"+strconv.Itoa(len(args)) }
-		if query != "" { args=append(args,"%"+query+"%");n:=strconv.Itoa(len(args));filter+=" AND (g.title ILIKE $"+n+" OR g.username ILIKE $"+n+")" }
-		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+filter,args...).Scan(&total);err!=nil{return err}
-		args=append(args,limit,offset);limitArg:=strconv.Itoa(len(args)-1);offsetArg:=strconv.Itoa(len(args))
-		rows,err:=tx.QueryContext(ctx,`SELECT g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
+	return s.ListGroupLibraryFiltered(ctx,tenantID,GroupLibraryFilter{ChatType:chatType,Query:query},limit,offset)
+}
+
+// ListGroupLibraryFiltered exposes stable filtering and sorting over the shared catalogue.
+func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,filter GroupLibraryFilter,limit,offset int)([]GroupLibraryItem,int,error) {
+	if limit<1||limit>100 {limit=50};if offset<0 {offset=0}
+	chatType,query,err:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);if err!=nil{return nil,0,err}
+	if filter.MinMembers<0||filter.MaxMembers<0||filter.MinSources<0||filter.MinContributors<0||(filter.MaxMembers>0&&filter.MinMembers>filter.MaxMembers){return nil,0,ErrInvalidGroupLibraryQuery}
+	sortExpr:="g.last_seen_at DESC,g.title ASC,g.id ASC"
+	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";default:return nil,0,ErrInvalidGroupLibraryQuery}
+	items:=[]GroupLibraryItem{};total:=0
+	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		clauses:=[]string{"1=1"};args:=[]any{}
+		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
+		if chatType!=""{add(chatType,"g.chat_type=$%d")}
+		if query!=""{add("%"+query+"%","(g.title ILIKE $%d OR g.username ILIKE $%d)");}
+		if filter.Verified!=nil{add(*filter.Verified,"g.is_verified=$%d")}
+		if filter.MinMembers>0{add(filter.MinMembers,"g.member_count >= $%d")}
+		if filter.MaxMembers>0{add(filter.MaxMembers,"g.member_count <= $%d")}
+		if filter.MinSources>0{add(filter.MinSources,"(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) >= $%d")}
+		if filter.MinContributors>0{add(filter.MinContributors,"(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) >= $%d")}
+		where:=strings.Join(clauses," AND ")
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+where,args...).Scan(&total);err!=nil{return err}
+		args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
+		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
 			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id),
-			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),
-			g.last_seen_at
-			FROM public_groups g WHERE `+filter+` ORDER BY g.last_seen_at DESC,g.title ASC,g.id ASC LIMIT $`+limitArg+` OFFSET $`+offsetArg,args...)
-		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
+			FROM public_groups g WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
+		rows,err:=tx.QueryContext(ctx,querySQL,args...);if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
 	})
 	return items,total,err
 }
-
 
 type GroupSource struct {
 	AccountID string `json:"account_id"`
