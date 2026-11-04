@@ -278,3 +278,39 @@ func (s *Service) ListProxyChecks(ctx context.Context,tenantID,proxyID string,li
 	})
 	return out,err
 }
+// CheckActiveProxies performs a tenant-scoped health sweep. A PostgreSQL
+// session advisory lock prevents multiple Worker instances from duplicating
+// the same sweep.
+func (s *Service) CheckActiveProxies(ctx context.Context) error {
+	conn,err:=s.db.Conn(ctx);if err!=nil{return err};defer conn.Close()
+	const lockName="tgqf:proxy-health-sweep"
+	var acquired bool
+	if err:=conn.QueryRowContext(ctx,"SELECT pg_try_advisory_lock(hashtextextended($1,0))",lockName).Scan(&acquired);err!=nil{return err}
+	if !acquired{return nil}
+	defer func(){unlockCtx,cancel:=context.WithTimeout(context.Background(),2*time.Second);defer cancel();_,_=conn.ExecContext(unlockCtx,"SELECT pg_advisory_unlock(hashtextextended($1,0))",lockName)}()
+	tenantRows,err:=s.db.QueryContext(ctx,"SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()")
+	if err!=nil{return err}
+	tenantIDs:=[]string{}
+	for tenantRows.Next(){var id string;if err:=tenantRows.Scan(&id);err!=nil{tenantRows.Close();return err};tenantIDs=append(tenantIDs,id)}
+	if err:=tenantRows.Err();err!=nil{tenantRows.Close();return err};tenantRows.Close()
+	var failures []error
+	for _,tenantID:=range tenantIDs {
+		if err:=ctx.Err();err!=nil{return errors.Join(append(failures,err)...)}
+		proxyIDs:=[]string{}
+		listErr:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+			rows,err:=tx.QueryContext(ctx,"SELECT id::text FROM tenant_proxies WHERE tenant_id=$1 ORDER BY created_at,id",tenantID)
+			if err!=nil{return err};defer rows.Close()
+			for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{return err};proxyIDs=append(proxyIDs,id)}
+			return rows.Err()
+		})
+		if listErr!=nil{failures=append(failures,fmt.Errorf("list proxies for tenant %s: %w",tenantID,listErr));continue}
+		for _,proxyID:=range proxyIDs {
+			if err:=ctx.Err();err!=nil{return errors.Join(append(failures,err)...)}
+			checkCtx,cancel:=context.WithTimeout(ctx,8*time.Second)
+			checkErr:=s.CheckProxy(checkCtx,tenantID,proxyID)
+			cancel()
+			if checkErr!=nil{failures=append(failures,fmt.Errorf("proxy %s: %w",proxyID,checkErr))}
+		}
+	}
+	return errors.Join(failures...)
+}
