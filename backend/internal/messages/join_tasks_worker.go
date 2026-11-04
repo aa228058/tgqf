@@ -204,7 +204,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
     LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
     JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
-    WHERE a.tenant_id=$1 AND a.status='request_pending'
+    WHERE a.tenant_id=$1 AND t.status='queued' AND a.status='request_pending'
       AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
       AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
       AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
@@ -244,7 +244,8 @@ func (s *Service) DeferJoinApprovalCheck(ctx context.Context,job JoinApprovalJob
   if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
   res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts
    SET approval_check_lease_until=GREATEST(approval_check_lease_until,NOW()+($1*INTERVAL '1 second'))
-   WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='request_pending' AND approval_check_lease_until=$5`,
+   WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='request_pending' AND approval_check_lease_until=$5
+     AND EXISTS(SELECT 1 FROM tenant_join_tasks t WHERE t.tenant_id=$2 AND t.id=$3 AND t.status='queued')`,
    seconds,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
   if err!=nil{return err}
   n,_:=res.RowsAffected()
@@ -262,7 +263,9 @@ func normalizeJoinApprovalResult(memberStatus string) (string,string,bool) {
 	case "member","administrator","creator","owner":
 		return "joined","approved",true
 	case "banned","left","invalid","expired":
-		return "failed","declined",true
+		// Membership absence or an invalid invite is not proof that an admin
+		// explicitly rejected the request. Preserve that distinction.
+		return "failed","unknown",true
 	default:
 		return "request_pending","request_pending",false
 	}
@@ -274,7 +277,8 @@ func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,membe
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
 		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,approval_check_lease_until=NULL,last_error='',updated_at=NOW()
-			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending' AND approval_check_lease_until=$6`,status,application,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending' AND approval_check_lease_until=$6
+              AND EXISTS(SELECT 1 FROM tenant_join_tasks t WHERE t.tenant_id=$3 AND t.id=$4 AND t.status='queued')`,status,application,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return nil}
 		return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
 	})
