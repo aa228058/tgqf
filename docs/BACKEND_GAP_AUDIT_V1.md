@@ -44,7 +44,7 @@
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为可断点续传的 SSE + Redis Streams；仍未实现 WebSocket，且需 Redis 集成测试覆盖断线重连、游标续传和保留窗口 |
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
-| 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 采集与私密邀请只读验证已接入，尚待运行验收 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；worker 每 15 分钟对有来源账号执行到期检查（同一链接至少间隔 6 小时），仅调用 `messages.checkChatInvite`，不加入群；结果区分 valid/approval_required/invalid/unknown，保存最近检查时间和错误；公开 username 在线解析校验、公开链接失效刷新、群资料自动关联完善仍待补齐 |
+| 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 采集与私密邀请只读验证已接入，尚待运行验收 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；worker 每 15 分钟对有来源账号执行到期检查（同一链接至少间隔 6 小时），仅调用 `messages.checkChatInvite`，不加入群；结果区分 valid/approval_required/invalid/unknown，保存最近检查时间和错误；公开 username 已接入 `contacts.resolveUsername` 只读解析（不加入群）；公开/私密链接均由 worker 按 6 小时冷却刷新并记录结果；链接与群资料自动关联完善仍待补齐 |
 | 自动加群 | tenant_join_tasks、tenant_join_task_accounts、Worker 租约执行器 | 公开用户名/公开链接/私密邀请链接执行及审批状态 Worker 轮询同步已实现代码闭环，仍需真实账号验收 | 支持明确授权、租户内账号分配、来源校验、任务状态机、过期租约回收；对 INVITE_REQUEST_SENT 记录待审批；FloodWait 向上取整并加 1 秒缓冲，同一任务及触发限流的账号进入冷却，不通过切换账号规避 |
 | 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/regex、排除词、聊天类型、大小写；只记录命中，不触发自动动作；规则启停和命中分页 API 已提供 |
 | 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
@@ -139,7 +139,7 @@
 - `GET/POST /api/v1/join-tasks`、`GET /api/v1/join-tasks/{id}`（自动加群任务及账号分配状态）
 - `POST /api/v1/join-tasks/{id}/{action}`（`start`、`pause`、`resume`、`cancel`；公开目标启动后由 Worker 调用 MTProto 加入）
 - `GET/PUT /api/v1/group-links/settings`（分别启停私聊、群组、频道来源及总开关）
-- `GET /api/v1/group-links` 对外返回 `last_checked_at`、`last_check_error`；私密邀请由 worker 定期只读检查，临时网络错误/FloodWait 保留为 `unknown`，不会误标失效。
+- `GET /api/v1/group-links` 对外返回 `last_checked_at`、`last_check_error`；公开 username 使用 `contacts.resolveUsername` 只读解析，私密邀请使用 `messages.checkChatInvite`；两者均由 worker 定期检查，临时网络错误/FloodWait 保留为 `unknown`，不会误标失效，也不会触发加群。
 
 ## 5. CI 与代码状态
 
