@@ -85,6 +85,8 @@ func (s *Service) ReadMessageEvents(ctx context.Context, tenantID, cursor string
  return events,nil
 }
 
+func nullJSON(raw []byte) any { if len(raw)==0 { return nil }; return string(raw) }
+
 type Incoming struct {
 	AccountID string
 	ChatID int64
