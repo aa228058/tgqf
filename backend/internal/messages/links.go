@@ -24,7 +24,7 @@ type DiscoveredLink struct {
 var telegramLinkPattern = regexp.MustCompile(`(?i)(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(\+[A-Za-z0-9_-]{8,}|joinchat/[A-Za-z0-9_-]{8,}|[A-Za-z0-9_]{5,})`)
 
 var reservedTelegramPaths = map[string]bool{
-	"addstickers":true,"addemoji":true,"addtheme":true,"addlist":true,
+	"s":true,"addstickers":true,"addemoji":true,"addtheme":true,"addlist":true,
 	"share":true,"proxy":true,"socks":true,"c":true,"iv":true,
 	"login":true,"confirmphone":true,"setlanguage":true,"bg":true,
 }
