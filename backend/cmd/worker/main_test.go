@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"errors"
 	"time"
 	"strings"
 
@@ -69,4 +70,22 @@ func TestGenerateRandomTelegramUsername(t *testing.T) {
 			}
 		}
 	})}
+}
+
+func TestIsPermanentJoinFailure(t *testing.T) {
+    tests := []struct { name string; err error; want bool }{
+        {"expired invite", errors.New("INVITE_HASH_EXPIRED"), true},
+        {"private channel", errors.New("CHANNEL_PRIVATE"), true},
+        {"already participant", errors.New("USER_ALREADY_PARTICIPANT"), true},
+        {"flood wait", errors.New("FLOOD_WAIT_120"), false},
+        {"timeout", errors.New("context deadline exceeded"), false},
+        {"temporary rpc", errors.New("INTERNAL"), false},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            if got := isPermanentJoinFailure(tt.err); got != tt.want {
+                t.Fatalf("isPermanentJoinFailure(%v)=%v, want %v", tt.err, got, tt.want)
+            }
+        })
+    }
 }
