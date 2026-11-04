@@ -52,3 +52,10 @@ func TestValidateGroupLibraryFilter(t *testing.T) {
 	}
 	for _,filter:=range invalid { if err:=validateGroupLibraryFilter(filter);err==nil { t.Errorf("invalid filter accepted: %+v",filter) } }
 }
+
+func TestNullJSONPreservesUnknownPermissions(t *testing.T) {
+	if got:=nullJSON(nil);got!=nil { t.Fatalf("unknown snapshot should be SQL NULL, got %#v",got) }
+	raw:=[]byte(`{"CanSendMessages":false}`)
+	got,ok:=nullJSON(raw).(string)
+	if !ok||got!=string(raw) { t.Fatalf("snapshot JSON = %#v, want %s",nullJSON(raw),raw) }
+}
