@@ -104,3 +104,12 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - GET/PUT `/api/v1/accounts/username-generation-settings`：读取和保存租户用户名生成规则；该设置是本系统的生成策略，不代表 Telegram 已接受用户名。
 
 用户名最终可用性由 Telegram 服务端裁定；客户端格式校验不能代替服务端唯一性检查。Telegram FloodWait、用户名占用及其他 MTProto 错误由任务执行结果记录，按任务策略重试；不要高频重复提交。当前实时资料读取使用 MTGo 的已授权 self User 对象；Telegram 的完整隐私/简介字段不在该接口的承诺范围内。
+
+
+### 私密邀请加入与审批自动同步
+- 加群任务可选择公开群目标或私密邀请链接，私密邀请哈希加密保存；只允许显式确认拥有加入授权的租户任务执行。
+- MTGo 加群遇到 Telegram `INVITE_REQUEST_SENT` 时，任务进入 `request_pending`，不会把“已提交申请”误记为“已加入”。
+- 审批同步优先使用已解析的 Telegram chat ID 查询当前账号成员状态；私密邀请未返回 chat ID 时，改用任务保存的邀请哈希调用 `messages.checkChatInvite`。Telegram 返回 `ChatInviteAlready` 后将任务同步为 `joined/approved`，仍需审批则保持待处理。
+- 邀请失效/过期会记录为失败/declined；FloodWait 使用 Telegram 返回的冷却时间延迟检查。普通网络错误不改变申请状态，后续轮询继续。
+- 审批检查使用独立短租约，按租户查询、账号归属与授权状态过滤；多 Worker 通过行锁和 SKIP LOCKED 避免重复领取。私密邀请哈希只在执行内存中解密，不通过任务 API 回传。
+- 自动审批同步无法从 Telegram 的邀请检查结果推断管理员是否手动拒绝了申请；只有 Telegram 可见的成员状态或明确失效错误才能终结任务。
