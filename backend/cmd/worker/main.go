@@ -21,6 +21,7 @@ import (
 	"github.com/aa228058/tgqf/backend/internal/storage"
 	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 	"github.com/aa228058/tgqf/backend/internal/messages"
+	"github.com/aa228058/tgqf/backend/internal/safelog"
 	"github.com/mtgo-labs/mtgo/telegram/types"
 	"github.com/mtgo-labs/mtgo/tgerr"
 )
@@ -46,7 +47,7 @@ func scheduleReconnect(state *reconnectState, now time.Time) time.Duration {
 }
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(safelog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	cfg, err := config.Load()
 	if err != nil { logger.Error("load configuration", "error", err); os.Exit(1) }

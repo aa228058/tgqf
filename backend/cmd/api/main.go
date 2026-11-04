@@ -17,9 +17,10 @@ import (
  "github.com/aa228058/tgqf/backend/internal/storage"
  "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
  "github.com/aa228058/tgqf/backend/internal/messages"
+ "github.com/aa228058/tgqf/backend/internal/safelog"
 )
 func main(){
- logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil));slog.SetDefault(logger)
+ logger:=slog.New(safelog.NewJSONHandler(os.Stdout,nil));slog.SetDefault(logger)
  cfg,err:=config.Load();if err!=nil{logger.Error("load configuration","error",err);os.Exit(1)}
  rootCtx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
  var store *storage.Store;var authService *auth.Service;var accountService *accounts.Service;var messageService *messages.Service
