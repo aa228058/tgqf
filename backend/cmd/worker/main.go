@@ -157,6 +157,20 @@ func main() {
 				if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
 			}()
 		}
+		if time.Since(lastGroupPermissionSweep)>=30*time.Minute {
+			lastGroupPermissionSweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
+				accountTenants.Range(func(key,value any)bool {
+					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
+					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
+					if err:=refreshGroupPermissions(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
+						logger.Warn("refresh Telegram group permissions","account_id",accountID,"error",err)
+					}
+					return sweepCtx.Err()==nil
+				})
+			}()
+		}
 		if time.Since(lastPrivateInviteSweep)>=15*time.Minute {
 			lastPrivateInviteSweep=time.Now()
 			go func(){
@@ -631,6 +645,39 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
 		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,accountID,link.LinkID,status,errorText,link.LeaseUntil,retryAfter);err!=nil {
 			logger.Warn("persist private invite check result","link_id",link.LinkID,"error",err)
+		}
+	}
+	return nil
+}
+
+
+func refreshGroupPermissions(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
+	items,err:=service.ListGroupPermissionRefreshes(ctx,tenantID,accountID,5)
+	if err!=nil{return err}
+	for _,item:=range items {
+		if ctx.Err()!=nil{return ctx.Err()}
+		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+		chat,checkErr:=manager.GetChatMetadata(checkCtx,accountID,item.ChatID)
+		cancel()
+		var defaultPermissions,accountRights []byte
+		if checkErr==nil {
+			if chat.Permissions!=nil {
+				defaultPermissions,checkErr=json.Marshal(chat.Permissions)
+			}
+			if checkErr==nil {
+				accountRights,checkErr=json.Marshal(map[string]any{
+					"is_admin":chat.IsAdmin,"is_creator":chat.IsCreator,
+					"admin_rights":chat.AdminRights,"banned_rights":chat.BannedRights,
+					"channel_admin_rights":chat.ChannelAdminRights,"chat_admin_rights":chat.ChatAdminRights,
+				})
+			}
+			item.Title=chat.FullName()
+			item.Username=chat.Username
+			item.MemberCount=chat.MembersCount
+			item.IsVerified=chat.IsVerified
+		}
+		if persistErr:=service.RecordGroupPermissionRefresh(ctx,tenantID,accountID,item,defaultPermissions,accountRights,checkErr);persistErr!=nil {
+			logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
 		}
 	}
 	return nil
