@@ -38,4 +38,12 @@ func TestMessageMediaCacheDeduplicatesWithinTenantAndScopesSource(t *testing.T) 
     if cached.ID!=first.ID||string(cached.Content)!=string(payload){t.Fatalf("cached media mismatch: %#v",cached)}
     _,err=service.GetCachedMessageMedia(ctx,tenantID,accountID,999,501)
     if !errors.Is(err,ErrMediaAssetNotFound){t.Fatalf("wrong chat cache lookup err=%v, want not found",err)}
+    if _,err:=db.ExecContext(ctx,`UPDATE message_media_cache SET cached_at=NOW()-INTERVAL '100 days' WHERE tenant_id=$1`,tenantID);err!=nil{t.Fatal(err)}
+    removed,err:=service.PruneMessageMediaCache(ctx,tenantID,90*24*60*60*1000000000)
+    if err!=nil{t.Fatal(err)}
+    if removed!=2{t.Fatalf("pruned links=%d, want 2",removed)}
+    _,err=service.GetCachedMessageMedia(ctx,tenantID,accountID,101,501)
+    if !errors.Is(err,ErrMediaAssetNotFound){t.Fatalf("expired cache lookup err=%v, want not found",err)}
+    if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM tenant_media_assets WHERE tenant_id=$1`,tenantID).Scan(&assets);err!=nil{t.Fatal(err)}
+    if assets!=1{t.Fatalf("pruning cache links must retain reusable tenant asset, assets=%d",assets)}
 }
