@@ -82,6 +82,7 @@ func TestIsPermanentJoinFailure(t *testing.T) {
         {"timeout", errors.New("context deadline exceeded"), false},
         {"temporary rpc", errors.New("INTERNAL"), false},
 		{"temporary account restriction", errors.New("USER_RESTRICTED"), false},
+        {"temporary channel capacity limit", errors.New("CHANNELS_TOO_MUCH"), false},
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
