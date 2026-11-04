@@ -44,9 +44,15 @@ func TestMessageListSupportsTenantScopedInboxFilters(t *testing.T) {
 	if total!=1||len(items)!=1||items[0].MediaType!="photo"{t.Fatalf("media filter result total=%d items=%#v",total,items)}
 	if string(items[0].MediaMetadata)!=`{"width":1280,"height":720,"file_size":4096}`{t.Fatalf("media metadata=%s, want persisted dimensions and file size",items[0].MediaMetadata)}
 	if _,err:=db.ExecContext(ctx,`UPDATE unified_messages SET grouped_id=987654321 WHERE id=$1`,"10000000-0000-4000-8000-000000000002");err!=nil{t.Fatal(err)}
+	if _,err:=db.ExecContext(ctx,`INSERT INTO unified_messages(id,tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,message_text,media_type,media_metadata,grouped_id,message_date)
+		VALUES($1,$2,$3,101,99,'private','Chat','','video','{}'::jsonb,987654321,NOW())`,
+		"10000000-0000-4000-8000-000000000005",tenantID,accountA);err!=nil{t.Fatal(err)}
 	items,total,err=service.List(ctx,tenantID,ListOptions{Limit:10,AccountID:accountA,ChatID:101,MediaType:"photo"})
 	if err!=nil{t.Fatal(err)}
 	if total!=1||items[0].GroupedID!=987654321{t.Fatalf("album grouped_id=%d, total=%d; want 987654321",items[0].GroupedID,total)}
+	album,err:=service.ListMediaAlbum(ctx,tenantID,"10000000-0000-4000-8000-000000000002")
+	if err!=nil{t.Fatal(err)}
+	if len(album)!=2||album[0].GroupedID!=987654321||album[1].GroupedID!=987654321{t.Fatalf("album retrieval returned %#v; want two messages in the same group",album)}
 	items,total,err=service.List(ctx,tenantID,ListOptions{Limit:10,AccountID:accountA,ChatID:101,IncludeProcessed:true})
 	if err!=nil{t.Fatal(err)}
 	if total!=3||len(items)!=3{t.Fatalf("include_processed result total=%d items=%d, want 3",total,len(items))}
