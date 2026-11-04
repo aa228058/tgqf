@@ -1,4 +1,6 @@
 "use client";
+
+import { apiErrorMessage, readAPIJSON } from "./api-response";
 import {useCallback,useEffect,useRef,useState} from "react";
 
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -14,13 +16,13 @@ export function AdminSystemHealthPage({token}:{token:string}){
   const sequence=++requestSequence.current;
   try{
    const response=await fetch(API+"/api/v1/admin/system-health",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
-   const result=await response.json();
+   const result=await readAPIJSON<{health:Health;status:string}>(response);
    if(!response.ok)throw new Error(result.error||"监控数据获取失败");
    if(sequence!==requestSequence.current)return;
    setHealth(result.health);setStatus(result.status);setUpdated(new Date().toLocaleTimeString());setError("");
    const alertResponse=await fetch(API+"/api/v1/admin/system-alerts",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
    if(sequence!==requestSequence.current)return;
-   if(alertResponse.ok){const alertResult=await alertResponse.json();if(sequence===requestSequence.current)setAlerts(alertResult.alerts||[])}
+   if(alertResponse.ok){const alertResult=await readAPIJSON<{alerts:Alert[]}>(alertResponse);if(sequence===requestSequence.current)setAlerts(alertResult.alerts||[])}
    else setError("运行指标已更新，但告警列表暂时不可用");
   }catch(e){if(sequence===requestSequence.current)setError(e instanceof Error?e.message:"监控数据获取失败")}
  },[token]);
