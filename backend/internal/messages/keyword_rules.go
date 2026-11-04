@@ -347,6 +347,25 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
     })
 }
 
+func (s *Service) ReleaseKeywordAction(ctx context.Context,job KeywordActionJob,delay time.Duration,reason string) error {
+    if delay < time.Second { delay = time.Second }
+    if delay > 15*time.Minute { delay = 15*time.Minute }
+    reason = strings.TrimSpace(reason)
+    if reason == "" { reason = "Telegram account temporarily unavailable" }
+    if len(reason) > 500 { reason = reason[:500] }
+    return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs
+            SET status='pending',attempts=GREATEST(attempts-1,0),available_at=NOW()+($5 * INTERVAL '1 second'),
+                lease_until=NULL,last_error=$3,updated_at=NOW()
+            WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,
+            job.TenantID,job.ID,reason,job.LeaseUntil,int64(delay.Seconds()))
+        if err!=nil{return err}
+        n,_:=result.RowsAffected()
+        if n==0{return errors.New("keyword action lease not found")}
+        return nil
+    })
+}
+
 func (s *Service) PauseKeywordAction(ctx context.Context,job KeywordActionJob,reason string) error {
     reason=strings.TrimSpace(reason);if reason==""{reason="tenant inactive; manual review required"};if len(reason)>500{reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
