@@ -197,7 +197,8 @@ func main() {
 	defer ticker.Stop()
 	lastProxySweep:=time.Time{}
 	lastPrivateInviteSweep:=time.Time{}
-	lastGroupPermissionSweep:=time.Time{}\n\tlastAccountGroupSweep:=time.Time{}
+	lastGroupPermissionSweep:=time.Time{}
+\tlastAccountGroupSweep:=time.Time{}
 	lastMediaCacheSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
@@ -679,7 +680,9 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			}
 			if updateErr==nil && len(job.PhotoData)>0 {
 				fileName:="profile.jpg"
-				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r\n\x1a\n" { fileName="profile.png" }
+				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r
+\x1a
+" { fileName="profile.png" }
 				updateErr=manager.UpdateProfilePhoto(updateCtx,job.AccountID,job.PhotoData,fileName)
 			}
 			usernameResultUncertain := false
