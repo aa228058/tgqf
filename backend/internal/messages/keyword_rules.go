@@ -130,6 +130,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.SenderUsernames,err=normalizeFilters(rule.SenderUsernames);if err!=nil{return rule,err}
     rule.SenderNames,err=normalizeFilters(rule.SenderNames);if err!=nil{return rule,err}
     seenSender:=map[int64]bool{};for _,id:=range rule.SenderIDs{if id==0||seenSender[id]{return rule,fmt.Errorf("%w: invalid or duplicate sender id",ErrInvalidKeywordRule)};seenSender[id]=true}
+    legacyNoAction := len(rule.ActionSteps)==0 && strings.TrimSpace(rule.ActionType)=="" && strings.TrimSpace(rule.ReplyText)=="" && len(rule.ReplyTextByChatType)==0 && rule.ContactPhone=="" && rule.MediaAssetID=="" && len(rule.MediaAlbumItems)==0
     if len(rule.ActionSteps)>10 { return rule,fmt.Errorf("%w: at most 10 action steps are allowed",ErrInvalidKeywordRule) }
     if len(rule.ActionSteps)==0 {
         rule.ActionSteps=[]KeywordActionStep{{ActionType:rule.ActionType,Text:rule.ReplyText,ReplyTextByChatType:rule.ReplyTextByChatType,ContactPhone:rule.ContactPhone,ContactFirstName:rule.ContactFirstName,ContactLastName:rule.ContactLastName,MediaAssetID:rule.MediaAssetID,MediaType:rule.MediaType,MediaCaption:rule.MediaCaption,MediaAlbumItems:rule.MediaAlbumItems}}
@@ -208,6 +209,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
         step.MediaCaption=strings.TrimSpace(step.MediaCaption)
         switch step.ActionType {
         case "text":
+            if legacyNoAction && step.Text=="" && len(step.ReplyTextByChatType)==0 { continue }
             hasReply:=false;for _,reply:=range step.ReplyTextByChatType { if strings.TrimSpace(reply)!="" { hasReply=true;break } }
             if step.Text=="" {
                 if !hasReply { return rule,fmt.Errorf("%w: text step %d requires text",ErrInvalidKeywordRule,i+1) }
