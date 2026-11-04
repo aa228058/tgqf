@@ -91,3 +91,16 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - GET /api/v1/keyword-actions 返回任务状态、重试次数、错误信息、相册素材清单及完整 telegram_message_ids；POST /api/v1/keyword-actions/{id}/{action} 支持 pause、resume、retry；任务状态支持 pending、processing、sent、failed、paused。
 - Worker 对离线账号释放租约并延迟重试，租户停用时暂停任务，Telegram FloodWait 进入账号冷却；普通失败最多重试 5 次。
 - 任务采用至少一次投递语义：若 Telegram 已接受发送但数据库结果回写失败，租约过期后可能重复发送；Telegram MTProto 媒体组接口不提供本项目可用的端到端幂等键，因此不承诺 exactly-once。
+
+
+## Telegram 账号资料与头像
+账号资料变更采用持久化批量任务，任务按租户隔离并支持查询、重试、恢复和取消；实际 Telegram 写入由 MTGo 运行时执行。头像上传通过 multipart 的 `photo` 字段提交，`account_ids` 为 JSON 字符串数组，单文件最大 5 MiB，仅接受可完整解码的 JPEG/PNG，最大 4096×4096 且不超过 16MP；上传同一头像可应用于 1-20 个当前租户账号。SVG、WebP 和伪造 MIME/扩展名内容不接受。
+
+- POST `/api/v1/accounts/profile-updates/photo`：上传头像并为指定账号创建批量任务，返回 202、batch_id 和 jobs。
+- POST `/api/v1/accounts/profile-updates`：批量提交姓名、简介及用户名资料更新任务。
+- GET `/api/v1/accounts/profile-updates`：按 batch_id/status 分页查询任务。
+- POST `/api/v1/accounts/profile-updates/{id}/retry|resume|cancel`：管理单个资料更新任务。
+- GET `/api/v1/accounts/{id}/profile`：读取当前在线 MTGo 会话的 Telegram 自身身份（用户 ID、用户名、姓名、手机号）；先验证账号属于当前租户。账号离线时返回冲突，不返回缓存冒充实时资料。
+- GET/PUT `/api/v1/accounts/username-generation-settings`：读取和保存租户用户名生成规则；该设置是本系统的生成策略，不代表 Telegram 已接受用户名。
+
+用户名最终可用性由 Telegram 服务端裁定；客户端格式校验不能代替服务端唯一性检查。Telegram FloodWait、用户名占用及其他 MTProto 错误由任务执行结果记录，按任务策略重试；不要高频重复提交。当前实时资料读取使用 MTGo 的已授权 self User 对象；Telegram 的完整隐私/简介字段不在该接口的承诺范围内。
