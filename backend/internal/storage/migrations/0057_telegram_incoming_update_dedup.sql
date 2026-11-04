@@ -4,9 +4,7 @@ CREATE TABLE IF NOT EXISTS telegram_incoming_update_dedup (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
     first_received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (tenant_id, telegram_account_id, chat_id, message_id),
-    FOREIGN KEY (tenant_id, telegram_account_id)
-        REFERENCES telegram_accounts(tenant_id, id) ON DELETE CASCADE
+    PRIMARY KEY (tenant_id, telegram_account_id, chat_id, message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_telegram_incoming_update_dedup_received
