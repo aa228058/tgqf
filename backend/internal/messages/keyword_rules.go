@@ -524,7 +524,7 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             }
             if messageIDs[0]!=telegramMessageID { return errors.New("primary Telegram message id does not match result list") }
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
-            stepResults,encodedStepResults,stepErr:=appendKeywordActionStepResult(job.StepResults,job,messageIDs,0);if stepErr!=nil{return stepErr}
+            _,encodedStepResults,stepErr:=appendKeywordActionStepResult(job.StepResults,job,messageIDs,0);if stepErr!=nil{return stepErr}
 nextStatus:="sent";nextIndex:=job.CurrentStepIndex
 if len(job.ActionSteps)>0 && job.CurrentStepIndex<len(job.ActionSteps)-1 {nextStatus="pending";nextIndex++}
 var result sql.Result
@@ -534,7 +534,6 @@ if len(job.ActionSteps)>0 {
  result,err=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
 }
 if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
-            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
             // Keep the conversation timeline consistent with Telegram: write
             // every sent message (including each album item) and its realtime
             // event in the same transaction as the action result.
@@ -735,9 +734,6 @@ if len(job.ActionSteps)>0 {
  updated,err=tx.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3 AND action_type='voice_call'`,job.TenantID,job.ID,job.LeaseUntil,result.CallID,result.AccessHash)
 }
 if err!=nil{return err}
-        if err != nil {
-            return err
-        }
         count, err := updated.RowsAffected()
         if err != nil {
             return err
