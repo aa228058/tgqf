@@ -5,6 +5,7 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/go-backend.yml"
+      - "docs/PHASE3_QUALITY_GATES.md"
   pull_request:
     paths:
       - "backend/**"
