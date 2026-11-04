@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -391,4 +392,36 @@ func TestMergePublicGroupsPreservesMetadataAndCombinesTenantSources(t *testing.T
 	var sourceExists bool
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM public_groups WHERE id=$1)`,sourceID).Scan(&sourceExists); err != nil { t.Fatal(err) }
 	if sourceExists { t.Fatal("duplicate source group was not deleted") }
+}
+
+
+func TestConcurrentTenantImportsConvergeOnOneSharedGroup(t *testing.T) {
+	db, cleanup := openGroupIntegrationDB(t)
+	defer cleanup()
+	service := New(db)
+	ctx := context.Background()
+	tenants := []string{"11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"}
+	start := make(chan struct{})
+	errs := make(chan error, len(tenants))
+	var wg sync.WaitGroup
+	for i, tenant := range tenants {
+		wg.Add(1)
+		go func(i int, tenant string) {
+			defer wg.Done()
+			<-start
+			inserted, skipped, err := service.ImportGroupCatalogue(ctx, tenant, []GroupCatalogueImportRecord{{
+				ChatID: 987654321, ChatType: "group", Title: fmt.Sprintf("tenant-%d", i),
+			}})
+			if err == nil && inserted+skipped != 1 { err = fmt.Errorf("tenant %s inserted=%d skipped=%d", tenant, inserted, skipped) }
+			errs <- err
+		}(i, tenant)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs { if err != nil { t.Fatal(err) } }
+	var groups, contributors int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public_groups WHERE chat_type='group' AND telegram_chat_id=987654321`).Scan(&groups); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant_group_contributions c JOIN public_groups g ON g.id=c.group_id WHERE g.chat_type='group' AND g.telegram_chat_id=987654321`).Scan(&contributors); err != nil { t.Fatal(err) }
+	if groups != 1 || contributors != 2 { t.Fatalf("shared groups=%d tenant contributions=%d, want 1/2", groups, contributors) }
 }
