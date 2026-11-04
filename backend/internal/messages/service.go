@@ -567,7 +567,7 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 		where:=strings.Join(clauses," AND ")
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE "+where,args...).Scan(&total);err!=nil{return err}
 		args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
-		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,g.default_permissions,g.permissions_observed_at,
+		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,COALESCE(g.default_permissions,'null'::jsonb),g.permissions_observed_at,
 			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id),
 			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id),g.last_seen_at
 			FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
@@ -599,7 +599,7 @@ func (s *Service) GetGroupLibraryItem(ctx context.Context, tenantID string, grou
 	var item GroupLibraryItem
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
-			g.default_permissions,g.permissions_observed_at,
+			COALESCE(g.default_permissions,'null'::jsonb),g.permissions_observed_at,
 			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id AND src.tenant_id=$2),
 			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=$2),g.last_seen_at
 			FROM public_groups g WHERE g.id=$1`, groupID, tenantID).Scan(
