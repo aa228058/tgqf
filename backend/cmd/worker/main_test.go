@@ -190,11 +190,15 @@ func TestWorkerHeartbeatRestartLifecycle(t *testing.T) {
 	if err := recordWorkerHeartbeat(ctx, store.DB, instanceID, "ci-host", 202, true); err != nil {
 		t.Fatalf("record worker restart: %v", err)
 	}
-	if err := store.DB.QueryRowContext(ctx, "SELECT status,process_id,started_at,stopped_at FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&status, new(int), &originalStarted, &stoppedAt); err != nil {
+	var restartedStarted time.Time
+	if err := store.DB.QueryRowContext(ctx, "SELECT status,started_at,stopped_at FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&status, &restartedStarted, &stoppedAt); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || stoppedAt != nil {
 		t.Fatalf("restarted worker state status=%q stopped_at=%v", status, stoppedAt)
+	}
+	if !restartedStarted.Equal(originalStarted) {
+		t.Fatalf("worker started_at changed across restart: before=%s after=%s", originalStarted, restartedStarted)
 	}
 	var processID int
 	if err := store.DB.QueryRowContext(ctx, "SELECT process_id FROM worker_instances WHERE instance_id=$1", instanceID).Scan(&processID); err != nil {
