@@ -558,7 +558,9 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 				status="invalid"
 			}
 		} else if valid { status="valid" } else { status="invalid" }
-		if err:=service.RecordPublicLinkCheck(ctx,tenantID,link.LinkID,status,errorText);err!=nil {
+		var retryAfter time.Duration
+		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
+		if err:=service.RecordPublicLinkCheck(ctx,tenantID,link.LinkID,status,errorText,retryAfter);err!=nil {
 			logger.Warn("persist public link check result","link_id",link.LinkID,"error",err)
 		}
 	}
@@ -584,7 +586,9 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 			default: status="unknown"
 			}
 		}
-		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,link.LinkID,status,errorText);err!=nil {
+		var retryAfter time.Duration
+		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
+		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,link.LinkID,status,errorText,retryAfter);err!=nil {
 			logger.Warn("persist private invite check result","link_id",link.LinkID,"error",err)
 		}
 	}
