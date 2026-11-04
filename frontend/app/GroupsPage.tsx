@@ -1,4 +1,6 @@
 "use client";
+
+import { apiErrorMessage, readAPIJSON } from "./api-response";
 import {useCallback,useEffect,useRef,useState,FormEvent} from "react";
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Group={id:number;chat_id:number;title:string;chat_type:string;username:string;member_count:number;is_verified:boolean;source_count:number;contributor_count:number;last_seen_at:string;default_permissions?:unknown;permissions_observed_at?:string};
@@ -6,7 +8,7 @@ type Link={id:number;group_id?:number;type:string;public_url:string;private_invi
 type Source={account_id:string;account_name:string;chat_id:number;first_seen_at:string;last_seen_at:string;discovery_count:number;account_rights?:unknown};
 type Settings={enabled:boolean;from_private_messages:boolean;from_groups:boolean;from_channels:boolean};
 type ImportTenant={id:string;name:string;status:string};
-async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{const headers:Record<string,string>={Authorization:`Bearer ${token}`};if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";Object.assign(headers,init?.headers||{});const r=await fetch(API+path,{...init,headers,cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return r.json() as Promise<T>}
+async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{const headers:Record<string,string>={Authorization:`Bearer ${token}`};if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";Object.assign(headers,init?.headers||{});const r=await fetch(API+path,{...init,headers,cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return readAPIJSON<T>(r)}
 const date=(s?:string)=>s?new Date(s).toLocaleString():"—";
 export function GroupsPage({token,canImport,isSuperAdmin=false}:{token:string;canImport:boolean;isSuperAdmin?:boolean}){
  const [tab,setTab]=useState<"catalogue"|"links"|"settings">("catalogue"),[groups,setGroups]=useState<Group[]>([]),[links,setLinks]=useState<Link[]>([]),[stats,setStats]=useState<Record<string,number>>({});
