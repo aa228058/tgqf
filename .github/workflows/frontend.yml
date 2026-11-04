@@ -35,12 +35,14 @@ jobs:
           cache-dependency-path: frontend/package.json
       - run: npm install --no-audit --no-fund
       - run: npm run lint
+      - name: TypeScript type check
+        run: npx tsc --noEmit
       - name: Validate deployment shell scripts
         run: |
           bash -n ../deploy/*.sh
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck ../deploy/*.sh
+          shellcheck -S error ../deploy/*.sh
       - name: Check patch whitespace
         run: git diff --check
       - run: npm run build
