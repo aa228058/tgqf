@@ -2,13 +2,21 @@ package auth
 
 import (
     "context"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
     "fmt"
     "runtime"
     "syscall"
     "time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type SystemHealth struct {
+    Redis RedisHealth `json:"redis"`
+    Queues QueueHealth `json:"queues"`
     CheckedAt time.Time `json:"checked_at"`
     Host HostHealth `json:"host"`
     Database DatabaseHealth `json:"database"`
@@ -17,6 +25,7 @@ type SystemHealth struct {
     Proxies ProxyHealth `json:"proxies"`
 }
 type HostHealth struct {
+    CPUPercent float64 `json:"cpu_percent"`
     Goroutines int `json:"goroutines"`
     HeapAllocBytes uint64 `json:"heap_alloc_bytes"`
     HeapInUseBytes uint64 `json:"heap_in_use_bytes"`
@@ -33,6 +42,8 @@ type DatabaseHealth struct {
     MaxOpenConnections int `json:"max_open_connections"`
     PingLatencyMS int64 `json:"ping_latency_ms"`
 }
+type RedisHealth struct { Status string `json:"status"`; PingLatencyMS int64 `json:"ping_latency_ms"` }
+type QueueHealth struct { IncomingStreamLength int64 `json:"incoming_stream_length"`; IncomingPending int64 `json:"incoming_pending"`; MessageOutboxPending int64 `json:"message_outbox_pending"` }
 type WorkerHealth struct {
     Total int `json:"total"`
     Running int `json:"running"`
@@ -56,7 +67,7 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
     result:=SystemHealth{CheckedAt:time.Now().UTC()}
     var mem runtime.MemStats
     runtime.ReadMemStats(&mem)
-    result.Host=HostHealth{Goroutines:runtime.NumGoroutine(),HeapAllocBytes:mem.HeapAlloc,HeapInUseBytes:mem.HeapInuse,SysBytes:mem.Sys}
+    result.Host=HostHealth{CPUPercent:sampleCPUPercent(),Goroutines:runtime.NumGoroutine(),HeapAllocBytes:mem.HeapAlloc,HeapInUseBytes:mem.HeapInuse,SysBytes:mem.Sys}
     var fs syscall.Statfs_t
     if err:=syscall.Statfs("/",&fs);err==nil && fs.Blocks>0 {
         result.Host.DiskTotalBytes=fs.Blocks*uint64(fs.Bsize)
@@ -76,6 +87,21 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
     result.Database.IdleConnections=stats.Idle
     result.Database.MaxOpenConnections=stats.MaxOpenConnections
     if err:=s.db.QueryRowContext(ctx,`SELECT COUNT(*),COUNT(*) FILTER(WHERE status='running' AND heartbeat_at >= NOW()-INTERVAL '45 seconds'),COUNT(*) FILTER(WHERE status='running' AND heartbeat_at < NOW()-INTERVAL '45 seconds'),COUNT(*) FILTER(WHERE status='stopped') FROM worker_instances`).Scan(&result.Workers.Total,&result.Workers.Running,&result.Workers.Stale,&result.Workers.Stopped);err!=nil{return result,fmt.Errorf("worker health: %w",err)}
+    if err:=s.db.QueryRowContext(ctx,"SELECT COUNT(*) FROM message_event_outbox WHERE published_at IS NULL").Scan(&result.Queues.MessageOutboxPending);err!=nil{return result,fmt.Errorf("message outbox health: %w",err)}
+    if s.redis==nil { result.Redis.Status="unavailable" } else {
+        redisStarted:=time.Now()
+        redisCtx,redisCancel:=context.WithTimeout(ctx,2*time.Second)
+        redisErr:=s.redis.Ping(redisCtx).Err()
+        redisCancel()
+        result.Redis.PingLatencyMS=time.Since(redisStarted).Milliseconds()
+        if redisErr!=nil { result.Redis.Status="error" } else {
+            result.Redis.Status="ok"
+            length,streamErr:=s.redis.XLen(ctx,"tgqf:telegram:incoming-updates").Result()
+            if streamErr==nil { result.Queues.IncomingStreamLength=length }
+            pending,pendingErr:=s.redis.XPending(ctx,"tgqf:telegram:incoming-updates","tgqf-message-ingestors").Result()
+            if pendingErr==nil && pending!=nil { result.Queues.IncomingPending=pending.Count }
+        }
+    }
     if err:=s.db.QueryRowContext(ctx,`SELECT COUNT(*),COUNT(*) FILTER(WHERE status='authorized'),COUNT(*) FILTER(WHERE status='disconnected'),COUNT(*) FILTER(WHERE status='error'),COUNT(*) FILTER(WHERE status='pending') FROM telegram_accounts`).Scan(&result.Accounts.Total,&result.Accounts.Authorized,&result.Accounts.Disconnected,&result.Accounts.Error,&result.Accounts.Pending);err!=nil{return result,fmt.Errorf("account health: %w",err)}
     if err:=s.db.QueryRowContext(ctx,`SELECT (SELECT COUNT(*) FROM tenant_proxies),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE checked_at >= NOW()-INTERVAL '15 minutes')`).Scan(&result.Proxies.Total,&result.Proxies.FailedChecks15m,&result.Proxies.SuccessfulChecks15m);err!=nil{return result,fmt.Errorf("proxy health: %w",err)}
     if pingErr!=nil{return result,fmt.Errorf("PostgreSQL ping failed: %w",pingErr)}
@@ -83,6 +109,32 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
 }
 
 func (h SystemHealth) HasWarnings() bool {
-    return h.Database.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85
+    return h.Database.Status!="ok" || h.Redis.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85 || h.Queues.IncomingPending>100 || h.Queues.MessageOutboxPending>1000
 }
 
+
+var cpuSampleMu sync.Mutex
+var previousCPUTotal uint64
+var previousCPUIdle uint64
+
+func sampleCPUPercent() float64 {
+    data,err:=os.ReadFile("/proc/stat")
+    if err!=nil{return 0}
+    fields:=strings.Fields(strings.SplitN(string(data),"\n",2)[0])
+    if len(fields)<5 || fields[0]!="cpu" { return 0 }
+    var total,idle uint64
+    for i,value:=range fields[1:] {
+        n,parseErr:=strconv.ParseUint(value,10,64)
+        if parseErr!=nil { return 0 }
+        total+=n
+        if i==3 || i==4 { idle+=n }
+    }
+    cpuSampleMu.Lock()
+    defer cpuSampleMu.Unlock()
+    defer func(){previousCPUTotal=total;previousCPUIdle=idle}()
+    if previousCPUTotal==0 || total<=previousCPUTotal { return 0 }
+    totalDelta:=total-previousCPUTotal
+    idleDelta:=idle-previousCPUIdle
+    if totalDelta==0 { return 0 }
+    return 100*float64(totalDelta-idleDelta)/float64(totalDelta)
+}
