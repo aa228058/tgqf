@@ -119,3 +119,19 @@ func (s *Service) GetCachedMessageMedia(ctx context.Context,tenantID,accountID s
     if err=tx.Commit();err!=nil{return out,err}
     return out,nil
 }
+
+
+// PruneMessageMediaCache expires source-message cache links for one tenant.
+// The deduplicated asset rows are intentionally retained: they may also be
+// referenced by keyword actions or the tenant's reusable media library.
+func (s *Service) PruneMessageMediaCache(ctx context.Context,tenantID string,retention time.Duration)(int64,error) {
+	if strings.TrimSpace(tenantID)=="" { return 0,errors.New("tenant scope is required") }
+	if retention<24*time.Hour { retention=90*24*time.Hour }
+	tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return 0,err};defer tx.Rollback()
+	if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,tenantID);err!=nil{return 0,err}
+	result,err:=tx.ExecContext(ctx,`DELETE FROM message_media_cache WHERE tenant_id=$1 AND cached_at < NOW()-($2 * INTERVAL '1 second')`,tenantID,int64(retention.Seconds()))
+	if err!=nil{return 0,err}
+	removed,err:=result.RowsAffected();if err!=nil{return 0,err}
+	if err=tx.Commit();err!=nil{return 0,err}
+	return removed,nil
+}
