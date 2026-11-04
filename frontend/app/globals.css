@@ -459,3 +459,8 @@
 .keyword-preview{max-width:min(900px,95vw)}
 .keyword-preview>img,.keyword-preview>video,.keyword-preview>iframe{display:block;max-width:100%;max-height:68vh;margin:0 auto;border-radius:8px}
 .keyword-preview>audio{display:block;width:100%;margin:25px 0}
+
+.keyword-album-captions{display:grid;gap:8px;margin-top:10px}
+.keyword-album-captions label{display:grid;grid-template-columns:minmax(100px,1fr) minmax(160px,2fr);align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.keyword-album-captions input{width:100%;min-width:0}
+@media(max-width:520px){.keyword-album-captions label{grid-template-columns:1fr}}
