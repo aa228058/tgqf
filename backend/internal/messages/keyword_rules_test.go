@@ -240,3 +240,10 @@ func TestNormalizeKeywordMediaAlbum(t *testing.T) {
     invalid=valid;invalid.MediaAlbumItems[1].MediaType="document";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed document/photo album accepted")}
     invalid=valid;invalid.ReplyText="extra text";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed text/album action accepted")}
 }
+
+
+func TestKeywordAlbumJSONEmptyIsArray(t *testing.T) {
+    if got:=keywordAlbumJSON(nil);got!="[]" { t.Fatalf("empty album JSON = %q, want []",got) }
+    items:=[]KeywordMediaAlbumItem{{AssetID:"11111111-1111-4111-8111-111111111111",MediaType:"photo"}}
+    if got:=keywordAlbumJSON(items);!strings.Contains(got,`"media_type":"photo"`) { t.Fatalf("album JSON missing item fields: %s",got) }
+}
