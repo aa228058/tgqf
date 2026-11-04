@@ -87,13 +87,11 @@ func main() {
 		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
 		var defaultPermissionsJSON,accountRightsJSON []byte
 		if message.Chat.Permissions!=nil { defaultPermissionsJSON,_=json.Marshal(message.Chat.Permissions) }
-		if message.Chat.AdminRights!=nil || message.Chat.BannedRights!=nil || message.Chat.ChannelAdminRights!=nil || message.Chat.ChatAdminRights!=nil {
-			accountRightsJSON,_=json.Marshal(map[string]any{
-				"is_admin":message.Chat.IsAdmin,"is_creator":message.Chat.IsCreator,
-				"admin_rights":message.Chat.AdminRights,"banned_rights":message.Chat.BannedRights,
-				"channel_admin_rights":message.Chat.ChannelAdminRights,"chat_admin_rights":message.Chat.ChatAdminRights,
-			})
-		}
+		accountRightsJSON,_=json.Marshal(map[string]any{
+			"is_admin":message.Chat.IsAdmin,"is_creator":message.Chat.IsCreator,
+			"admin_rights":message.Chat.AdminRights,"banned_rights":message.Chat.BannedRights,
+			"channel_admin_rights":message.Chat.ChannelAdminRights,"chat_admin_rights":message.Chat.ChatAdminRights,
+		})
 		ingestCtx, cancelIngest := context.WithTimeout(ctx, 5*time.Second)
 		defer cancelIngest()
 		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
