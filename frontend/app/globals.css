@@ -329,3 +329,33 @@
 :root[data-theme="dark"] .settings-form input,:root[data-theme="dark"] .settings-form select{background:#101923;color:var(--ink)}
 @media(max-width:900px){.settings-page{padding:20px 14px 30px}}
 @media(max-width:520px){.settings-inline-form{align-items:stretch;flex-direction:column}.settings-inline-form label{width:100%}.settings-section-heading{align-items:flex-start}}
+
+
+.profile-workspace{display:grid;gap:14px}
+.profile-account-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.profile-account-list label{display:flex;align-items:center;gap:9px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:8px}
+.profile-account-list label span{min-width:0}
+.profile-account-list strong,.profile-account-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-account-list strong{font-size:11px}
+.profile-account-list small{font-size:10px;color:var(--muted);margin-top:4px}
+.profile-forms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.profile-forms .panel h2{font-size:16px;margin:0 0 6px}
+.profile-forms .panel>p{font-size:11px;color:var(--muted);margin:0 0 14px}
+.profile-checkbox{display:flex!important;align-items:center;gap:8px!important}
+.profile-checkbox input{width:auto!important}
+.profile-job-filters{display:flex;align-items:center;gap:7px}
+.profile-job-filters select{padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:11px}
+.profile-job-list{display:grid}
+.profile-job-list article{padding:12px 0;border-bottom:1px solid var(--line)}
+.profile-job-list article:last-child{border-bottom:0}
+.profile-job-title{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.profile-job-title strong,.profile-job-title small{display:block;overflow-wrap:anywhere}
+.profile-job-title strong{font-size:12px}
+.profile-job-title small,.profile-job-list article>small{font-size:10px;color:var(--muted);margin-top:4px}
+.profile-job-list article>small{display:block;overflow-wrap:anywhere}
+.profile-job-actions{display:flex;gap:6px;margin-top:8px}
+.profile-job-actions button{font-size:10px;padding:6px 9px}
+.profile-job-total{padding-top:10px;color:var(--muted);font-size:10px}
+:root[data-theme="dark"] .profile-job-filters select{background:#101923;color:var(--ink)}
+@media(max-width:900px){.profile-account-list{grid-template-columns:repeat(2,minmax(0,1fr))}.profile-forms{grid-template-columns:1fr}}
+@media(max-width:520px){.profile-account-list{grid-template-columns:1fr}.profile-job-filters{width:100%;justify-content:flex-end}.profile-job-title{align-items:flex-start}}
