@@ -2,6 +2,8 @@ package telegrammtgo
 
 import (
 	"encoding/base64"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -497,6 +499,53 @@ func (m *Manager) SendMediaReply(ctx context.Context, accountID string, chatID i
     if err!=nil{return 0,fmt.Errorf("send Telegram %s reply: %w",mediaType,err)}
     if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty media message")}
     return int64(sent.ID),nil
+}
+
+
+type MediaAlbumItem struct {
+    MediaType string
+    FileName string
+    MIMEType string
+    Caption string
+    Content []byte
+}
+
+// SendMediaAlbumReply uploads every item first and submits the album as one
+// Telegram multi-media request. A failed upload prevents any album from being sent.
+func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, items []MediaAlbumItem) ([]int64,error) {
+    if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) { return nil,errors.New("invalid Telegram reply message id") }
+    if len(items)<2 || len(items)>10 { return nil,errors.New("Telegram media albums require between 2 and 10 items") }
+    m.mu.RLock(); client:=m.clients[accountID]; m.mu.RUnlock()
+    if client==nil || !client.IsConnected() { return nil,errors.New("Telegram account is not connected") }
+    category:=""
+    totalBytes:=0
+    media:=make([]*tg.InputSingleMedia,0,len(items))
+    for _,item:=range items {
+        item.MediaType=strings.ToLower(strings.TrimSpace(item.MediaType))
+        if item.MediaType!="photo" && item.MediaType!="video" && item.MediaType!="document" { return nil,fmt.Errorf("unsupported album media type %q",item.MediaType) }
+        currentCategory:="visual"; if item.MediaType=="document" { currentCategory="document" }
+        if category!="" && category!=currentCategory { return nil,errors.New("Telegram albums may mix photos and videos, or contain documents, but cannot mix documents with photos/videos") }
+        category=currentCategory
+        if item.FileName=="" || len(item.Content)==0 || len(item.Content)>20<<20 { return nil,errors.New("each album item requires a file name and payload up to 20 MiB") }
+        totalBytes+=len(item.Content)
+        if totalBytes>100<<20 { return nil,errors.New("album payload exceeds 100 MiB") }
+        uploaded,err:=client.UploadFile(ctx,bytes.NewReader(item.Content),item.FileName,int64(len(item.Content)),nil)
+        if err!=nil { return nil,fmt.Errorf("upload album item %q: %w",item.FileName,err) }
+        var inputMedia tg.InputMediaClass
+        if item.MediaType=="photo" { inputMedia=&tg.InputMediaUploadedPhoto{File:uploaded.File} } else {
+            inputMedia=&tg.InputMediaUploadedDocument{File:uploaded.File,MimeType:item.MIMEType}
+        }
+        randomBytes:=make([]byte,8)
+        if _,err:=cryptorand.Read(randomBytes);err!=nil{return nil,fmt.Errorf("generate album item id: %w",err)}
+        randomID:=int64(binary.LittleEndian.Uint64(randomBytes));if randomID==0{randomID=1}
+        media=append(media,&tg.InputSingleMedia{Media:inputMedia,Message:item.Caption,RandomID:randomID})
+    }
+    sent,err:=client.SendMediaGroup(ctx,chatID,media,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
+    if err!=nil{return nil,fmt.Errorf("send Telegram media album: %w",err)}
+    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram returned %d album messages for %d items",len(sent),len(items))}
+    ids:=make([]int64,0,len(sent))
+    for _,message:=range sent { if message==nil||message.ID<=0{return nil,errors.New("Telegram returned an empty album message")};ids=append(ids,int64(message.ID)) }
+    return ids,nil
 }
 
 func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
