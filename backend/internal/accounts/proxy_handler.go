@@ -114,3 +114,27 @@ func (h *Handler) bindProxyBatch(w http.ResponseWriter,r *http.Request) {
 	}
 	writeJSON(w,http.StatusOK,map[string]any{"updated":count,"proxy_id":strings.TrimSpace(input.ProxyID)})
 }
+
+
+type bulkProxyCheckRequest struct { ProxyIDs []string `json:"proxy_ids"` }
+
+func (h *Handler) checkProxyBatch(w http.ResponseWriter,r *http.Request) {
+ var input bulkProxyCheckRequest
+ if !decode(w,r,&input) { writeError(w,http.StatusBadRequest,"invalid bulk proxy check request");return }
+ if len(input.ProxyIDs)<1 || len(input.ProxyIDs)>20 { writeError(w,http.StatusBadRequest,"select 1-20 proxies per diagnostic batch");return }
+ seen:=map[string]bool{}
+ for _,id:=range input.ProxyIDs { if !validAccountUUID(id)||seen[id] { writeError(w,http.StatusBadRequest,"proxy IDs must be valid and unique");return };seen[id]=true }
+ u:=auth.UserFromContext(r.Context())
+ type result struct { ProxyID string `json:"proxy_id"`; Reachable bool `json:"reachable"`; LatencyMS int64 `json:"latency_ms"`; Message string `json:"message,omitempty"` }
+ results:=make([]result,0,len(input.ProxyIDs));success:=0
+ for _,id:=range input.ProxyIDs {
+  ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second)
+  started:=time.Now()
+  err:=h.service.CheckProxy(ctx,u.TenantID,id)
+  cancel()
+  item:=result{ProxyID:id,Reachable:err==nil,LatencyMS:time.Since(started).Milliseconds()}
+  if err!=nil { item.Message="代理认证或 Telegram 数据中心 TCP 隧道检测失败"; if strings.Contains(err.Error(),"proxy not found"){item.Message="代理不存在或不属于当前租户"} } else { success++ }
+  results=append(results,item)
+ }
+ writeJSON(w,http.StatusOK,map[string]any{"total":len(results),"succeeded":success,"failed":len(results)-success,"results":results,"check":"proxy_auth_and_telegram_dc_tcp"})
+}
