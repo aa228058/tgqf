@@ -43,7 +43,17 @@ type DatabaseHealth struct {
 }
 type RedisHealth struct { Status string `json:"status"`; PingLatencyMS int64 `json:"ping_latency_ms"` }
 type QueueHealth struct { IncomingStreamLength int64 `json:"incoming_stream_length"`; IncomingPending int64 `json:"incoming_pending"`; MessageOutboxPending int64 `json:"message_outbox_pending"` }
+type WorkerInstanceHealth struct {
+    InstanceID string `json:"instance_id"`
+    Hostname string `json:"hostname"`
+    ProcessID int `json:"process_id"`
+    Status string `json:"status"`
+    StartedAt time.Time `json:"started_at"`
+    HeartbeatAt time.Time `json:"heartbeat_at"`
+    Stale bool `json:"stale"`
+}
 type WorkerHealth struct {
+    Instances []WorkerInstanceHealth `json:"instances"`
     Total int `json:"total"`
     Running int `json:"running"`
     Stale int `json:"stale"`
@@ -86,6 +96,12 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
     result.Database.IdleConnections=stats.Idle
     result.Database.MaxOpenConnections=stats.MaxOpenConnections
     if err:=s.db.QueryRowContext(ctx,`SELECT COUNT(*),COUNT(*) FILTER(WHERE status='running' AND heartbeat_at >= NOW()-INTERVAL '45 seconds'),COUNT(*) FILTER(WHERE status='running' AND heartbeat_at < NOW()-INTERVAL '45 seconds'),COUNT(*) FILTER(WHERE status='stopped') FROM worker_instances`).Scan(&result.Workers.Total,&result.Workers.Running,&result.Workers.Stale,&result.Workers.Stopped);err!=nil{return result,fmt.Errorf("worker health: %w",err)}
+    workerRows,workerErr:=s.db.QueryContext(ctx,`SELECT instance_id,hostname,process_id,status,started_at,heartbeat_at,(status='running' AND heartbeat_at<NOW()-INTERVAL '45 seconds') AS stale FROM worker_instances ORDER BY CASE WHEN status='running' AND heartbeat_at<NOW()-INTERVAL '45 seconds' THEN 0 WHEN status='running' THEN 1 ELSE 2 END,heartbeat_at DESC`)
+    if workerErr!=nil{return result,fmt.Errorf("worker instance details: %w",workerErr)}
+    result.Workers.Instances=make([]WorkerInstanceHealth,0)
+    for workerRows.Next(){var item WorkerInstanceHealth;if err:=workerRows.Scan(&item.InstanceID,&item.Hostname,&item.ProcessID,&item.Status,&item.StartedAt,&item.HeartbeatAt,&item.Stale);err!=nil{workerRows.Close();return result,fmt.Errorf("scan worker instance: %w",err)};result.Workers.Instances=append(result.Workers.Instances,item)}
+    if err:=workerRows.Err();err!=nil{workerRows.Close();return result,err}
+    workerRows.Close()
     if err:=s.db.QueryRowContext(ctx,"SELECT COUNT(*) FROM message_event_outbox WHERE published_at IS NULL").Scan(&result.Queues.MessageOutboxPending);err!=nil{return result,fmt.Errorf("message outbox health: %w",err)}
     if s.redis==nil { result.Redis.Status="unavailable" } else {
         redisStarted:=time.Now()
