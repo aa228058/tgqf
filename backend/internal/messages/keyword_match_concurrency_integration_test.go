@@ -51,7 +51,7 @@ func TestConcurrentIncomingUpdateCreatesOneKeywordMatchAndAction(t *testing.T) {
 			sender_ids JSONB NOT NULL DEFAULT '[]'::jsonb, sender_usernames JSONB NOT NULL DEFAULT '[]'::jsonb,
 			sender_names JSONB NOT NULL DEFAULT '[]'::jsonb, keyword_groups JSONB NOT NULL DEFAULT '[]'::jsonb,
 			group_operator TEXT NOT NULL DEFAULT 'any', reply_text TEXT NOT NULL DEFAULT '',
-			reply_text_by_chat_type JSONB NOT NULL DEFAULT '{}'::jsonb, action_type TEXT NOT NULL DEFAULT 'text',
+			reply_text_by_chat_type JSONB NOT NULL DEFAULT '{}'::jsonb, action_steps JSONB NOT NULL DEFAULT '[]'::jsonb, action_type TEXT NOT NULL DEFAULT 'text',
 			contact_phone TEXT NOT NULL DEFAULT '', contact_first_name TEXT NOT NULL DEFAULT '', contact_last_name TEXT NOT NULL DEFAULT '',
 			media_asset_id UUID, media_type TEXT NOT NULL DEFAULT '', media_caption TEXT NOT NULL DEFAULT '',
 			media_album_items JSONB NOT NULL DEFAULT '[]'::jsonb, case_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
