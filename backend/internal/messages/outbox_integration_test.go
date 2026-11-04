@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -67,9 +68,12 @@ func TestPublishPendingMessageEventsMovesPostgresOutboxToRedis(t *testing.T) {
 	if published != 1 { t.Fatalf("published=%d, want 1", published) }
 	events, err := New(db, redisClient).ReadMessageEvents(ctx, tenantID, "0-0", 0, 10)
 	if err != nil { t.Fatalf("read tenant Redis stream: %v", err) }
-	if len(events) != 1 || events[0].Payload != `{"message_id":42}` {
-		t.Fatalf("published Redis event mismatch: %+v", events)
+	if len(events) != 1 {
+		t.Fatalf("published Redis event count=%d, want 1: %+v", len(events), events)
 	}
+	var payload map[string]int
+	if err := json.Unmarshal([]byte(events[0].Payload), &payload); err != nil { t.Fatalf("decode published Redis payload: %v", err) }
+	if payload["message_id"] != 42 { t.Fatalf("published Redis payload=%s, want message_id=42", events[0].Payload) }
 	var publishedAt time.Time
 	if err := db.QueryRowContext(ctx, `SELECT published_at FROM message_event_outbox WHERE tenant_id=$1`, tenantID).Scan(&publishedAt); err != nil { t.Fatal(err) }
 	if publishedAt.IsZero() { t.Fatal("outbox row was not marked published after Redis accepted it") }
