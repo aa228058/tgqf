@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -94,16 +93,7 @@ func parseGroupCatalogueXLSX(data []byte) ([]GroupCatalogueImportRecord, error) 
 		rows=append(rows,valuesRow)
 	}
 	if len(rows)==0{return nil,errors.New("XLSX worksheet contains no rows")}
-	var tab bytes.Buffer
-	tabWriter:=csv.NewWriter(&tab)
-	tabWriter.Comma='\t'
-	for _,row:=range rows {
-		for i,value:=range row { row[i]=strings.ReplaceAll(strings.ReplaceAll(value,"\t"," "), "\n"," ") }
-		if err:=tabWriter.Write(row);err!=nil{return nil,err}
-	}
-	tabWriter.Flush()
-	if err:=tabWriter.Error();err!=nil{return nil,err}
-	return parseGroupCatalogueTXT(bytes.NewReader(tab.Bytes()))
+	return parseGroupCatalogueRows(rows)
 }
 
 func xmlText(value string) string {
