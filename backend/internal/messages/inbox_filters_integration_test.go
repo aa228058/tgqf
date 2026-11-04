@@ -23,7 +23,7 @@ func TestMessageListSupportsTenantScopedInboxFilters(t *testing.T) {
 		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext,phone,display_name) VALUES($1,$2,'authorized',decode('01','hex'),$3,$4)`,tenantID,a.id,a.phone,a.name);err!=nil{t.Fatal(err)}
 	}
 	now:=time.Now().UTC()
-	rows:=[]struct{id,account string;chat int64;chatType,text,media string;processed bool}{
+	rows:=[]struct{id,account string;chat int64;chatType,text,media,metadata string;processed bool}{
 		{"10000000-0000-4000-8000-000000000001",accountA,101,"private","hello Alice","","{}",false},
 		{"10000000-0000-4000-8000-000000000002",accountA,101,"private","photo caption","photo",`{"width":1280,"height":720,"file_size":4096}`,false},
 		{"10000000-0000-4000-8000-000000000003",accountB,202,"group","hello Bob","","{}",false},
