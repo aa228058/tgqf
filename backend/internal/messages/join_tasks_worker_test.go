@@ -38,3 +38,31 @@ func TestJoinTaskRetryDelayIsBoundedExponential(t *testing.T) {
         }
     }
 }
+
+
+func TestNormalizeJoinApprovalResult(t *testing.T) {
+ cases:=[]struct{status,wantTask,wantApplication string;terminal bool}{
+  {"member","joined","approved",true},
+  {"administrator","joined","approved",true},
+  {"creator","joined","approved",true},
+  {"owner","joined","approved",true},
+  {"banned","failed","declined",true},
+  {"left","failed","declined",true},
+  {"invalid","failed","declined",true},
+  {"expired","failed","declined",true},
+  {"request_pending","request_pending","request_pending",false},
+  {"valid","request_pending","request_pending",false},
+  {"unknown","request_pending","request_pending",false},
+ }
+ for _,tc:=range cases { t.Run(tc.status,func(t *testing.T){
+  task,application,terminal:=normalizeJoinApprovalResult(tc.status)
+  if task!=tc.wantTask||application!=tc.wantApplication||terminal!=tc.terminal {
+   t.Fatalf("got (%q,%q,%v), want (%q,%q,%v)",task,application,terminal,tc.wantTask,tc.wantApplication,tc.terminal)
+  }
+ })}
+}
+
+func TestNormalizeJoinApprovalResultIsCaseInsensitive(t *testing.T) {
+ task,application,terminal:=normalizeJoinApprovalResult(" MEMBER ")
+ if task!="joined"||application!="approved"||!terminal { t.Fatalf("unexpected normalized result: %q %q %v",task,application,terminal) }
+}
