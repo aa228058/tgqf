@@ -1100,3 +1100,56 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .accounts-page .qr-login img{width:min(220px,65vw);height:auto;aspect-ratio:1}
 }
 @media(prefers-reduced-motion:reduce){.accounts-page .proxy-card,.accounts-page .account-table tbody tr{transition:none}}
+
+
+/* Message center mobile-first conversation ergonomics */
+.messages-page button:focus-visible,.messages-page input:focus-visible,.messages-page select:focus-visible,.messages-page textarea:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.messages-page .chat-item,.messages-page .message-card,.messages-page .media-preview-modal{min-width:0}
+.messages-page .chat-item{transition:background-color .14s ease}
+.messages-page .message-card{overflow-wrap:anywhere}
+.messages-page .message-card-actions,.messages-page .reply-job-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.messages-page .message-card-actions button,.messages-page .reply-job-status button,.messages-page .message-pagination button{min-height:38px}
+.messages-page .reply-composer textarea{min-width:0;resize:vertical}
+.messages-page .contact-composer input{min-width:0}
+.messages-page .media-preview-modal{overscroll-behavior:contain}
+.messages-page .media-preview-content img,.messages-page .media-preview-content video,.messages-page .media-preview-content iframe{max-width:100%;max-height:65vh;object-fit:contain}
+@media(max-width:760px){
+ .messages-page{padding:17px 11px 26px}
+ .messages-page .messages-heading{align-items:flex-start;flex-direction:column;gap:12px}
+ .messages-page .messages-heading h1{font-size:23px}
+ .messages-page .messages-heading-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:7px}
+ .messages-page .messages-heading-actions button{min-height:40px;padding:8px 5px;font-size:11px}
+ .messages-page .messages-layout{display:flex;flex-direction:column;max-height:none;min-height:calc(100dvh - 210px);overflow:visible}
+ .messages-page .chat-sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:260px;min-height:150px}
+ .messages-page .chat-sidebar-heading{padding:12px 12px 8px}
+ .messages-page .chat-search{min-height:39px}
+ .messages-page .chat-list{overflow-y:auto;overscroll-behavior:contain}
+ .messages-page .chat-item{padding:9px 11px}
+ .messages-page .message-pane{min-height:380px;min-width:0}
+ .messages-page .message-pane-heading{align-items:flex-start;gap:8px;padding:13px}
+ .messages-page .message-pane-heading h2{font-size:16px;overflow-wrap:anywhere}
+ .messages-page .message-pane-heading p{overflow-wrap:anywhere}
+ .messages-page .message-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px}
+ .messages-page .message-filters input:not([type=checkbox]){grid-column:1/-1;width:100%;min-width:0}
+ .messages-page .message-filters select{min-width:0;width:100%;min-height:39px}
+ .messages-page .message-filters label{grid-column:1/-1;font-size:11px}
+ .messages-page .message-list{max-height:none;overflow:visible;padding:9px}
+ .messages-page .message-card{padding:12px;margin-bottom:9px}
+ .messages-page .message-card-meta{align-items:flex-start;gap:8px;flex-wrap:wrap}
+ .messages-page .message-card-content{overflow-wrap:anywhere}
+ .messages-page .message-card-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+ .messages-page .message-card-actions button{width:100%;min-height:40px;padding:8px 5px;font-size:11px}
+ .messages-page .reply-composer{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+ .messages-page .reply-composer textarea{width:100%;min-height:76px}
+ .messages-page .reply-composer button,.messages-page .contact-composer button{width:100%;min-height:42px}
+ .messages-page .contact-composer{display:grid;grid-template-columns:1fr;gap:8px}
+ .messages-page .contact-composer input{width:100%;min-height:40px}
+ .messages-page .reply-job-status{align-items:flex-start}
+ .messages-page .message-pagination{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:6px;padding:10px}
+ .messages-page .message-pagination button{min-width:0;padding:8px 4px;font-size:11px}
+ .messages-page .message-pagination span{font-size:10px;text-align:center}
+ .messages-page .media-preview-modal{width:100%;max-height:calc(100dvh - 24px);padding:13px}
+ .messages-page .media-preview-navigation{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+ .messages-page .media-preview-navigation button{min-height:42px}
+}
+@media(prefers-reduced-motion:reduce){.messages-page .chat-item{transition:none}}
