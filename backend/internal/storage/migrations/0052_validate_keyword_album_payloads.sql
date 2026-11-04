@@ -72,7 +72,3 @@ DROP TRIGGER IF EXISTS keyword_action_jobs_album_assets_tenant ON keyword_action
 CREATE TRIGGER keyword_action_jobs_album_assets_tenant
 BEFORE INSERT OR UPDATE OF media_album_items,action_type ON keyword_action_jobs
 FOR EACH ROW EXECUTE FUNCTION enforce_keyword_album_assets_tenant();
-
-ALTER TABLE keyword_action_jobs
-  ADD CONSTRAINT keyword_action_jobs_message_ids_array_check
-  CHECK (jsonb_typeof(telegram_message_ids)='array');
