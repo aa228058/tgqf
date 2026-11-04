@@ -213,3 +213,15 @@ func TestNormalizeKeywordRuleContactAction(t *testing.T) {
     invalid.ActionType="unsupported"
     if _,err:=normalizeKeywordRule(invalid);err==nil {t.Fatal("unsupported action type accepted")}
 }
+
+
+func TestNormalizeKeywordRuleMediaAction(t *testing.T) {
+    valid:=KeywordRule{Name:"send brochure",MatchMode:"any",Keywords:[]string{"brochure"},ChatTypes:[]string{"private","group"},ActionType:"media",MediaAssetID:"11111111-1111-4111-8111-111111111111",MediaType:"document",MediaCaption:"Product brochure"}
+    got,err:=normalizeKeywordRule(valid);if err!=nil{t.Fatalf("valid media action rejected: %v",err)}
+    if got.MediaType!="document"||got.MediaCaption!=valid.MediaCaption{t.Fatalf("media action not preserved: %#v",got)}
+    invalid:=valid;invalid.MediaAssetID="not-a-uuid";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("invalid media asset id accepted")}
+    invalid=valid;invalid.MediaType="animation";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("unsupported media type accepted")}
+    invalid=valid;invalid.ReplyText="also text";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed text/media action accepted")}
+    invalid=valid;invalid.MediaCaption=strings.Repeat("x",1025);if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("oversized caption accepted")}
+    invalid=valid;invalid.ChatTypes=[]string{"private","channel"};if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("channel media action accepted")}
+}
