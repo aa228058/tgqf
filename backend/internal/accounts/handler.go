@@ -56,6 +56,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/profile-updates/photo",h.auth.Authenticated(http.HandlerFunc(h.createProfilePhotoUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
+ m.Handle("POST /api/v1/accounts/profile-updates/bulk/{action}",h.auth.Authenticated(http.HandlerFunc(h.bulkControlProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/pause",h.auth.Authenticated(http.HandlerFunc(h.pauseQueuedProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeProfileUpdate)))
@@ -280,6 +281,20 @@ func (h *Handler) listProfileUpdates(w http.ResponseWriter,r *http.Request) {
 	if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
 	if limit<1||limit>100 { limit=50 };if offset<0 { offset=0 }
 	writeJSON(w,http.StatusOK,map[string]any{"jobs":jobs,"total":total,"limit":limit,"offset":offset})
+}
+
+type bulkProfileUpdateControlRequest struct { IDs []string `json:"ids"` }
+
+func (h *Handler) bulkControlProfileUpdates(w http.ResponseWriter,r *http.Request) {
+ var input bulkProfileUpdateControlRequest
+ if !decode(w,r,&input) { writeError(w,http.StatusBadRequest,"invalid bulk profile update request");return }
+ user:=auth.UserFromContext(r.Context())
+ action:=r.PathValue("action")
+ results,err:=h.service.BulkControlProfileUpdates(r.Context(),user.TenantID,action,input.IDs)
+ if err!=nil { writeError(w,http.StatusBadRequest,err.Error());return }
+ succeeded,failed:=0,0
+ for _,item:=range results { if item.Error==""&&item.Status!="unchanged" { succeeded++ } else { failed++ } }
+ writeJSON(w,http.StatusOK,map[string]any{"succeeded":succeeded,"failed":failed,"results":results})
 }
 
 func (h *Handler) retryProfileUpdate(w http.ResponseWriter,r *http.Request) {
