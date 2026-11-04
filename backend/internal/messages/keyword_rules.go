@@ -393,11 +393,15 @@ func keywordActionRetryDelay(attempt int,floodWait time.Duration) time.Duration 
     return delay
 }
 
-func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration) error {
+func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration,messageIDLists ...[]int64) error {
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if sendErr==nil {
             if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
-            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,telegramMessageID,job.LeaseUntil)
+            messageIDs:=[]int64{telegramMessageID}
+            if len(messageIDLists)>0 && len(messageIDLists[0])>0 { messageIDs=messageIDLists[0] }
+            for _,id:=range messageIDs { if id<=0 { return errors.New("invalid Telegram message id in result") } }
+            encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
             if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
         }
         message:=sendErr.Error();if len(message)>500{message=message[:500]}
@@ -456,7 +460,7 @@ type KeywordActionRecord struct {
     MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
     Status string `json:"status"`
     Attempts int `json:"attempts"`
-    TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
+    TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`\n    TelegramMessageIDs []int64 `json:"telegram_message_ids"`
     LastError string `json:"last_error"`
     AvailableAt time.Time `json:"available_at"`
     CreatedAt time.Time `json:"created_at"`
@@ -472,12 +476,12 @@ func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,
         if status!=""{args=append(args,status);where+=" AND j.status=$2"}
         if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM keyword_action_jobs j WHERE `+where,args...).Scan(&total);err!=nil{return err}
         args=append(args,limit,offset);li,oi:=len(args)-1,len(args)
-        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.status,j.attempts,j.telegram_message_id,j.last_error,j.available_at,j.created_at,j.updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.status,j.attempts,j.telegram_message_id,j.telegram_message_ids,j.last_error,j.available_at,j.created_at,j.updated_at
             FROM keyword_action_jobs j JOIN tenant_keyword_matches m ON m.id=j.keyword_match_id AND m.tenant_id=j.tenant_id
             JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
             WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item KeywordActionRecord;var albumItems []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};items=append(items,item)}
+        for rows.Next(){var item KeywordActionRecord;var albumItems []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.TelegramMessageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};items=append(items,item)}
         return rows.Err()
     })
     return items,total,err
