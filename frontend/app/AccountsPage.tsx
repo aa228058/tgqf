@@ -145,7 +145,7 @@ export function AccountsPage({token}:{token:string}){
   if(action==="cancel"&&!window.confirm("确定取消选中的 "+selectedProfileJobs.length+" 条任务吗？"))return;
   setBusy(true);setError("");setNotice("");
   try{
-   const result=await api<{succeeded:number;failed:number;results:{id:string;status:string;error?:string}[]}>("/api/v1/accounts/profile-updates/bulk/"+action,token,{method:"POST",body:JSON.stringify({ids:selectedProfileJobs})});
+   const result=await api<{succeeded:number;failed:number;results:{id:string;status:string;error?:string}[]}>("/api/v1/accounts/profile-updates/actions/bulk/"+action,token,{method:"POST",body:JSON.stringify({ids:selectedProfileJobs})});
    setNotice("批量操作完成：成功 "+result.succeeded+" 条，未变更/失败 "+result.failed+" 条");
    setSelectedProfileJobs([]);await loadProfileJobs();
   }catch(e){setError(e instanceof Error?e.message:"批量任务操作失败")}
