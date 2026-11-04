@@ -13,7 +13,7 @@ func TestConcurrentIncomingUpdateCreatesOneKeywordMatchAndAction(t *testing.T) {
 	ctx := context.Background()
 	tenantID := "12121212-1212-4212-8212-121212121212"
 	accountID := "abababab-abab-4bab-8bab-abababababab"
-	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, tenantID); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,name,status,expires_at) VALUES($1,'integration test','active',NOW()+INTERVAL '30 days')`, tenantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`, tenantID, accountID); err != nil {
