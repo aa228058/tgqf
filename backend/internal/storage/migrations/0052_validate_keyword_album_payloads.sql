@@ -24,7 +24,10 @@ BEGIN
   FOR item IN SELECT value FROM jsonb_array_elements(NEW.media_album_items) AS elements(value) LOOP
     IF jsonb_typeof(item) <> 'object'
        OR NOT (item ? 'asset_id')
-       OR NOT (item ? 'media_type') THEN
+       OR NOT (item ? 'media_type')
+       OR (item ? 'caption' AND jsonb_typeof(item->'caption') <> 'string')
+       OR jsonb_typeof(item->'asset_id') <> 'string'
+       OR jsonb_typeof(item->'media_type') <> 'string' THEN
       RAISE EXCEPTION 'invalid keyword album item structure';
     END IF;
 
