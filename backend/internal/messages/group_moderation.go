@@ -146,22 +146,24 @@ func (s *Service) MergePublicGroups(ctx context.Context,actorID string,sourceID,
     if sourceID<=0||targetID<=0||sourceID==targetID||len(reason)<5||len(reason)>500{return ErrGroupMergeConflict}
     tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
     var sourceType,targetType string;var snapshot []byte
-    err=tx.QueryRowContext(ctx,`SELECT jsonb_build_object('telegram_chat_id',telegram_chat_id,'chat_type',chat_type,'title',title,'username',username,'member_count',member_count,'is_verified',is_verified),chat_type
+    err=tx.QueryRowContext(ctx,`SELECT jsonb_build_object('telegram_chat_id',telegram_chat_id,'chat_type',chat_type,'title',title,'username',username,'member_count',member_count,'is_verified',is_verified,'default_permissions',default_permissions,'permissions_observed_at',permissions_observed_at),chat_type
         FROM public_groups WHERE id=$1 FOR UPDATE`,sourceID).Scan(&snapshot,&sourceType)
     if errors.Is(err,sql.ErrNoRows){return ErrGroupMergeConflict};if err!=nil{return err}
     err=tx.QueryRowContext(ctx,`SELECT chat_type FROM public_groups WHERE id=$1 FOR UPDATE`,targetID).Scan(&targetType)
     if errors.Is(err,sql.ErrNoRows){return ErrGroupMergeConflict};if err!=nil{return err}
     if sourceType!=targetType{return ErrGroupMergeConflict}
-    if _,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count)
-        SELECT $2,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count FROM public_group_sources WHERE group_id=$1
-        ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET first_seen_at=LEAST(public_group_sources.first_seen_at,EXCLUDED.first_seen_at),last_seen_at=GREATEST(public_group_sources.last_seen_at,EXCLUDED.last_seen_at),discovery_count=public_group_sources.discovery_count+EXCLUDED.discovery_count`,sourceID,targetID);err!=nil{return err}
+    if _,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,account_rights_snapshot,account_rights_observed_at,first_seen_at,last_seen_at,discovery_count)
+        SELECT $2,tenant_id,telegram_account_id,source_chat_id,account_rights_snapshot,account_rights_observed_at,first_seen_at,last_seen_at,discovery_count FROM public_group_sources WHERE group_id=$1
+        ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET first_seen_at=LEAST(public_group_sources.first_seen_at,EXCLUDED.first_seen_at),last_seen_at=GREATEST(public_group_sources.last_seen_at,EXCLUDED.last_seen_at),discovery_count=public_group_sources.discovery_count+EXCLUDED.discovery_count,
+        account_rights_snapshot=COALESCE(EXCLUDED.account_rights_snapshot,public_group_sources.account_rights_snapshot),
+        account_rights_observed_at=CASE WHEN EXCLUDED.account_rights_snapshot IS NULL THEN public_group_sources.account_rights_observed_at WHEN public_group_sources.account_rights_observed_at IS NULL THEN EXCLUDED.account_rights_observed_at ELSE GREATEST(public_group_sources.account_rights_observed_at,EXCLUDED.account_rights_observed_at) END`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`DELETE FROM public_group_sources WHERE group_id=$1`,sourceID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`INSERT INTO tenant_group_contributions(tenant_id,group_id,first_contributed_at,last_contributed_at,contribution_count)
         SELECT tenant_id,$2,first_contributed_at,last_contributed_at,contribution_count FROM tenant_group_contributions WHERE group_id=$1
         ON CONFLICT(tenant_id,group_id) DO UPDATE SET first_contributed_at=LEAST(tenant_group_contributions.first_contributed_at,EXCLUDED.first_contributed_at),last_contributed_at=GREATEST(tenant_group_contributions.last_contributed_at,EXCLUDED.last_contributed_at),contribution_count=tenant_group_contributions.contribution_count+EXCLUDED.contribution_count`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`DELETE FROM tenant_group_contributions WHERE group_id=$1`,sourceID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_links SET group_id=$2 WHERE group_id=$1`,sourceID,targetID);err!=nil{return err}
-    if _,err=tx.ExecContext(ctx,`UPDATE public_groups SET last_seen_at=GREATEST(last_seen_at,(SELECT last_seen_at FROM public_groups WHERE id=$1)),updated_at=NOW() WHERE id=$2`,sourceID,targetID);err!=nil{return err}
+    if _,err=tx.ExecContext(ctx,`UPDATE public_groups target SET default_permissions=COALESCE(target.default_permissions,source.default_permissions),permissions_observed_at=CASE WHEN target.permissions_observed_at IS NULL THEN source.permissions_observed_at WHEN source.permissions_observed_at IS NULL THEN target.permissions_observed_at ELSE GREATEST(target.permissions_observed_at,source.permissions_observed_at) END,last_seen_at=GREATEST(target.last_seen_at,source.last_seen_at),updated_at=NOW() FROM public_groups source WHERE source.id=$1 AND target.id=$2`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_corrections SET status='rejected',review_note='source group merged; please resubmit against the canonical group',reviewed_by_user_id=$2,reviewed_at=NOW() WHERE group_id=$1 AND status='pending'`,sourceID,actorID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`UPDATE public_group_corrections SET group_id=$2 WHERE group_id=$1`,sourceID,targetID);err!=nil{return err}
     if _,err=tx.ExecContext(ctx,`INSERT INTO public_group_merge_audits(source_group_id,target_group_id,actor_user_id,reason,source_snapshot) VALUES($1,$2,$3,$4,$5::jsonb)`,sourceID,targetID,actorID,reason,string(snapshot));err!=nil{return err}
