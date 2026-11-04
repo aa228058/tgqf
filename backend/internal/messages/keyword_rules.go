@@ -216,6 +216,10 @@ func (s *Service) CreateKeywordRule(ctx context.Context, tenantID string, rule K
     rule,err:=normalizeKeywordRule(rule);if err!=nil{return rule,err}
     keywords,_:=json.Marshal(rule.Keywords);excluded,_:=json.Marshal(rule.ExcludeTerms);types,_:=json.Marshal(rule.ChatTypes);accounts,_:=json.Marshal(rule.AccountIDs);chats,_:=json.Marshal(rule.ChatIDs);media,_:=json.Marshal(rule.MediaTypes);chatTitles,_:=json.Marshal(rule.ChatTitles);chatUsernames,_:=json.Marshal(rule.ChatUsernames);senderIDs,_:=json.Marshal(rule.SenderIDs);senderUsernames,_:=json.Marshal(rule.SenderUsernames);senderNames,_:=json.Marshal(rule.SenderNames);keywordGroups,_:=json.Marshal(rule.KeywordGroups);replyTextByChatType,_:=json.Marshal(rule.ReplyTextByChatType)
     err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        // Serialize rule-count changes per tenant so concurrent requests cannot
+        // exceed the 100 enabled-rule limit.
+        var lockedTenant string
+        if err:=tx.QueryRowContext(ctx,`SELECT id::text FROM tenants WHERE id=$1 FOR UPDATE`,tenantID).Scan(&lockedTenant);err!=nil{return err}
         var count int
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE",tenantID).Scan(&count);err!=nil{return err}
         if rule.Enabled && count>=100{return errors.New("active keyword rule limit reached (100)")}
@@ -234,6 +238,10 @@ func (s *Service) UpdateKeywordRule(ctx context.Context,tenantID,id string,rule 
     rule,err:=normalizeKeywordRule(rule);if err!=nil{return rule,err}
     keywords,_:=json.Marshal(rule.Keywords);excluded,_:=json.Marshal(rule.ExcludeTerms);types,_:=json.Marshal(rule.ChatTypes);accounts,_:=json.Marshal(rule.AccountIDs);chats,_:=json.Marshal(rule.ChatIDs);media,_:=json.Marshal(rule.MediaTypes);chatTitles,_:=json.Marshal(rule.ChatTitles);chatUsernames,_:=json.Marshal(rule.ChatUsernames);senderIDs,_:=json.Marshal(rule.SenderIDs);senderUsernames,_:=json.Marshal(rule.SenderUsernames);senderNames,_:=json.Marshal(rule.SenderNames);keywordGroups,_:=json.Marshal(rule.KeywordGroups);replyTextByChatType,_:=json.Marshal(rule.ReplyTextByChatType)
     err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        // Use the same tenant row lock as create to serialize enable/disable
+        // transitions against the active-rule cap.
+        var lockedTenant string
+        if err:=tx.QueryRowContext(ctx,`SELECT id::text FROM tenants WHERE id=$1 FOR UPDATE`,tenantID).Scan(&lockedTenant);err!=nil{return err}
         if rule.Enabled {var count int;if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE AND id<>$2",tenantID,id).Scan(&count);err!=nil{return err};if count>=100{return errors.New("active keyword rule limit reached (100)")}}
         for _,accountID:=range rule.AccountIDs {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,accountID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("keyword filter account does not belong to tenant")}}
         if rule.ActionType=="media" { var exists bool; if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,rule.MediaAssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
