@@ -19,3 +19,22 @@ func TestJoinTaskCooldownSecondsAddsBufferAfterCeiling(t *testing.T) {
         })
     }
 }
+
+func TestJoinTaskRetryDelayIsBoundedExponential(t *testing.T) {
+    cases := []struct { attempt int; want time.Duration }{
+        {0,30*time.Second},
+        {1,30*time.Second},
+        {2,60*time.Second},
+        {3,2*time.Minute},
+        {4,4*time.Minute},
+        {5,8*time.Minute},
+        {6,16*time.Minute},
+        {7,30*time.Minute},
+        {20,30*time.Minute},
+    }
+    for _, tc := range cases {
+        if got := joinTaskRetryDelay(tc.attempt); got != tc.want {
+            t.Fatalf("joinTaskRetryDelay(%d)=%s, want %s", tc.attempt, got, tc.want)
+        }
+    }
+}
