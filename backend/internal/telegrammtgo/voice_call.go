@@ -14,6 +14,10 @@ import (
 	"github.com/mtgo-labs/mtgo/tg"
 )
 
+func telegramCallGAHash(gA []byte) [32]byte {
+	return sha256.Sum256(gA)
+}
+
 // VoiceCallRequestResult describes the Telegram-side result of starting an
 // outgoing native voice call. It deliberately does not claim that audio is
 // connected: this operation only starts the native ringing flow.
@@ -103,14 +107,10 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 	gA := make([]byte, 256)
 	copy(gA[256-len(gABytes):], gABytes)
 
-	nonce := make([]byte, 256)
-	if _, err := rand.Read(nonce); err != nil {
-		return VoiceCallRequestResult{}, fmt.Errorf("generate call nonce: %w", err)
-	}
-	hashInput := make([]byte, 0, len(gA)+len(nonce))
-	hashInput = append(hashInput, gA...)
-	hashInput = append(hashInput, nonce...)
-	gaHash := sha256.Sum256(hashInput)
+	// phone.requestCall expects SHA-256(g_a), exactly 32 bytes. The
+	// ephemeral exponent and g_a are intentionally discarded after creating
+	// this ringing-only request; this client does not accept or negotiate media.
+	gaHash := telegramCallGAHash(gA)
 
 	var randomIDBytes [4]byte
 	if _, err := rand.Read(randomIDBytes[:]); err != nil {
