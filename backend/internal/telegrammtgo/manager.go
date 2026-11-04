@@ -522,7 +522,9 @@ func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, cha
     media:=make([]*tg.InputSingleMedia,0,len(items))
     for _,item:=range items {
         item.MediaType=strings.ToLower(strings.TrimSpace(item.MediaType))
+        item.FileName=strings.TrimSpace(item.FileName)
         if item.MediaType!="photo" && item.MediaType!="video" && item.MediaType!="document" { return nil,fmt.Errorf("unsupported album media type %q",item.MediaType) }
+        if len([]rune(item.Caption))>1024 { return nil,errors.New("album item caption exceeds Telegram's 1024 character limit") }
         currentCategory:="visual"; if item.MediaType=="document" { currentCategory="document" }
         if category!="" && category!=currentCategory { return nil,errors.New("Telegram albums may mix photos and videos, or contain documents, but cannot mix documents with photos/videos") }
         category=currentCategory
