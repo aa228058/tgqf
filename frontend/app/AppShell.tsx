@@ -28,6 +28,7 @@ export function AppShell({
   const [moreOpen,setMoreOpen] = useState(false);
   const [theme,setTheme] = useState<"light"|"dark">("light");
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const isAdmin = user.role==="super_admin";
   const visible = items.filter(item=>item.key!=="admin"||isAdmin);
   const section = visible.find(item=>item.key===active)||items.find(item=>item.key==="tasks")!;
@@ -38,7 +39,7 @@ export function AppShell({
   useEffect(()=>{
     if(!moreOpen)return;
     const onKeyDown=(event:KeyboardEvent)=>{
-      if(event.key==="Escape")setMoreOpen(false);
+      if(event.key==="Escape"){setMoreOpen(false);moreTriggerRef.current?.focus()}
     };
     const onPointerDown=(event:PointerEvent)=>{
       if(event.target instanceof Node&&!moreMenuRef.current?.contains(event.target))setMoreOpen(false);
@@ -87,13 +88,13 @@ export function AppShell({
     </aside>
     <div className="app-main">
       <header className="app-topbar"><div className="breadcrumb"><span>TG Manager</span><span className="breadcrumb-separator">/</span><strong>{section.label}</strong></div>
-        <div className="topbar-user"><span className="role-label">{isAdmin?"超级管理员":"租户空间"}</span><button className="theme-toggle" onClick={()=>setTheme(value=>value==="light"?"dark":"light")}>{theme==="light"?"◐ 深色":"☼ 浅色"}</button><span className="topbar-username">{user.username}</span><button className="topbar-logout" onClick={onLogout}>退出</button></div>
+        <div className="topbar-user"><span className="role-label">{isAdmin?"超级管理员":"租户空间"}</span><button className="theme-toggle" aria-label="切换界面主题" aria-pressed={theme==="dark"} onClick={()=>setTheme(value=>value==="light"?"dark":"light")}>{theme==="light"?"◐ 深色":"☼ 浅色"}</button><span className="topbar-username">{user.username}</span><button className="topbar-logout" onClick={onLogout}>退出</button></div>
       </header>
       <div className="app-content">{content||<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG MANAGER · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面正在接入真实接口；当前不展示演示数据或无效操作。</div></section>}</div>
       <nav className="mobile-bottom-nav" aria-label="手机主导航">
         {primary.map(key=>{const item=items.find(x=>x.key===key)!;return <button key={key} aria-current={active===key?"page":undefined} className={active===key?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>go(key)}><span>{item.icon}</span><small>{item.label}</small></button>})}
-        <div className="mobile-more-wrap" ref={moreMenuRef}><button aria-expanded={moreOpen} aria-controls="mobile-more-menu" className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
-          <div className="mobile-more-menu" id="mobile-more-menu" hidden={!moreOpen}>{more.map(item=><button key={item.key} aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
+        <div className="mobile-more-wrap" ref={moreMenuRef}><button ref={moreTriggerRef} aria-expanded={moreOpen} aria-haspopup="menu" aria-controls="mobile-more-menu" aria-label={moreOpen?"关闭更多导航":"打开更多导航"} className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
+          <div className="mobile-more-menu" id="mobile-more-menu" role="menu" aria-label="更多页面" hidden={!moreOpen}>{more.map(item=><button key={item.key} role="menuitem" aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
         </div>
       </nav>
     </div>
