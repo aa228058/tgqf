@@ -409,6 +409,8 @@ type GroupLibraryItem struct {
 	SourceCount int `json:"source_count"`
 	ContributorCount int `json:"contributor_count"`
 	LastSeenAt time.Time `json:"last_seen_at"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	LastCheckError string `json:"last_check_error,omitempty"`
 }
 
 type GroupLibraryFilter struct {
@@ -578,12 +580,12 @@ func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		filter := "($1='' OR link_type=$1) AND ($2='' OR status=$2)"
 		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM public_group_links WHERE "+filter, linkType, status).Scan(&total); err != nil { return err }
-		rows, err := tx.QueryContext(ctx, "SELECT id,group_id,link_type,COALESCE(public_url,''),link_type='invite',status,(SELECT COUNT(*) FROM public_group_link_sources src WHERE src.link_id=public_group_links.id),first_seen_at,last_seen_at FROM public_group_links WHERE "+filter+" ORDER BY last_seen_at DESC,id DESC LIMIT $3 OFFSET $4", linkType, status, limit, offset)
+		rows, err := tx.QueryContext(ctx, "SELECT id,group_id,link_type,COALESCE(public_url,''),link_type='invite',status,(SELECT COUNT(*) FROM public_group_link_sources src WHERE src.link_id=public_group_links.id),first_seen_at,last_seen_at,last_checked_at,COALESCE(last_check_error,'') FROM public_group_links WHERE "+filter+" ORDER BY last_seen_at DESC,id DESC LIMIT $3 OFFSET $4", linkType, status, limit, offset)
 		if err != nil { return err }
 		defer rows.Close()
 		for rows.Next() {
 			var item GroupLinkItem
-			if err := rows.Scan(&item.ID,&item.GroupID,&item.Type,&item.PublicURL,&item.PrivateInvite,&item.Status,&item.SourceCount,&item.FirstSeenAt,&item.LastSeenAt); err != nil { return err }
+			if err := rows.Scan(&item.ID,&item.GroupID,&item.Type,&item.PublicURL,&item.PrivateInvite,&item.Status,&item.SourceCount,&item.FirstSeenAt,&item.LastSeenAt,&item.LastCheckedAt,&item.LastCheckError); err != nil { return err }
 			items = append(items,item)
 		}
 		return rows.Err()
