@@ -504,7 +504,7 @@ func (s *Service) GetGroupLibraryItem(ctx context.Context, tenantID string, grou
 			g.default_permissions,g.permissions_observed_at,
 			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id AND src.tenant_id=$2),
 			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=$2),g.last_seen_at
-			FROM public_groups g WHERE g.id=$1`, groupID).Scan(
+			FROM public_groups g WHERE g.id=$1`, groupID, tenantID).Scan(
 			&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,
 			&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt)
 		if errors.Is(err, sql.ErrNoRows) { return ErrGroupLibraryNotFound }
