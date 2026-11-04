@@ -219,7 +219,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
   rows,err:=tx.QueryContext(ctx,`WITH due AS (
     SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
            COALESCE(a.telegram_chat_id,g.telegram_chat_id,0) AS chat_id,
-           COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext)
+           COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) AS private_invite_hash_ciphertext
     FROM tenant_join_task_accounts a
     JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
@@ -236,10 +236,13 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     UPDATE tenant_join_task_accounts a
     SET approval_check_lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
     FROM due p WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-    RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.chat_id,p.private_invite_hash_ciphertext,a.approval_check_lease_until
+    RETURNING a.tenant_id,a.task_id,a.id,a.telegram_account_id,a.approval_check_lease_until
    )
-   SELECT tenant_id::text,task_id::text,id,telegram_account_id::text,chat_id,private_invite_hash_ciphertext,approval_check_lease_until
-   FROM claimed ORDER BY id`,tenantID,limit)
+   SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,
+          d.chat_id,d.private_invite_hash_ciphertext,c.approval_check_lease_until
+   FROM claimed c
+   JOIN due d ON d.tenant_id=c.tenant_id AND d.id=c.id
+   ORDER BY c.id`,tenantID,limit)
   if err!=nil{return err}
   defer rows.Close()
   for rows.Next(){
