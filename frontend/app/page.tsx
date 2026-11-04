@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, AppUser } from "./AppShell";
 import { Workbench } from "./Workbench";
@@ -28,11 +30,11 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init?.headers || {}) }, cache: "no-store" });
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
-    try { const body = await response.json(); message = body.error || message; } catch {}
+    message = await apiErrorMessage(response, message);
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return readAPIJSON<T>(response);
 }
 
 export default function Home() {
