@@ -474,3 +474,8 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 ## MTGo media album sender foundation
 
 已新增 `Manager.SendMediaAlbumReply`：通过 MTGo 上传每个素材后调用原生 `SendMediaGroup` 一次提交相册；支持 2–10 个图片/视频混合项或纯文件项，保留素材顺序和逐项说明。上传任一项失败时不会提交相册；图片/视频与文件不混组。此方法尚未接入关键词规则和 Worker 队列，队列级相册动作及失败/重试状态记录仍待完成。
+
+
+## Keyword media albums
+
+关键词规则现支持 `action_type=media_album`，可按顺序绑定 2–10 个租户素材，支持图片/视频混合或纯文件相册。规则创建/修改会验证素材归属、重复素材、类型组合和单项说明长度；命中后把有序 JSONB 素材清单写入任务队列，Worker 逐项读取租户素材并调用 MTGo `SendMediaAlbumReply`。上传阶段任一素材失败不会提交相册；数据库触发器阻止删除仍被规则或任务引用的相册素材。任务记录当前保存 Telegram 返回的首条消息 ID，Telegram 相册整体结果按一个动作任务管理。尚未执行最终 CI/编译检查。
