@@ -88,4 +88,18 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 	if total != 4 || len(completed) != 4 {
 		t.Fatalf("completed filter returned %d rows (total %d), want sent + joined + already_member + skipped = 4", len(completed), total)
 	}
+	page, pageTotal, err := service.ListUnifiedTasks(ctx, tenantID, UnifiedTaskFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pageTotal != 6 || len(page) != 1 {
+		t.Fatalf("paginated task list returned %d rows (total %d), want 1 row from a tenant total of 6", len(page), pageTotal)
+	}
+	summary, err := service.GetUnifiedTaskSummary(ctx, tenantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Total != 6 {
+		t.Fatalf("tenant task summary total=%d, want 6; cross-tenant task leaked or queue omitted", summary.Total)
+	}
 }
