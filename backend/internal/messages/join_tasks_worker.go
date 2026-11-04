@@ -23,6 +23,11 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
     if limit<1||limit>50 { limit=10 }
     jobs:=[]JoinTaskJob{}
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        if _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET
+            status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'paused' END,
+            pause_requested=FALSE,cancel_requested=FALSE,lease_until=NULL,updated_at=NOW()
+            WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()
+              AND (pause_requested=TRUE OR cancel_requested=TRUE)`,tenantID);err!=nil{return err}
         rows,err:=tx.QueryContext(ctx,`
             WITH picked AS (
                 SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,a.attempts,
@@ -53,7 +58,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 LIMIT $2 FOR UPDATE OF t,a,acc SKIP LOCKED
             ), claimed AS (
                 UPDATE tenant_join_task_accounts a
-                SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
+                SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,pause_requested=FALSE,cancel_requested=FALSE,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
                 RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,a.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
@@ -79,7 +84,7 @@ func (s *Service) CompleteJoinTaskAccount(ctx context.Context,job JoinTaskJob,ch
     if applicationStatus!="request_pending"&&applicationStatus!="already_member"&&applicationStatus!="not_required" {return errors.New("invalid join task result")}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,telegram_chat_id=NULLIF($3,0),lease_until=NULL,last_error='',updated_at=NOW()
+        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,telegram_chat_id=NULLIF($3,0),lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error='',updated_at=NOW()
             WHERE tenant_id=$4 AND task_id=$5 AND id=$6 AND status='processing' AND lease_until=$7`,status,applicationStatus,chatID,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
