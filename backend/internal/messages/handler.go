@@ -59,6 +59,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
+	mux.Handle("GET /api/v1/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.getGroupLibraryItem)))
 	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
 	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
@@ -387,6 +388,26 @@ func (h *Handler) importGroupCorrectionsCSV(w http.ResponseWriter,r *http.Reques
 	}
 	if len(results)==1000{if _,extraErr:=reader.Read();extraErr!=io.EOF{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"CSV exceeds 1000 data rows"});return}}
 	messageJSON(w,http.StatusOK,map[string]any{"total":len(results),"submitted":created,"failed":failed,"results":results})
+}
+
+
+func (h *Handler) getGroupLibraryItem(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		messageJSON(w, http.StatusBadRequest, map[string]string{"error":"invalid group id"})
+		return
+	}
+	item, err := h.service.GetGroupLibraryItem(r.Context(), user.TenantID, id)
+	if errors.Is(err, ErrGroupLibraryNotFound) {
+		messageJSON(w, http.StatusNotFound, map[string]string{"error":"group not found"})
+		return
+	}
+	if err != nil {
+		messageJSON(w, http.StatusInternalServerError, map[string]string{"error":"failed to load group"})
+		return
+	}
+	messageJSON(w, http.StatusOK, map[string]any{"group":item})
 }
 
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {

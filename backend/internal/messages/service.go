@@ -460,7 +460,7 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 		clauses:=[]string{"1=1"};args:=[]any{}
 		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
 		if chatType!=""{add(chatType,"g.chat_type=$%d")}
-		if query!=""{args=append(args,"%"+query+"%");n:=len(args);clauses=append(clauses,fmt.Sprintf("(g.title ILIKE $%d OR g.username ILIKE $%d)",n,n));}
+		if query!=""{args=append(args,query);n:=len(args);clauses=append(clauses,fmt.Sprintf("(strpos(lower(g.title),lower($%d))>0 OR strpos(lower(g.username),lower($%d))>0)",n,n));}
 		if filter.Verified!=nil{add(*filter.Verified,"g.is_verified=$%d")}
 		if filter.MinMembers>0{add(filter.MinMembers,"g.member_count >= $%d")}
 		if filter.MaxMembers>0{add(filter.MaxMembers,"g.member_count <= $%d")}
@@ -489,6 +489,28 @@ type GroupSource struct {
 	DiscoveryCount int64 `json:"discovery_count"`
 	AccountRights json.RawMessage `json:"account_rights,omitempty"`
 	AccountRightsObservedAt *time.Time `json:"account_rights_observed_at,omitempty"`
+}
+
+
+var ErrGroupLibraryNotFound = errors.New("group not found")
+
+// GetGroupLibraryItem returns one shared catalogue entry. Source details remain
+// tenant-scoped and are fetched separately through ListGroupSources.
+func (s *Service) GetGroupLibraryItem(ctx context.Context, tenantID string, groupID int64) (GroupLibraryItem, error) {
+	if groupID <= 0 { return GroupLibraryItem{}, ErrInvalidGroupLibraryQuery }
+	var item GroupLibraryItem
+	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
+			g.default_permissions,g.permissions_observed_at,
+			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
+			FROM public_groups g WHERE g.id=$1`, groupID).Scan(
+			&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,
+			&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt)
+		if errors.Is(err, sql.ErrNoRows) { return ErrGroupLibraryNotFound }
+		return err
+	})
+	return item, err
 }
 
 func (s *Service) ListGroupSources(ctx context.Context, tenantID string, groupID int64) ([]GroupSource,error) {
