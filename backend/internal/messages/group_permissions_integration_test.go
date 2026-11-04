@@ -62,6 +62,20 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			discovery_count BIGINT NOT NULL DEFAULT 1,
 			PRIMARY KEY(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id))`,
+		`CREATE TABLE tenants (id UUID PRIMARY KEY,status TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL)`,
+		`CREATE TABLE telegram_accounts (
+			tenant_id UUID NOT NULL,id UUID NOT NULL,status TEXT NOT NULL,session_ciphertext BYTEA,
+			join_flood_wait_until TIMESTAMPTZ,telegram_send_next_at TIMESTAMPTZ,telegram_send_cooldown_until TIMESTAMPTZ,
+			PRIMARY KEY(tenant_id,id))`,
+		`CREATE TABLE tenant_join_tasks (
+			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,name TEXT NOT NULL,status TEXT NOT NULL,
+			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE TABLE tenant_join_task_accounts (
+			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,task_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
+			status TEXT NOT NULL,application_status TEXT NOT NULL DEFAULT 'not_started',attempts INTEGER NOT NULL DEFAULT 0,
+			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),lease_until TIMESTAMPTZ,telegram_chat_id BIGINT,
+			last_error TEXT NOT NULL DEFAULT '',updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			approval_check_lease_until TIMESTAMPTZ)`,
 	}
 	for _,statement:=range ddl { if _,err:=db.Exec(statement);err!=nil{db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close();t.Fatal(err)} }
 	cleanup:=func(){db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close()}
@@ -233,4 +247,68 @@ func TestLinkRediscoveryPreservesActiveCheckLeases(t *testing.T) {
 			t.Fatalf("expired link lease was not requeued on rediscovery for %d: status=%s error=%v attempts=%d next=%v lease=%v",id,status,lastError,attempts,nextCheck,lease)
 		}
 	}
+}
+
+
+func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
+	db,cleanup:=openGroupIntegrationDB(t)
+	defer cleanup()
+	ctx:=context.Background()
+	tenantID:="11111111-1111-4111-8111-111111111111"
+	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	taskPause:="33333333-3333-4333-8333-333333333333"
+	taskCancel:="44444444-4444-4444-8444-444444444444"
+	taskOther:="55555555-5555-4555-8555-555555555555"
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`,tenantID);err!=nil{t.Fatal(err)}
+	for _,account:=range []string{accountA,accountB} {
+		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`,tenantID,account);err!=nil{t.Fatal(err)}
+	}
+	for _,task:=range []struct{id,status string}{{taskPause,"queued"},{taskCancel,"queued"},{taskOther,"queued"}} {
+		if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_join_tasks(id,tenant_id,name,status) VALUES($1,$2,'integration task',$3)`,task.id,tenantID,task.status);err!=nil{t.Fatal(err)}
+	}
+	var pauseProcessing,pauseQueued,cancelProcessing,cancelQueued,otherProcessing int64
+	lease:=time.Now().UTC().Add(2*time.Minute)
+	insertRow:=func(task,account,status string)(int64,error){
+		var id int64
+		err:=db.QueryRowContext(ctx,`INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status,lease_until)
+			VALUES($1,$2,$3,$4,CASE WHEN $4='processing' THEN $5 ELSE NULL END) RETURNING id`,tenantID,task,account,status,lease).Scan(&id)
+		return id,err
+	}
+	var err error
+	if pauseProcessing,err=insertRow(taskPause,accountA,"processing");err!=nil{t.Fatal(err)}
+	if pauseQueued,err=insertRow(taskPause,accountB,"queued");err!=nil{t.Fatal(err)}
+	if cancelProcessing,err=insertRow(taskCancel,accountA,"processing");err!=nil{t.Fatal(err)}
+	if cancelQueued,err=insertRow(taskCancel,accountB,"queued");err!=nil{t.Fatal(err)}
+	if otherProcessing,err=insertRow(taskOther,accountA,"processing");err!=nil{t.Fatal(err)}
+
+	service:=New(db)
+	if err:=service.PauseJoinTask(ctx,tenantID,taskPause);err!=nil{t.Fatal(err)}
+	var status string
+	var savedLease sql.NullTime
+	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,pauseProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="processing"||!savedLease.Valid{t.Fatalf("pause revoked in-flight row: status=%s lease=%v",status,savedLease)}
+	if err:=db.QueryRowContext(ctx,`SELECT status FROM tenant_join_task_accounts WHERE id=$1`,pauseQueued).Scan(&status);err!=nil{t.Fatal(err)}
+	if status!="paused"{t.Fatalf("queued row after pause=%q",status)}
+	job:=JoinTaskJob{TenantID:tenantID,TaskID:taskPause,AccountRowID:pauseProcessing,AccountID:accountA,LeaseUntil:lease}
+	if err:=service.CompleteJoinTaskAccount(ctx,job,-100123,"not_required");err!=nil{t.Fatalf("persist in-flight successful join after pause: %v",err)}
+	if err:=db.QueryRowContext(ctx,`SELECT status FROM tenant_join_task_accounts WHERE id=$1`,pauseProcessing).Scan(&status);err!=nil{t.Fatal(err)}
+	if status!="joined"{t.Fatalf("in-flight successful join status=%q",status)}
+
+	if err:=service.CancelJoinTask(ctx,tenantID,taskCancel);err!=nil{t.Fatal(err)}
+	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,cancelProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="processing"||!savedLease.Valid{t.Fatalf("cancel revoked in-flight row: status=%s lease=%v",status,savedLease)}
+	if err:=db.QueryRowContext(ctx,`SELECT status FROM tenant_join_task_accounts WHERE id=$1`,cancelQueued).Scan(&status);err!=nil{t.Fatal(err)}
+	if status!="cancelled"{t.Fatalf("queued row after cancel=%q",status)}
+	cancelJob:=JoinTaskJob{TenantID:tenantID,TaskID:taskCancel,AccountRowID:cancelProcessing,AccountID:accountA,Attempts:1,LeaseUntil:lease}
+	if err:=service.RescheduleJoinTaskRetry(ctx,cancelJob,"temporary Telegram error");err!=nil{t.Fatal(err)}
+	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,cancelProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="cancelled"||savedLease.Valid{t.Fatalf("cancelled in-flight error was requeued: status=%s lease=%v",status,savedLease)}
+
+	// A FloodWait for one task must not revoke a second, still-running RPC
+	// lease for the same account (for example, an expired-lease overlap).
+	otherJob:=JoinTaskJob{TenantID:tenantID,TaskID:taskOther,AccountRowID:otherProcessing,AccountID:accountA,LeaseUntil:lease}
+	if err:=service.RescheduleJoinTaskAccount(ctx,otherJob,90*time.Second,"FLOOD_WAIT_90");err!=nil{t.Fatal(err)}
+	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,otherProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="queued"||savedLease.Valid{t.Fatalf("current FloodWait row not rescheduled: status=%s lease=%v",status,savedLease)}
 }
