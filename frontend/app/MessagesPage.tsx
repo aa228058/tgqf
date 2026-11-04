@@ -27,7 +27,7 @@ export function MessagesPage({token}:{token:string}){
  const [chats,setChats]=useState<Chat[]>([]),[chatTotal,setChatTotal]=useState(0),[accounts,setAccounts]=useState<Account[]>([]);
  const [selectedChat,setSelectedChat]=useState<Chat|null>(null),[messages,setMessages]=useState<Message[]>([]),[messageTotal,setMessageTotal]=useState(0);
  const [query,setQuery]=useState(""),[debouncedQuery,setDebouncedQuery]=useState(""),[chatQuery,setChatQuery]=useState(""),[mediaType,setMediaType]=useState(""),[includeProcessed,setIncludeProcessed]=useState(false);
- const messageLoadSequence=useRef(0);
+ const messageLoadSequence=useRef(0),chatLoadSequence=useRef(0),accountLoadSequence=useRef(0),previewSequence=useRef(0),settingsLock=useRef(false),replyLocks=useRef(new Set<string>());
  useEffect(()=>{const timer=window.setTimeout(()=>setDebouncedQuery(query),260);return()=>window.clearTimeout(timer)},[query]);
  const [offset,setOffset]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [settings,setSettings]=useState<Settings|null>(null),[settingsOpen,setSettingsOpen]=useState(false),[settingsBusy,setSettingsBusy]=useState(false);
@@ -37,12 +37,16 @@ export function MessagesPage({token}:{token:string}){
  const [contact,setContact]=useState({phone:"",first_name:"",last_name:""}),[replyJobs,setReplyJobs]=useState<Record<string,Reply>>({});
 
  const loadChats=useCallback(async()=>{
+  const sequence=++chatLoadSequence.current;
   const result=await request<Page<Chat>>("/api/v1/messages/chats?limit=100&offset=0",token);
+  if(sequence!==chatLoadSequence.current)return;
   setChats(result.chats||[]);setChatTotal(result.total||0);
-  if(selectedChat&&!((result.chats||[]).some(c=>c.account_id===selectedChat.account_id&&c.chat_id===selectedChat.chat_id)))setSelectedChat(null);
- },[token,selectedChat]);
+  setSelectedChat(current=>current&&!((result.chats||[]).some(c=>c.account_id===current.account_id&&c.chat_id===current.chat_id))?null:current);
+ },[token]);
  const loadAccounts=useCallback(async()=>{
-  const result=await request<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0",token);setAccounts(result.accounts||[]);
+  const sequence=++accountLoadSequence.current;
+  const result=await request<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0",token);
+  if(sequence===accountLoadSequence.current)setAccounts(result.accounts||[]);
  },[token]);
  const loadMessages=useCallback(async()=>{
   const sequence=++messageLoadSequence.current;
@@ -60,8 +64,9 @@ export function MessagesPage({token}:{token:string}){
  useEffect(()=>{void Promise.all([loadChats(),loadAccounts()]).catch(e=>setError(e instanceof Error?e.message:"消息初始化失败"))},[loadChats,loadAccounts]);
  useEffect(()=>{void loadMessages()},[loadMessages]);
  useEffect(()=>{
-  const timer=window.setInterval(()=>{if(document.visibilityState==="visible"){void loadChats();void loadMessages()}},15000);
-  return()=>window.clearInterval(timer);
+  const refresh=()=>{if(document.visibilityState==="visible"){void loadChats().catch(e=>setError(e instanceof Error?e.message:"会话列表刷新失败"));void loadMessages()}};
+  const timer=window.setInterval(refresh,15000);document.addEventListener("visibilitychange",refresh);
+  return()=>{chatLoadSequence.current++;messageLoadSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)};
  },[loadChats,loadMessages]);
  const visibleChats=useMemo(()=>chats.filter(c=>!chatQuery||[c.chat_title,c.account_name,c.chat_username,String(c.chat_id)].some(v=>v.toLowerCase().includes(chatQuery.toLowerCase()))),[chats,chatQuery]);
 
@@ -72,12 +77,13 @@ export function MessagesPage({token}:{token:string}){
   finally{setSettingsBusy(false)}
  }
  async function saveSettings(event:FormEvent){
-  event.preventDefault();if(!settings)return;setSettingsBusy(true);setError("");
+  event.preventDefault();if(!settings||settingsLock.current)return;settingsLock.current=true;setSettingsBusy(true);setError("");
   try{const result=await request<{settings:Settings}>("/api/v1/messages/settings",token,{method:"PUT",body:JSON.stringify(settings)});setSettings(result.settings);setSettingsOpen(false);setNotice("消息采集设置已保存")}
   catch(e){setError(e instanceof Error?e.message:"消息采集设置保存失败")}
-  finally{setSettingsBusy(false)}
+  finally{settingsLock.current=false;setSettingsBusy(false)}
  }
  async function previewMedia(message:Message){
+  const sequence=++previewSequence.current;
   setBusy(true);setError("");
   const created:MediaPreviewItem[]=[];
   let totalBytes=0;
@@ -88,24 +94,28 @@ export function MessagesPage({token}:{token:string}){
     album=(result.messages||[]).filter(item=>item.media_type);
    }
    for(const item of album){
+    if(sequence!==previewSequence.current)throw new Error("媒体预览已切换");
     const response=await fetch(`${API_BASE}/api/v1/messages/${item.id}/media`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});
     if(!response.ok)throw new Error(`消息 ${item.message_id} 的媒体读取失败`);
     const type=response.headers.get("Content-Type")||"application/octet-stream";
     const disposition=response.headers.get("Content-Disposition")||"";
     const nameMatch=disposition.match(/filename="?([^";]+)"?/i);
     const blob=await response.blob();
+    if(sequence!==previewSequence.current)throw new Error("媒体预览已切换");
     totalBytes+=blob.size;
     if(totalBytes>100*1024*1024)throw new Error("相册预览总大小超过 100 MiB，请逐条查看媒体");
     created.push({url:URL.createObjectURL(blob),type,messageID:item.id,fileName:nameMatch?.[1]||`telegram-media-${item.message_id}`});
    }
+   if(sequence!==previewSequence.current)throw new Error("媒体预览已切换");
    if(!created.length)throw new Error("该消息没有可预览的媒体内容");
    setMediaPreview(old=>{if(old)old.items.forEach(item=>URL.revokeObjectURL(item.url));return {items:created,activeIndex:0}});
   }catch(e){
    created.forEach(item=>URL.revokeObjectURL(item.url));
-   setError(e instanceof Error?e.message:"媒体预览失败");
-  }finally{setBusy(false)}
+   if(sequence===previewSequence.current&&!(e instanceof Error&&e.message==="媒体预览已切换"))setError(e instanceof Error?e.message:"媒体预览失败");
+  }finally{if(sequence===previewSequence.current)setBusy(false)}
  }
  function closeMediaPreview(){
+  previewSequence.current++;
   if(mediaPreview)mediaPreview.items.forEach(item=>URL.revokeObjectURL(item.url));
   setMediaPreview(null);
  }
@@ -121,29 +131,31 @@ export function MessagesPage({token}:{token:string}){
   finally{setBusy(false)}
  }
  async function sendReply(message:Message,event:FormEvent){
-  event.preventDefault();const text=replyText[message.id]?.trim();if(!text)return;
+  event.preventDefault();const text=replyText[message.id]?.trim();if(!text||replyLocks.current.has(message.id))return;replyLocks.current.add(message.id);
   setBusy(true);setError("");
   try{
    const result=await request<{reply:Reply}>(`/api/v1/messages/${message.id}/reply`,token,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({text})});
    setReplyJobs(v=>({...v,[message.id]:result.reply}));setReplyText(v=>({...v,[message.id]:""}));setNotice("回复任务已加入队列");
   }catch(e){setError(e instanceof Error?e.message:"创建回复任务失败")}
-  finally{setBusy(false)}
+  finally{replyLocks.current.delete(message.id);setBusy(false)}
  }
  async function sendContact(message:Message,event:FormEvent){
-  event.preventDefault();setBusy(true);setError("");
+  event.preventDefault();const lockKey=`contact:${message.id}`;if(replyLocks.current.has(lockKey))return;replyLocks.current.add(lockKey);setBusy(true);setError("");
   try{
    const result=await request<{reply:Reply}>(`/api/v1/messages/${message.id}/contact`,token,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()},body:JSON.stringify(contact)});
    setReplyJobs(v=>({...v,[message.id]:result.reply}));setContactMessage(null);setContact({phone:"",first_name:"",last_name:""});setNotice("联系人卡片发送任务已加入队列");
   }catch(e){setError(e instanceof Error?e.message:"联系人卡片任务创建失败")}
-  finally{setBusy(false)}
+  finally{replyLocks.current.delete(lockKey);setBusy(false)}
  }
  async function refreshReply(messageID:string,jobID:string){
   try{const result=await request<{reply:Reply}>(`/api/v1/message-replies/${jobID}`,token);setReplyJobs(v=>({...v,[messageID]:result.reply}))}
   catch(e){setError(e instanceof Error?e.message:"回复任务状态读取失败")}
  }
  async function resumeReply(messageID:string,jobID:string){
+  const lockKey=`resume:${jobID}`;if(replyLocks.current.has(lockKey))return;replyLocks.current.add(lockKey);
   try{await request(`/api/v1/message-replies/${jobID}/resume`,token,{method:"POST"});await refreshReply(messageID,jobID);setNotice("回复任务已恢复")}
   catch(e){setError(e instanceof Error?e.message:"恢复回复任务失败")}
+  finally{replyLocks.current.delete(lockKey)}
  }
  async function selectChat(chat:Chat){setSelectedChat(chat);setMessages([]);setMessageTotal(0);setOffset(0);setQuery("");setDebouncedQuery("");setMediaType("");setIncludeProcessed(false)}
  function updateSettings<K extends keyof Settings>(key:K,value:Settings[K]){setSettings(s=>s?{...s,[key]:value}:s)}
@@ -154,11 +166,11 @@ export function MessagesPage({token}:{token:string}){
  }
 
  return <div className="messages-page">
-  <div className="messages-heading"><div><div className="eyebrow">MESSAGES</div><h1>消息管理</h1><p>按账号和会话查看实时采集消息，支持处理、回复和联系人卡片。</p></div><div className="messages-heading-actions"><button className="secondary" onClick={()=>void Promise.all([loadChats(),loadMessages()])} disabled={busy}>刷新</button><button className="secondary" onClick={()=>setKeywordOpen(v=>!v)}>{keywordOpen?"返回消息":"关键词监控"}</button><button className="secondary" onClick={()=>void openSettings()} disabled={settingsBusy}>采集设置</button></div></div>
+  <div className="messages-heading"><div><div className="eyebrow">MESSAGES</div><h1>消息管理</h1><p>按账号和会话查看实时采集消息，支持处理、回复和联系人卡片。</p></div><div className="messages-heading-actions"><button className="secondary" onClick={()=>void Promise.all([loadChats(),loadMessages()])} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button><button className="secondary" onClick={()=>setKeywordOpen(v=>!v)}>{keywordOpen?"返回消息":"关键词监控"}</button><button className="secondary" onClick={()=>void openSettings()} disabled={settingsBusy}>采集设置</button></div></div>
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
   {keywordOpen?<KeywordMonitor token={token}/>:<div className="messages-layout">
    <aside className="chat-sidebar"><div className="chat-sidebar-heading"><strong>会话列表</strong><span>{chatTotal}</span></div><input className="chat-search" value={chatQuery} onChange={e=>setChatQuery(e.target.value)} placeholder="搜索会话、账号或用户名"/>
-    <div className="chat-list">{visibleChats.map(chat=><button key={chat.account_id+":"+chat.chat_id} className={selectedChat?.account_id===chat.account_id&&selectedChat.chat_id===chat.chat_id?"chat-item active":"chat-item"} onClick={()=>void selectChat(chat)}><div className="chat-avatar">{(chat.chat_title||chat.account_name||"?").slice(0,1).toUpperCase()}</div><div className="chat-item-content"><strong>{chat.chat_title||String(chat.chat_id)}</strong><small>{chat.account_name} · {chat.chat_type}</small><small className="chat-last-message">{chat.last_message||"无文本内容"}</small></div>{chat.unprocessed_count>0&&<span className="chat-unread">{chat.unprocessed_count}</span>}</button>)}{!visibleChats.length&&<div className="empty">暂无会话</div>}</div>
+    <div className="chat-list">{visibleChats.map(chat=><button key={chat.account_id+":"+chat.chat_id} className={selectedChat?.account_id===chat.account_id&&selectedChat.chat_id===chat.chat_id?"chat-item active":"chat-item"} onClick={()=>void selectChat(chat)}><div className="chat-avatar">{(chat.chat_title||chat.account_name||"?").slice(0,1).toUpperCase()}</div><div className="chat-item-content"><strong>{chat.chat_title||String(chat.chat_id)}</strong><small>{chat.account_name} · {chat.chat_type}</small><small className="chat-last-message">{chat.last_message||"无文本内容"}</small></div>{chat.unprocessed_count>0&&<span className="chat-unread">{chat.unprocessed_count}</span>}</button>)}{!visibleChats.length&&<div className="empty">{error?"会话加载失败，请查看上方提示":"暂无匹配会话"}</div>}</div>
    </aside>
    <section className="message-pane">
     {!selectedChat?<div className="message-empty"><div>▤</div><h2>选择一个会话</h2><p>从左侧会话列表选择账号和聊天，查看该会话已采集的消息。</p></div>:<>
@@ -168,7 +180,7 @@ export function MessagesPage({token}:{token:string}){
       {contactMessage===message.id&&<form className="contact-composer" onSubmit={e=>void sendContact(message,e)}><input value={contact.phone} onChange={e=>setContact(v=>({...v,phone:e.target.value}))} placeholder="联系人手机号" required/><input value={contact.first_name} onChange={e=>setContact(v=>({...v,first_name:e.target.value}))} placeholder="名字" required/><input value={contact.last_name} onChange={e=>setContact(v=>({...v,last_name:e.target.value}))} placeholder="姓氏"/><button className="primary" disabled={busy}>发送原生联系人卡片</button></form>}
       <form className="reply-composer" onSubmit={e=>void sendReply(message,e)}><textarea value={replyText[message.id]||""} onChange={e=>setReplyText(v=>({...v,[message.id]:e.target.value}))} placeholder="输入回复内容…" rows={2}/><button className="primary" disabled={busy||!(replyText[message.id]||"").trim()}>发送回复</button></form>
       {replyJobs[message.id]&&<div className="reply-job-status"><span>回复任务：{replyJobs[message.id].status}</span>{replyJobs[message.id].last_error&&<small>{replyJobs[message.id].last_error}</small>}<button onClick={()=>void refreshReply(message.id,replyJobs[message.id].id)}>刷新状态</button>{["paused","failed"].includes(replyJobs[message.id].status)&&<button onClick={()=>void resumeReply(message.id,replyJobs[message.id].id)}>恢复任务</button>}</div>}
-     </article>)}{!messages.length&&<div className="empty">{busy?"正在加载消息…":"该会话暂无符合条件的消息"}</div>}</div>
+     </article>)}{!messages.length&&<div className="empty">{busy?"正在加载消息…":error?"消息加载失败，请查看上方提示":"该会话暂无符合条件的消息"}</div>}</div>
      <div className="message-pagination"><button className="secondary" disabled={offset===0||busy} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</button><span>第 {Math.floor(offset/50)+1} / {Math.max(1,Math.ceil(messageTotal/50))} 页</span><button className="secondary" disabled={offset+50>=messageTotal||busy} onClick={()=>setOffset(offset+50)}>下一页</button></div>
     </>}
    </section>
