@@ -31,3 +31,24 @@ func TestNormalizeGroupCorrectionFieldsRejectsUnsafeOrEmptyValues(t *testing.T) 
         })
     }
 }
+
+func TestValidateGroupLibraryFilter(t *testing.T) {
+	valid:=[]GroupLibraryFilter{
+		{},
+		{Sort:"recent",MinMembers:1,MaxMembers:100,MinSources:1,MinContributors:1},
+		{Sort:"title"},
+		{Sort:"members"},
+		{Sort:"sources"},
+		{Sort:"contributors"},
+	}
+	for _,filter:=range valid { if err:=validateGroupLibraryFilter(filter);err!=nil { t.Errorf("valid filter rejected: %+v: %v",filter,err) } }
+	invalid:=[]GroupLibraryFilter{
+		{Sort:"arbitrary SQL"},
+		{MinMembers:-1},
+		{MaxMembers:-1},
+		{MinSources:-1},
+		{MinContributors:-1},
+		{MinMembers:20,MaxMembers:10},
+	}
+	for _,filter:=range invalid { if err:=validateGroupLibraryFilter(filter);err==nil { t.Errorf("invalid filter accepted: %+v",filter) } }
+}
