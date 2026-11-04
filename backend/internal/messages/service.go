@@ -960,7 +960,8 @@ func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody
 }
 
 // ClaimPendingReplies claims due jobs under each tenant's RLS scope. Expired
-// processing leases are reclaimable after a worker restart.
+// in-flight sends are quarantined instead of retried because their Telegram
+// outcome may be ambiguous after a worker crash.
 func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]ReplyJob,error) {
 	if maxJobs<1||maxJobs>50 {maxJobs=10}
 	// A lease expiring while a send was in flight has an ambiguous Telegram
@@ -1060,7 +1061,7 @@ func (s *Service) nextReplyTenant(ctx context.Context) (string,error) {
 			SELECT 1 FROM message_reply_jobs j
 			JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
 			WHERE j.tenant_id=t.id
-			AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+			AND j.status='pending' AND j.available_at<=NOW()
 			AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
 			AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
 			AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
@@ -1069,7 +1070,7 @@ func (s *Service) nextReplyTenant(ctx context.Context) (string,error) {
 			AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
 			AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
 			AND NOT EXISTS (SELECT 1 FROM message_reply_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
-				AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+				AND e.status='pending' AND e.available_at<=NOW() AND (e.created_at,e.id)<(j.created_at,j.id))
 		)
 		ORDER BY t.reply_jobs_last_claimed_at NULLS FIRST,t.id
 		LIMIT 1
