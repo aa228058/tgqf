@@ -40,7 +40,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(chat_type,telegram_chat_id))`,
 		`CREATE TABLE public_group_sources (
-			id BIGSERIAL PRIMARY KEY, group_id BIGINT NOT NULL REFERENCES public_groups(id), tenant_id UUID NOT NULL,
+			id BIGSERIAL PRIMARY KEY, group_id BIGINT NOT NULL REFERENCES public_groups(id) ON DELETE CASCADE, tenant_id UUID NOT NULL,
 			telegram_account_id UUID NOT NULL, source_chat_id BIGINT NOT NULL,
 			account_rights_snapshot JSONB, account_rights_observed_at TIMESTAMPTZ,
 			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -48,7 +48,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			rights_next_check_at TIMESTAMPTZ, rights_check_attempts INTEGER NOT NULL DEFAULT 0,
 			rights_check_error TEXT, UNIQUE(group_id,tenant_id,telegram_account_id))`,
 		`CREATE TABLE tenant_group_contributions (
-			tenant_id UUID NOT NULL, group_id BIGINT NOT NULL REFERENCES public_groups(id),
+			tenant_id UUID NOT NULL, group_id BIGINT NOT NULL REFERENCES public_groups(id) ON DELETE CASCADE,
 			first_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			contribution_count BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(tenant_id,group_id))`,
 		`CREATE TABLE public_group_links (
@@ -105,6 +105,7 @@ func TestGroupCatalogueImportAndPermissionRefreshIntegration(t *testing.T) {
 	service:=New(db)
 	tenantA:="11111111-1111-4111-8111-111111111111"
 	tenantB:="22222222-2222-4222-8222-222222222222"
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days'),($2,'active',NOW()+INTERVAL '30 days')`,tenantA,tenantB);err!=nil{t.Fatal(err)}
 	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
@@ -402,6 +403,7 @@ func TestConcurrentTenantImportsConvergeOnOneSharedGroup(t *testing.T) {
 	service := New(db)
 	ctx := context.Background()
 	tenants := []string{"11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"}
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days'),($2,'active',NOW()+INTERVAL '30 days')`,tenants[0],tenants[1]);err!=nil{t.Fatal(err)}
 	start := make(chan struct{})
 	errs := make(chan error, len(tenants))
 	var wg sync.WaitGroup
@@ -456,5 +458,38 @@ func TestGlobalCatalogueReadForSuperAdminDoesNotExposeTenantSources(t *testing.T
 	}
 	if len(sources) != 0 {
 		t.Fatalf("super-admin global scope exposed %d tenant source rows, want 0", len(sources))
+	}
+}
+
+
+// Admin edits are audited; deleting a canonical catalogue row removes only
+// catalogue-owned attribution/source rows and leaves Telegram accounts intact.
+func TestAdminPublicGroupUpdateAndDeleteAreAudited(t *testing.T) {
+	db, cleanup := openGroupIntegrationDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	service := New(db)
+	tenantID := "11111111-1111-4111-8111-111111111111"
+	accountID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	actorID := "99999999-9999-4999-8999-999999999999"
+	var groupID int64
+	if err := db.QueryRowContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title) VALUES(7654321,'group','Before') RETURNING id`).Scan(&groupID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`, tenantID, accountID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id) VALUES($1,$2,$3,7654321)`, groupID, tenantID, accountID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_group_contributions(tenant_id,group_id) VALUES($1,$2)`, tenantID, groupID); err != nil { t.Fatal(err) }
+	title := "After"
+	if err := service.UpdatePublicGroup(ctx, actorID, groupID, GroupCorrectionFields{Title:&title}); err != nil { t.Fatal(err) }
+	var savedTitle string
+	if err := db.QueryRowContext(ctx, `SELECT title FROM public_groups WHERE id=$1`, groupID).Scan(&savedTitle); err != nil { t.Fatal(err) }
+	if savedTitle != title { t.Fatalf("updated title=%q, want %q", savedTitle, title) }
+	if err := service.DeletePublicGroup(ctx, actorID, groupID, "duplicate catalogue entry"); err != nil { t.Fatal(err) }
+	var groupCount, sourceCount, contributionCount, accountCount, auditCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public_groups WHERE id=$1`, groupID).Scan(&groupCount); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM public_group_sources WHERE group_id=$1`, groupID).Scan(&sourceCount); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant_group_contributions WHERE group_id=$1`, groupID).Scan(&contributionCount); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`, tenantID, accountID).Scan(&accountCount); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs WHERE actor_user_id=$1 AND action IN ('admin.public_group.update','admin.public_group.delete')`, actorID).Scan(&auditCount); err != nil { t.Fatal(err) }
+	if groupCount != 0 || sourceCount != 0 || contributionCount != 0 || accountCount != 1 || auditCount != 2 {
+		t.Fatalf("after delete groups=%d sources=%d contributions=%d accounts=%d audit=%d; want 0/0/0/1/2", groupCount, sourceCount, contributionCount, accountCount, auditCount)
 	}
 }
