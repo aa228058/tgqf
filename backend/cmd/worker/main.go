@@ -198,7 +198,7 @@ func main() {
 	lastProxySweep:=time.Time{}
 	lastPrivateInviteSweep:=time.Time{}
 	lastGroupPermissionSweep:=time.Time{}
-\tlastAccountGroupSweep:=time.Time{}
+	lastAccountGroupSweep:=time.Time{}
 	lastMediaCacheSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
