@@ -46,8 +46,8 @@ func NewJSONHandler(w io.Writer, options *slog.HandlerOptions) slog.Handler {
 // RedactText scrubs credentials that may be embedded in dependency errors.
 func RedactText(value string) string {
 	value = urlCredential.ReplaceAllStringFunc(value, func(match string) string {
-		parts := strings.SplitN(match, "://", 2)
-		return parts[0] + "://[REDACTED]@"
+		scheme := strings.SplitN(match, "://", 2)[0]
+		return scheme + "://[REDACTED]@"
 	})
 	value = parameterSecret.ReplaceAllString(value, "$1="+redacted)
 	value = bearerSecret.ReplaceAllString(value, "$1"+redacted)
