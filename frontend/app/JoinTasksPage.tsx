@@ -39,7 +39,7 @@ const appName: Record<string,string> = {
 };
 const date = (v?:string) => v ? new Date(v).toLocaleString() : "—";
 
-export function JoinTasksPage({ token }: { token: string }) {
+export function JoinTasksPage({ token, initialGroupID, onInitialGroupHandled }: { token: string; initialGroupID?: number|null; onInitialGroupHandled?:()=>void }) {
   const [tasks,setTasks] = useState<Task[]>([]);
   const [accounts,setAccounts] = useState<Account[]>([]);
   const [groups,setGroups] = useState<Group[]>([]);
@@ -89,6 +89,7 @@ export function JoinTasksPage({ token }: { token: string }) {
   },[token,offset]);
 
   useEffect(()=>{void load();const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},10000);return()=>window.clearInterval(timer)},[load]);
+  useEffect(()=>{if(!initialGroupID)return;setName("群组库快捷加群任务");setTargetMode("group");setGroupID(String(initialGroupID));setLinkID("");setInvite("");setAccountIDs([]);setAuthorized(false);setAuthorizationNote("");setCreateOpen(true);onInitialGroupHandled?.()},[initialGroupID,onInitialGroupHandled]);
   useEffect(()=>{
     if(!detail)return;
     let active=true;
