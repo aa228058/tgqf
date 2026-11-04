@@ -71,6 +71,23 @@ func parseGroupCatalogueTXT(reader io.Reader) ([]GroupCatalogueImportRecord, err
 	return parseGroupCatalogueDelimited(reader, '\t')
 }
 
+
+func (h *Handler) importGroupCatalogueXLSX(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user.Role != "tenant_admin" {
+		messageJSON(w,http.StatusForbidden,map[string]string{"error":"tenant_admin_required"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w,r.Body,2<<20)
+	data,err:=io.ReadAll(r.Body)
+	if err!=nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"XLSX file exceeds 2 MiB or could not be read"});return }
+	records,err:=parseGroupCatalogueXLSX(data)
+	if err!=nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return }
+	inserted,skipped,err:=h.service.ImportGroupCatalogue(r.Context(),user.TenantID,records)
+	if err!=nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return }
+	messageJSON(w,http.StatusOK,map[string]any{"total":len(records),"inserted":inserted,"skipped_existing":skipped,"mode":"insert_only","shared_catalogue":true})
+}
+
 func (h *Handler) importGroupCatalogueTXT(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	if user.Role != "tenant_admin" {
