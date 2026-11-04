@@ -15,7 +15,6 @@ func TestJoinTaskControlRequestsDoNotRevokeInflightLeases(t *testing.T) {
 	tenantID:="11111111-1111-4111-8111-111111111111"
 	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	if _,err:=db.ExecContext(ctx,`ALTER TABLE tenant_join_task_accounts ADD COLUMN pause_requested BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT FALSE`);err!=nil{t.Fatal(err)}
 	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`,tenantID);err!=nil{t.Fatal(err)}
 	for _,account:=range []string{accountA,accountB}{
 		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`,tenantID,account);err!=nil{t.Fatal(err)}
