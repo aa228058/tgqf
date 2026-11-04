@@ -122,7 +122,7 @@ func main() {
 			SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(),
 			SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
-			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MediaMetadataJSON: mediaMetadataJSON, MessageDate: message.Date,
+			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MediaMetadataJSON: mediaMetadataJSON, GroupedID: message.GroupedID, MessageDate: message.Date,
 		}
 		// Do not acknowledge the MTGo callback until Redis has durably accepted
 		// the update. Retry transient Redis outages with bounded backoff.
