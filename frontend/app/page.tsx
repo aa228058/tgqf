@@ -98,7 +98,7 @@ export default function Home() {
     void fetch(`${API_BASE}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${saved}` }, cache: "no-store" })
       .then(async response => {
         if (!response.ok) throw new Error("会话已失效");
-        setUser(await response.json() as AppUser);
+        setUser(await readAPIJSON<AppUser>(response));
       })
       .catch(() => {
         window.localStorage.removeItem("tgqf_access_token");
@@ -125,7 +125,7 @@ export default function Home() {
     event.preventDefault(); if (loginLock.current) return; loginLock.current = true; setBusy(true); setError("");
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, login_type: loginMode, device_label: "tg-account-manager-web" }) });
-      const body = await response.json();
+      const body = await readAPIJSON<{error?:string;access_token:string;user:AppUser}>(response);
       if (!response.ok) throw new Error(body.error || "登录失败");
       window.localStorage.setItem("tgqf_access_token", body.access_token);
       setToken(body.access_token); setUser(body.user as AppUser); setSignedIn(true); setPassword("");
