@@ -58,6 +58,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
 	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
+	mux.Handle("GET /api/v1/group-links/stats",h.auth.Authenticated(http.HandlerFunc(h.groupLinkStats)))
 	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
 	mux.Handle("PUT /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.updateLinkSettings)))
 	mux.Handle("GET /api/v1/groups/{id}/sources",h.auth.Authenticated(http.HandlerFunc(h.listGroupSources)))
@@ -295,6 +296,17 @@ func (h *Handler) updateLinkSettings(w http.ResponseWriter,r *http.Request) {
 	updated,err:=h.service.UpdateLinkCollectionSettings(r.Context(),user.TenantID,settings)
 	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"could not update link collection settings"});return}
 	messageJSON(w,http.StatusOK,map[string]any{"settings":updated})
+}
+
+
+func (h *Handler) groupLinkStats(w http.ResponseWriter, r *http.Request) {
+    user := auth.UserFromContext(r.Context())
+    stats, err := h.service.GetGroupLinkStats(r.Context(), user.TenantID)
+    if err != nil {
+        messageJSON(w, http.StatusInternalServerError, map[string]string{"error":"failed to load group link statistics"})
+        return
+    }
+    messageJSON(w, http.StatusOK, map[string]any{"stats":stats})
 }
 
 func (h *Handler) listGroupLinks(w http.ResponseWriter,r *http.Request) {
