@@ -17,6 +17,14 @@ func (s *Service) ChangeUnifiedTaskStatus(ctx context.Context, tenantID, taskTyp
 	if action != "pause" && action != "resume" && action != "retry" && action != "cancel" {
 		return errors.New("unsupported task action")
 	}
+	switch taskType {
+	case "message_reply", "keyword_action", "profile_update":
+		if !validUUID(id) { return errors.New("invalid task id") }
+	case "group_join":
+		if _, err := strconv.ParseInt(id, 10, 64); err != nil { return errors.New("invalid group join task id") }
+	default:
+		return errors.New("invalid task type")
+	}
 	if taskType == "group_join" {
 		return s.changeJoinTaskAccountStatus(ctx, tenantID, id, action)
 	}
