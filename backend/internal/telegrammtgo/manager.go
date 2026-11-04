@@ -629,7 +629,7 @@ func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, cha
     }
     sent,err:=client.SendMediaGroup(ctx,chatID,media,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
     if err!=nil{return nil,fmt.Errorf("send Telegram media album: %w",err)}
-    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram returned %d album messages for %d items",len(sent),len(items))}
+    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram send outcome uncertain: returned %d album messages for %d items",len(sent),len(items))}
     ids:=make([]int64,0,len(sent))
     for _,message:=range sent { if message==nil||message.ID<=0{return nil,errors.New("Telegram returned an empty album message")};ids=append(ids,int64(message.ID)) }
     return ids,nil
