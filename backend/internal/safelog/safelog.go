@@ -9,11 +9,11 @@ import (
 )
 
 var (
-	sensitiveKey = regexp.MustCompile(`(?i)(password|passwd|secret|token|api.?hash|session|authorization|cookie|credential|private.?key|database.?url|redis.?url|dsn)`)
-	urlCredential = regexp.MustCompile(`(?i)((?:postgres(?:ql)?|rediss?|https?|socks5h?)://[^:/@\s]*:[^@/\s]+@`)
+	sensitiveKey    = regexp.MustCompile(`(?i)(password|passwd|secret|token|api.?hash|session|authorization|cookie|credential|private.?key|database.?url|redis.?url|dsn)`)
+	urlCredential   = regexp.MustCompile(`(?i)((?:postgres(?:ql)?|rediss?|https?|socks5h?)://[^:/@\s]*:[^@/\s]+@`)
 	parameterSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)=([^&\s,;]+)`)
-	jsonSecret = regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)"\s*:\s*")([^"]+)(")`)
-	bearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	jsonSecret      = regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)"\s*:\s*")([^"]+)(")`)
+	bearerSecret    = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 )
 
 const redacted = "[REDACTED]"
