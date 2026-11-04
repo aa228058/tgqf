@@ -80,6 +80,61 @@ func (s *Store) Close() error {
 	return dbErr
 }
 
+func splitSQLStatements(script string) []string {
+	var statements []string
+	start := 0
+	var dollarTag string
+	inSingle, inDouble, inLineComment := false, false, false
+	blockDepth := 0
+	for i := 0; i < len(script); i++ {
+		ch := script[i]
+		if inLineComment {
+			if ch == '\n' { inLineComment = false }
+			continue
+		}
+		if blockDepth > 0 {
+			if i+1 < len(script) && script[i:i+2] == "/*" { blockDepth++; i++; continue }
+			if i+1 < len(script) && script[i:i+2] == "*/" { blockDepth--; i++; continue }
+			continue
+		}
+		if dollarTag != "" {
+			if strings.HasPrefix(script[i:], dollarTag) { i += len(dollarTag)-1; dollarTag = "" }
+			continue
+		}
+		if inSingle {
+			if ch == '\\' && i+1 < len(script) { i++; continue }
+			if ch == '\'' {
+				if i+1 < len(script) && script[i+1] == '\'' { i++; continue }
+				inSingle = false
+			}
+			continue
+		}
+		if inDouble {
+			if ch == '"' {
+				if i+1 < len(script) && script[i+1] == '"' { i++; continue }
+				inDouble = false
+			}
+			continue
+		}
+		if i+1 < len(script) && script[i:i+2] == "--" { inLineComment = true; i++; continue }
+		if i+1 < len(script) && script[i:i+2] == "/*" { blockDepth = 1; i++; continue }
+		if ch == '\'' { inSingle = true; continue }
+		if ch == '"' { inDouble = true; continue }
+		if ch == '$' {
+			j := i+1
+			for j < len(script) && (script[j] == '_' || script[j] >= 'a' && script[j] <= 'z' || script[j] >= 'A' && script[j] <= 'Z' || script[j] >= '0' && script[j] <= '9') { j++ }
+			if j < len(script) && script[j] == '$' { dollarTag = script[i:j+1]; i = j; continue }
+		}
+		if ch == ';' {
+			statement := strings.TrimSpace(script[start:i])
+			if statement != "" { statements = append(statements, statement) }
+			start = i+1
+		}
+	}
+	if statement := strings.TrimSpace(script[start:]); statement != "" { statements = append(statements, statement) }
+	return statements
+}
+
 func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
 		return fmt.Errorf("create migration table: %w", err)
@@ -106,11 +161,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, statement := range strings.Split(string(script), ";") {
-			statement = strings.TrimSpace(statement)
-			if statement == "" {
-				continue
-			}
+		for _, statement := range splitSQLStatements(string(script)) {
 			if _, err = tx.ExecContext(ctx, statement); err != nil {
 				break
 			}
