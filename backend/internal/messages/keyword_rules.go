@@ -399,7 +399,13 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
             messageIDs:=[]int64{telegramMessageID}
             if len(messageIDLists)>0 && len(messageIDLists[0])>0 { messageIDs=messageIDLists[0] }
-            for _,id:=range messageIDs { if id<=0 { return errors.New("invalid Telegram message id in result") } }
+            seenMessageIDs:=make(map[int64]struct{},len(messageIDs))
+            for _,id:=range messageIDs {
+                if id<=0 { return errors.New("invalid Telegram message id in result") }
+                if _,exists:=seenMessageIDs[id];exists { return errors.New("duplicate Telegram message id in result") }
+                seenMessageIDs[id]=struct{}{}
+            }
+            if messageIDs[0]!=telegramMessageID { return errors.New("primary Telegram message id does not match result list") }
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
             if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
