@@ -66,7 +66,7 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	service:=New(db)
 	jobs,err:=service.ClaimPendingReplies(ctx,10)
 	if err!=nil{t.Fatal(err)}
-	if len(jobs)!=2{t.Fatalf("claimed %d jobs, want 2 authorized active-tenant accounts",len(jobs))}
+	if len(jobs)!=2{ids:=make([]string,0,len(jobs));for _,job:=range jobs{ids=append(ids,job.ID)};t.Fatalf("claimed %d jobs (%v), want 2 authorized active-tenant accounts",len(jobs),ids)}
 	claimed:=map[string]ReplyJob{}
 	for _,job:=range jobs{claimed[job.ID]=job}
 	if _,ok:=claimed[jobA];!ok{t.Fatal("authorized reply A was not claimed")}
