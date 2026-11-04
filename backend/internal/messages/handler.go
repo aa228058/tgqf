@@ -410,9 +410,29 @@ func (h *Handler) getGroupLibraryItem(w http.ResponseWriter, r *http.Request) {
 	messageJSON(w, http.StatusOK, map[string]any{"group":item})
 }
 
+func parseGroupLibraryPagination(rawLimit, rawOffset string) (int, int, error) {
+	limit, offset := 50, 0
+	if strings.TrimSpace(rawLimit) != "" {
+		value, err := strconv.Atoi(strings.TrimSpace(rawLimit))
+		if err != nil || value < 1 || value > 100 {
+			return 0, 0, ErrInvalidGroupLibraryQuery
+		}
+		limit = value
+	}
+	if strings.TrimSpace(rawOffset) != "" {
+		value, err := strconv.Atoi(strings.TrimSpace(rawOffset))
+		if err != nil || value < 0 || value > 10000000 {
+			return 0, 0, ErrInvalidGroupLibraryQuery
+		}
+		offset = value
+	}
+	return limit, offset, nil
+}
+
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
-	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	limit,offset,paginationErr:=parseGroupLibraryPagination(r.URL.Query().Get("limit"),r.URL.Query().Get("offset"))
+	if paginationErr!=nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":paginationErr.Error()});return }
 	filter:=GroupLibraryFilter{ChatType:r.URL.Query().Get("chat_type"),Query:r.URL.Query().Get("q"),Sort:r.URL.Query().Get("sort")}
 	parseInt:=func(key string)(int,error){raw:=strings.TrimSpace(r.URL.Query().Get(key));if raw==""{return 0,nil};v,err:=strconv.Atoi(raw);if err!=nil{return 0,ErrInvalidGroupLibraryQuery};return v,nil}
 	var err error
