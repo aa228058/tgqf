@@ -195,6 +195,53 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.ReplyTextByChatType=normalizedReplies
     if len(rule.KeywordGroups)>0 && len(rule.Keywords)>0 {return rule,fmt.Errorf("%w: use keywords or keyword_groups, not both",ErrInvalidKeywordRule)}
     if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 && len(rule.MediaTypes)==0 {return rule,fmt.Errorf("%w: provide keywords, keyword groups, or at least one media type",ErrInvalidKeywordRule)}
+    if len(rule.ActionSteps)==0 || len(rule.ActionSteps)>10 { return rule,fmt.Errorf("%w: action sequence must contain 1-10 steps",ErrInvalidKeywordRule) }
+    for i:=range rule.ActionSteps {
+        step:=&rule.ActionSteps[i]
+        step.ActionType=strings.ToLower(strings.TrimSpace(step.ActionType))
+        step.Text=strings.TrimSpace(step.Text)
+        step.ContactPhone=strings.TrimSpace(step.ContactPhone)
+        step.ContactFirstName=strings.TrimSpace(step.ContactFirstName)
+        step.ContactLastName=strings.TrimSpace(step.ContactLastName)
+        step.MediaAssetID=strings.TrimSpace(step.MediaAssetID)
+        step.MediaType=strings.ToLower(strings.TrimSpace(step.MediaType))
+        step.MediaCaption=strings.TrimSpace(step.MediaCaption)
+        switch step.ActionType {
+        case "text":
+            if step.Text=="" && len(step.ReplyTextByChatType)==0 { return rule,fmt.Errorf("%w: text step %d requires text",ErrInvalidKeywordRule,i+1) }
+            if len([]rune(step.Text))>4096 { return rule,fmt.Errorf("%w: text step %d exceeds Telegram's limit",ErrInvalidKeywordRule,i+1) }
+            for chatType,reply:=range step.ReplyTextByChatType {
+                key:=strings.ToLower(strings.TrimSpace(chatType))
+                if key!="private" && key!="group" { return rule,fmt.Errorf("%w: invalid chat-specific text in step %d",ErrInvalidKeywordRule,i+1) }
+                if len([]rune(strings.TrimSpace(reply)))>4096 { return rule,fmt.Errorf("%w: chat-specific text in step %d exceeds Telegram's limit",ErrInvalidKeywordRule,i+1) }
+                if key!=chatType { delete(step.ReplyTextByChatType,chatType);step.ReplyTextByChatType[key]=strings.TrimSpace(reply) }
+            }
+        case "contact":
+            if step.ContactPhone=="" || step.ContactFirstName=="" || len(step.ContactPhone)>64 || len(step.ContactFirstName)>128 || len(step.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact step %d requires phone and first name",ErrInvalidKeywordRule,i+1) }
+        case "media":
+            if !validUUID(step.MediaAssetID) { return rule,fmt.Errorf("%w: media step %d requires a valid asset",ErrInvalidKeywordRule,i+1) }
+            switch step.MediaType { case "photo","video","document","audio","voice","video_note": default:return rule,fmt.Errorf("%w: unsupported media type in step %d",ErrInvalidKeywordRule,i+1) }
+            if len([]rune(step.MediaCaption))>1024 { return rule,fmt.Errorf("%w: media caption in step %d is too long",ErrInvalidKeywordRule,i+1) }
+        case "media_album":
+            if len(step.MediaAlbumItems)<2 || len(step.MediaAlbumItems)>10 { return rule,fmt.Errorf("%w: album step %d requires 2-10 items",ErrInvalidKeywordRule,i+1) }
+            category:="";seen:=map[string]bool{}
+            for j:=range step.MediaAlbumItems {
+                item:=&step.MediaAlbumItems[j];item.AssetID=strings.TrimSpace(item.AssetID);item.MediaType=strings.ToLower(strings.TrimSpace(item.MediaType));item.Caption=strings.TrimSpace(item.Caption)
+                if !validUUID(item.AssetID)||seen[item.AssetID] { return rule,fmt.Errorf("%w: invalid album item in step %d",ErrInvalidKeywordRule,i+1) };seen[item.AssetID]=true
+                kind:="visual";if item.MediaType=="document"{kind="document"}else if item.MediaType!="photo"&&item.MediaType!="video"{return rule,fmt.Errorf("%w: unsupported album item type in step %d",ErrInvalidKeywordRule,i+1)}
+                if category!=""&&category!=kind{return rule,fmt.Errorf("%w: album step %d mixes documents with visual media",ErrInvalidKeywordRule,i+1)};category=kind
+                if len([]rune(item.Caption))>1024{return rule,fmt.Errorf("%w: album caption in step %d is too long",ErrInvalidKeywordRule,i+1)}
+            }
+        case "voice_call":
+            if len(rule.ChatTypes)!=1 || rule.ChatTypes[0]!="private" { return rule,fmt.Errorf("%w: voice_call step %d requires private-only rule",ErrInvalidKeywordRule,i+1) }
+        default:return rule,fmt.Errorf("%w: unsupported action step %d",ErrInvalidKeywordRule,i+1)
+        }
+        if step.ActionType!="text" && (step.Text!="" || len(step.ReplyTextByChatType)>0) { return rule,fmt.Errorf("%w: text payload only allowed in text step %d",ErrInvalidKeywordRule,i+1) }
+        if step.ActionType!="contact" && (step.ContactPhone!=""||step.ContactFirstName!=""||step.ContactLastName!="") { return rule,fmt.Errorf("%w: contact payload only allowed in contact step %d",ErrInvalidKeywordRule,i+1) }
+        if step.ActionType!="media" && (step.MediaAssetID!=""||step.MediaType!=""||step.MediaCaption!="") { return rule,fmt.Errorf("%w: media payload only allowed in media step %d",ErrInvalidKeywordRule,i+1) }
+        if step.ActionType!="media_album" && len(step.MediaAlbumItems)>0 { return rule,fmt.Errorf("%w: album payload only allowed in album step %d",ErrInvalidKeywordRule,i+1) }
+        if step.ActionType=="contact"||step.ActionType=="media"||step.ActionType=="media_album" { for _,chatType:=range rule.ChatTypes { if chatType=="channel" { return rule,fmt.Errorf("%w: action step %d does not support channels",ErrInvalidKeywordRule,i+1) } } }
+    }
     return rule,nil
 }
 
@@ -267,8 +314,12 @@ func (s *Service) CreateKeywordRule(ctx context.Context, tenantID string, rule K
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE",tenantID).Scan(&count);err!=nil{return err}
         if rule.Enabled && count>=100{return errors.New("active keyword rule limit reached (100)")}
         for _,accountID:=range rule.AccountIDs {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,accountID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("keyword filter account does not belong to tenant")}}
-        if rule.ActionType=="media" { var exists bool; if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,rule.MediaAssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
-        if rule.ActionType=="media_album" { for _,item:=range rule.MediaAlbumItems { var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,item.AssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} } }
+        for _,step:=range rule.ActionSteps {
+            assetIDs:=[]string{}
+            if step.ActionType=="media" { assetIDs=append(assetIDs,step.MediaAssetID) }
+            if step.ActionType=="media_album" { for _,item:=range step.MediaAlbumItems { assetIDs=append(assetIDs,item.AssetID) } }
+            for _,assetID:=range assetIDs { var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,assetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
+        }
         return tx.QueryRowContext(ctx,`INSERT INTO tenant_keyword_rules(tenant_id,name,match_mode,keywords,exclude_terms,chat_types,account_ids,chat_ids,media_types,chat_titles,chat_usernames,sender_ids,sender_usernames,sender_names,keyword_groups,group_operator,reply_text,reply_text_by_chat_type,action_steps,action_type,contact_phone,contact_first_name,contact_last_name,media_asset_id,media_type,media_caption,media_album_items,action_steps,case_sensitive,enabled)
             VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18::jsonb,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27::jsonb,$28,$29)
             RETURNING id::text,created_at,updated_at`,tenantID,rule.Name,rule.MatchMode,string(keywords),string(excluded),string(types),string(accounts),string(chats),string(media),string(chatTitles),string(chatUsernames),string(senderIDs),string(senderUsernames),string(senderNames),string(keywordGroups),rule.GroupOperator,rule.ReplyText,string(replyTextByChatType),rule.ActionType,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName,keywordNullableMediaAssetID(rule.MediaAssetID),rule.MediaType,rule.MediaCaption,keywordAlbumJSON(rule.MediaAlbumItems),keywordActionStepsJSON(rule.ActionSteps),rule.CaseSensitive,rule.Enabled).Scan(&rule.ID,&rule.CreatedAt,&rule.UpdatedAt)
@@ -287,8 +338,12 @@ func (s *Service) UpdateKeywordRule(ctx context.Context,tenantID,id string,rule 
         if err:=tx.QueryRowContext(ctx,`SELECT id::text FROM tenants WHERE id=$1 FOR UPDATE`,tenantID).Scan(&lockedTenant);err!=nil{return err}
         if rule.Enabled {var count int;if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE AND id<>$2",tenantID,id).Scan(&count);err!=nil{return err};if count>=100{return errors.New("active keyword rule limit reached (100)")}}
         for _,accountID:=range rule.AccountIDs {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,accountID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("keyword filter account does not belong to tenant")}}
-        if rule.ActionType=="media" { var exists bool; if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,rule.MediaAssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
-        if rule.ActionType=="media_album" { for _,item:=range rule.MediaAlbumItems { var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,item.AssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} } }
+        for _,step:=range rule.ActionSteps {
+            assetIDs:=[]string{}
+            if step.ActionType=="media" { assetIDs=append(assetIDs,step.MediaAssetID) }
+            if step.ActionType=="media_album" { for _,item:=range step.MediaAlbumItems { assetIDs=append(assetIDs,item.AssetID) } }
+            for _,assetID:=range assetIDs { var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,assetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
+        }
         result,err:=tx.ExecContext(ctx,`UPDATE tenant_keyword_rules SET name=$3,match_mode=$4,keywords=$5::jsonb,exclude_terms=$6::jsonb,chat_types=$7::jsonb,account_ids=$8::jsonb,chat_ids=$9::jsonb,media_types=$10::jsonb,chat_titles=$11::jsonb,chat_usernames=$12::jsonb,sender_ids=$13::jsonb,sender_usernames=$14::jsonb,sender_names=$15::jsonb,keyword_groups=$16::jsonb,group_operator=$17,reply_text=$18,reply_text_by_chat_type=$19::jsonb,action_type=$20,contact_phone=$21,contact_first_name=$22,contact_last_name=$23,media_asset_id=$24,media_type=$25,media_caption=$26,media_album_items=$27::jsonb,action_steps=$28::jsonb,case_sensitive=$29,enabled=$30,updated_at=NOW()
             WHERE tenant_id=$1 AND id=$2`,tenantID,id,rule.Name,rule.MatchMode,string(keywords),string(excluded),string(types),string(accounts),string(chats),string(media),string(chatTitles),string(chatUsernames),string(senderIDs),string(senderUsernames),string(senderNames),string(keywordGroups),rule.GroupOperator,rule.ReplyText,string(replyTextByChatType),rule.ActionType,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName,keywordNullableMediaAssetID(rule.MediaAssetID),rule.MediaType,rule.MediaCaption,keywordAlbumJSON(rule.MediaAlbumItems),keywordActionStepsJSON(rule.ActionSteps),rule.CaseSensitive,rule.Enabled)
         if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword rule not found")}
