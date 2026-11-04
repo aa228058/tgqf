@@ -559,6 +559,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 新增 PostgreSQL 集成测试，覆盖租户禁用、到期、续费以及 live lease 保留。
 - [x] 消息中心前端接入带 Bearer 鉴权的 SSE + Redis Streams 事件，支持 Last-Event-ID 断线续传；15 秒轮询保留为断流兜底。SSE 不是 WebSocket，协议差异已在前端方案记录。
 - [x] 超级管理员公共群组纠错审核、人工合并页面已接入现有受保护 API。
+- [x] 修复超级管理员加载共享群组库时空 tenant UUID 导致的查询失败；使用零 UUID 仅读取全局实体，来源/贡献数为 0，不泄露任一租户来源；增加 PostgreSQL 集成测试。
 - [x] 增加仅 super_admin 可访问的审计日志查询 API 与前端列表页。
 - [x] 正式产品规格已明确语音动作 V1 仅发起原生呼叫并触发响铃，不要求接听后双向音频；响铃不得显示为已接通。
 - [ ] PR #42 的 Go/Frontend CI 当前仍待 GitHub Actions 运行完成；不得提前标记 CI 通过。
