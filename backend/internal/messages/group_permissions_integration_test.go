@@ -197,9 +197,9 @@ func TestLinkRediscoveryPreservesActiveCheckLeases(t *testing.T) {
 	inviteHash:=sha256.Sum256([]byte(inviteCode))
 	var publicID,inviteID int64
 	if err:=db.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,public_url,status,last_check_error,check_attempts,next_check_at,last_checked_at,check_lease_until,check_lease_tenant_id,check_lease_account_id)
-		VALUES('public','https://t.me/shared_group','checking','temporary failure',4,NOW()+INTERVAL '1 hour',NOW(),NOW()+INTERVAL '5 minutes',$1,$2) RETURNING id`,tenantID,accountID).Scan(&publicID);err!=nil{t.Fatal(err)}
+		VALUES('public','https://t.me/shared_group','unknown','temporary failure',4,NOW()+INTERVAL '1 hour',NOW(),NOW()+INTERVAL '5 minutes',$1,$2) RETURNING id`,tenantID,accountID).Scan(&publicID);err!=nil{t.Fatal(err)}
 	if err:=db.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status,last_check_error,check_attempts,next_check_at,last_checked_at,check_lease_until,check_lease_tenant_id,check_lease_account_id)
-		VALUES('invite',$1,$2,'checking','temporary failure',3,NOW()+INTERVAL '1 hour',NOW(),NOW()+INTERVAL '5 minutes',$3,$4) RETURNING id`,inviteHash[:],[]byte("encrypted"),tenantID,accountID).Scan(&inviteID);err!=nil{t.Fatal(err)}
+		VALUES('invite',$1,$2,'unknown','temporary failure',3,NOW()+INTERVAL '1 hour',NOW(),NOW()+INTERVAL '5 minutes',$3,$4) RETURNING id`,inviteHash[:],[]byte("encrypted"),tenantID,accountID).Scan(&inviteID);err!=nil{t.Fatal(err)}
 
 	in:=Incoming{AccountID:accountID,ChatID:-100123,MessageID:77,ChatType:"group",Text:"https://t.me/shared_group and t.me/+AbCdEf123456"}
 	if err:=withTenantTx(ctx,db,tenantID,func(tx *sql.Tx)error{return storeDiscoveredLinks(ctx,tx,tenantID,in)});err!=nil{t.Fatal(err)}
@@ -210,7 +210,7 @@ func TestLinkRediscoveryPreservesActiveCheckLeases(t *testing.T) {
 		var nextCheck,lease sql.NullTime
 		var leaseTenant,leaseAccount sql.NullString
 		if err:=db.QueryRowContext(ctx,`SELECT status,last_check_error,check_attempts,next_check_at,check_lease_until,check_lease_tenant_id::text,check_lease_account_id::text FROM public_group_links WHERE id=$1`,id).Scan(&status,&lastError,&attempts,&nextCheck,&lease,&leaseTenant,&leaseAccount);err!=nil{t.Fatal(err)}
-		if status!="checking"||lastError!="temporary failure"||attempts==0||!nextCheck.Valid||!lease.Valid||!leaseTenant.Valid||!leaseAccount.Valid {
+		if status!="unknown"||lastError!="temporary failure"||attempts<3||!nextCheck.Valid||!lease.Valid||!leaseTenant.Valid||!leaseAccount.Valid {
 			t.Fatalf("rediscovery interrupted active check lease for link %d: status=%s error=%s attempts=%d next=%v lease=%v tenant=%v account=%v",id,status,lastError,attempts,nextCheck,lease,leaseTenant,leaseAccount)
 		}
 	}
