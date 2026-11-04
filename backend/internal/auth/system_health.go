@@ -151,8 +151,12 @@ func (s *Service) aggregateTenantHealth(ctx context.Context, result *SystemHealt
     rows.Close()
     for _,tenantID:=range tenantIDs {
         if _,err:=tx.ExecContext(ctx,"SELECT set_config('app.tenant_id',$1,true)",tenantID);err!=nil{return err}
-        if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*),COUNT(*) FILTER(WHERE status='authorized'),COUNT(*) FILTER(WHERE status='disconnected'),COUNT(*) FILTER(WHERE status='error'),COUNT(*) FILTER(WHERE status='pending') FROM telegram_accounts WHERE tenant_id=$1",tenantID).Scan(&result.Accounts.Total,&result.Accounts.Authorized,&result.Accounts.Disconnected,&result.Accounts.Error,&result.Accounts.Pending);err!=nil{return fmt.Errorf("account health for tenant: %w",err)}
-        if err:=tx.QueryRowContext(ctx,"SELECT (SELECT COUNT(*) FROM tenant_proxies WHERE tenant_id=$1),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes')",tenantID).Scan(&result.Proxies.Total,&result.Proxies.FailedChecks15m,&result.Proxies.SuccessfulChecks15m);err!=nil{return fmt.Errorf("proxy health for tenant: %w",err)}
+        var total,authorized,disconnected,accountErrors,pending int
+        if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*),COUNT(*) FILTER(WHERE status='authorized'),COUNT(*) FILTER(WHERE status='disconnected'),COUNT(*) FILTER(WHERE status='error'),COUNT(*) FILTER(WHERE status='pending') FROM telegram_accounts WHERE tenant_id=$1",tenantID).Scan(&total,&authorized,&disconnected,&accountErrors,&pending);err!=nil{return fmt.Errorf("account health for tenant: %w",err)}
+        result.Accounts.Total+=total;result.Accounts.Authorized+=authorized;result.Accounts.Disconnected+=disconnected;result.Accounts.Error+=accountErrors;result.Accounts.Pending+=pending
+        var proxies,failedChecks,successfulChecks int
+        if err:=tx.QueryRowContext(ctx,"SELECT (SELECT COUNT(*) FROM tenant_proxies WHERE tenant_id=$1),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes')",tenantID).Scan(&proxies,&failedChecks,&successfulChecks);err!=nil{return fmt.Errorf("proxy health for tenant: %w",err)}
+        result.Proxies.Total+=proxies;result.Proxies.FailedChecks15m+=failedChecks;result.Proxies.SuccessfulChecks15m+=successfulChecks
     }
     return tx.Commit()
 }
