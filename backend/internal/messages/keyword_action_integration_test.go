@@ -92,7 +92,7 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 
 	service:=New(db)
 	ambiguousActionID:="10000000-0000-4000-8000-000000000005"
-	ambiguousLease:=time.Now().UTC().Add(2*time.Minute)
+	ambiguousLease:=time.Now().UTC().Truncate(time.Microsecond).Add(2*time.Minute)
 	insertJob(ambiguousActionID,activeTenant,accountA,"processing",ambiguousLease)
 	ambiguousAction:=KeywordActionJob{ID:ambiguousActionID,TenantID:activeTenant,AccountID:accountA,LeaseUntil:ambiguousLease}
 	if err:=service.FinishKeywordAction(ctx,ambiguousAction,0,context.DeadlineExceeded,0);err!=nil{t.Fatalf("quarantine ambiguous keyword action result: %v",err)}
