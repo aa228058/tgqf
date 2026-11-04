@@ -42,6 +42,8 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginMode, setLoginMode] = useState<"tenant" | "admin">("tenant");
+  const [showRegister, setShowRegister] = useState(false);
+  const [tenantName, setTenantName] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -132,6 +134,26 @@ export default function Home() {
     } catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
     finally { loginLock.current = false; setBusy(false); }
   }
+  async function register(event: FormEvent) {
+    event.preventDefault();
+    if (loginLock.current) return;
+    loginLock.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password, tenant_name: tenantName.trim() }),
+      });
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "注册失败，请检查填写内容后重试"));
+      setShowRegister(false);
+      setLoginMode("tenant");
+      setPassword("");
+      setNotice("租户注册申请已提交成功，请使用刚设置的用户名和密码登录。若账号尚未启用，请联系系统管理员。");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "注册失败，请稍后重试");
+    } finally { loginLock.current = false; setBusy(false); }
+  }
+
   function logout() {
     requestSequence.current++; actionLock.current = false;
     const currentToken = token;
@@ -170,7 +192,28 @@ export default function Home() {
   }
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(v => v !== id) : [...current, id]);
 
-  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG 账号管理工具</h1><p>Telegram 账号、群组、消息与任务统一管理</p><div className="login-mode-switch" role="group" aria-label="选择登录身份"><button type="button" className={loginMode==="tenant"?"active":""} aria-pressed={loginMode==="tenant"} onClick={()=>setLoginMode("tenant")}><strong>租户号登录</strong><small>进入租户业务工作台</small></button><button type="button" className={loginMode==="admin"?"active":""} aria-pressed={loginMode==="admin"} onClick={()=>setLoginMode("admin")}><strong>管理号登录</strong><small>进入系统管理后台</small></button></div><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>安全登录 · 租户数据隔离</small></form></main>;
+  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={showRegister ? register : login}>
+    <div className="brand-mark">TG</div><h1>TG 账号管理工具</h1><p>Telegram 账号、群组、消息与任务统一管理</p>
+    {showRegister ? <>
+      <div className="panel-heading"><div><h2>创建租户</h2><p>注册后将创建独立租户及租户管理员账号</p></div></div>
+      <label>租户名称<input value={tenantName} onChange={e => setTenantName(e.target.value)} autoComplete="organization" maxLength={120} required /></label>
+      <label>管理员用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" minLength={3} maxLength={64} required /></label>
+      <label>登录密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" minLength={10} maxLength={72} required /><small>密码长度至少 10 位</small></label>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {notice && <div className="alert success" role="status">{notice}</div>}
+      <button className="primary full" disabled={busy}>{busy ? "正在提交…" : "提交注册"}</button>
+      <button type="button" className="secondary full" disabled={busy} onClick={() => {setShowRegister(false);setError("");}}>返回登录</button>
+    </> : <>
+      <div className="login-mode-switch" role="group" aria-label="选择登录身份"><button type="button" className={loginMode==="tenant"?"active":""} aria-pressed={loginMode==="tenant"} onClick={()=>setLoginMode("tenant")}><strong>租户号登录</strong><small>进入租户业务工作台</small></button><button type="button" className={loginMode==="admin"?"active":""} aria-pressed={loginMode==="admin"} onClick={()=>setLoginMode("admin")}><strong>管理号登录</strong><small>进入系统管理后台</small></button></div>
+      <label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label>
+      <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {notice && <div className="alert success" role="status">{notice}</div>}
+      <button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button>
+      <button type="button" className="secondary full" onClick={() => {setShowRegister(true);setError("");setNotice("");setPassword("");}}>注册新租户</button>
+      <small>安全登录 · 租户数据隔离</small>
+    </>}
+  </form></main>;
   if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
   return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} isSuperAdmin={user.role==="super_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} />} adminContent={<AdminConsole token={token} user={user}/>}><main className="shell">
