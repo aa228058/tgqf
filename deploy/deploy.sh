@@ -40,12 +40,15 @@ set -a
 set +a
 
 set_env(){
-  local key="$1" value="$2"
+  local key="$1" value="$2" escaped
   if grep -qE "^#?${key}=" "$ENV_FILE"; then
-    # Generated secrets are hex/base64; values used here contain no sed delimiter or '&'.
-    sed -i -E "s|^#?${key}=.*$|${key}=${value}|" "$ENV_FILE"
+    # Escape sed replacement metacharacters: admin passwords may be user supplied.
+    escaped=${value//\\/\\\\}
+    escaped=${escaped//&/\\&}
+    escaped=${escaped//|/\\|}
+    sed -i -E "s|^#?${key}=.*$|${key}=${escaped}|" "$ENV_FILE"
   else
-    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+    printf '%s=%s\\n' "$key" "$value" >> "$ENV_FILE"
   fi
 }
 
