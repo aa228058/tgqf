@@ -51,6 +51,14 @@ jobs:
           go-version: "1.26.2"
           cache: true
           cache-dependency-path: backend/go.sum
+      - name: Check Go formatting
+        working-directory: backend
+        run: |
+          unformatted="$(find . -type f -name '*.go' -print0 | xargs -0 -r gofmt -l)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files need gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
       - name: Resolve modules
         working-directory: backend
         run: |
