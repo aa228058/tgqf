@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -63,5 +64,25 @@ func TestMigrateAppliesAllEmbeddedMigrationsToEmptySchema(t *testing.T) {
 	}
 	if !latest {
 		t.Fatal("latest voice-call migration was not applied")
+	}
+}
+
+func TestSplitSQLStatementsPreservesDollarQuotedBodies(t *testing.T) {
+	script := `-- semicolon in a comment ;
+CREATE TABLE sample (value TEXT DEFAULT 'a;b');
+CREATE FUNCTION sample_fn() RETURNS void LANGUAGE plpgsql AS $body$
+BEGIN
+  PERFORM 'inside;function';
+  PERFORM 1;
+END
+$body$;
+/* block ; comment */
+INSERT INTO sample(value) VALUES ("not;identifier");`
+	statements := splitSQLStatements(script)
+	if len(statements) != 3 {
+		t.Fatalf("got %d statements, want 3: %#v", len(statements), statements)
+	}
+	if !strings.Contains(statements[1], "PERFORM 'inside;function';") || !strings.Contains(statements[1], "END\n$body$") {
+		t.Fatalf("function body was split: %s", statements[1])
 	}
 }
