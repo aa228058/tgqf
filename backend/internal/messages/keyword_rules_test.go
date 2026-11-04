@@ -293,3 +293,33 @@ func TestKeywordActionRecordSerializesAllTelegramMessageIDs(t *testing.T) {
         t.Fatalf("Telegram message IDs were not preserved: %#v", decoded.TelegramMessageIDs)
     }
 }
+
+
+func TestNormalizeKeywordVoiceCallActionRequiresPrivateChat(t *testing.T) {
+    rule, err := normalizeKeywordRule(KeywordRule{
+        Name: "call on greeting",
+        MatchMode: "any",
+        Keywords: []string{"hello"},
+        ChatTypes: []string{"private"},
+        ActionType: "voice_call",
+        Enabled: true,
+    })
+    if err != nil {
+        t.Fatalf("normalize private voice-call rule: %v", err)
+    }
+    if rule.ActionType != "voice_call" || len(rule.ChatTypes) != 1 || rule.ChatTypes[0] != "private" {
+        t.Fatalf("unexpected normalized voice-call rule: %#v", rule)
+    }
+
+    _, err = normalizeKeywordRule(KeywordRule{
+        Name: "do not call group members",
+        MatchMode: "any",
+        Keywords: []string{"hello"},
+        ChatTypes: []string{"group"},
+        ActionType: "voice_call",
+        Enabled: true,
+    })
+    if err == nil {
+        t.Fatal("expected voice-call rules targeting group messages to be rejected")
+    }
+}
