@@ -387,9 +387,10 @@ func (m *Manager) GetChatMetadata(ctx context.Context, accountID string, chatID 
 	return chat, nil
 }
 
-// DownloadMessagePhoto retrieves a message's image through its owning MTGo session.
-// Only bounded raster image payloads are returned to the authenticated API layer.
-func (m *Manager) DownloadMessagePhoto(ctx context.Context,accountID string,chatID,messageID int64)([]byte,error){
+// DownloadMessageMedia retrieves any supported message attachment through its
+// owning MTGo session. The authenticated API layer applies content disposition
+// and tenant authorization before returning the bytes.
+func (m *Manager) DownloadMessageMedia(ctx context.Context,accountID string,chatID,messageID int64)([]byte,error){
  if messageID<=0 || messageID>int64(^uint32(0)>>1){return nil,errors.New("invalid Telegram message ID")}
  m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
  if client==nil || !client.IsConnected(){return nil,errors.New("Telegram account is not connected")}
@@ -398,7 +399,7 @@ func (m *Manager) DownloadMessagePhoto(ctx context.Context,accountID string,chat
  if len(messages)==0 || messages[0]==nil{return nil,errors.New("Telegram message not found")}
  data,err:=messages[0].Download()
  if err!=nil{return nil,fmt.Errorf("download Telegram media: %w",err)}
- if len(data)==0 || len(data)>15<<20{return nil,errors.New("media is empty or exceeds 15 MiB")}
+ if len(data)==0 || len(data)>50<<20{return nil,errors.New("media is empty or exceeds 50 MiB")}
  return data,nil
 }
 
