@@ -565,6 +565,8 @@ type GroupLinkItem struct {
 	SourceCount int `json:"source_count"`
 	FirstSeenAt time.Time `json:"first_seen_at"`
 	LastSeenAt time.Time `json:"last_seen_at"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	LastCheckError string `json:"last_check_error,omitempty"`
 }
 
 func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status string, limit, offset int) ([]GroupLinkItem, int, error) {
