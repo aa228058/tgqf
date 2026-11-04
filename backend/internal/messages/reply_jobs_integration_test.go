@@ -84,6 +84,14 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	insertJob(jobInactiveLive,inactiveTenant,inactiveLiveAccount,"processing",liveLease)
 
 	service:=New(db)
+	ambiguousReplyID:="10000000-0000-4000-8000-000000000005"
+	ambiguousLease:=time.Now().UTC().Add(2*time.Minute)
+	insertJob(ambiguousReplyID,activeTenant,accountA,"processing",ambiguousLease)
+	ambiguousReply:=ReplyJob{ID:ambiguousReplyID,TenantID:activeTenant,AccountID:accountA,LeaseUntil:ambiguousLease}
+	if err:=service.FailReplyWithFloodWait(ctx,ambiguousReply,context.DeadlineExceeded,0);err!=nil{t.Fatalf("quarantine ambiguous reply result: %v",err)}
+	var ambiguousStatus,ambiguousReason string
+	if err:=db.QueryRowContext(ctx,`SELECT status,last_error FROM message_reply_jobs WHERE id=$1`,ambiguousReplyID).Scan(&ambiguousStatus,&ambiguousReason);err!=nil{t.Fatal(err)}
+	if ambiguousStatus!="paused"||!strings.Contains(ambiguousReason,"outcome uncertain"){t.Fatalf("ambiguous reply status=%q reason=%q, want paused/uncertain",ambiguousStatus,ambiguousReason)}
 	jobs,err:=service.ClaimPendingReplies(ctx,10)
 	if err!=nil{t.Fatal(err)}
 	if len(jobs)!=2{details:=make([]string,0,len(jobs));for _,job:=range jobs{details=append(details,job.ID+"/"+job.TenantID+"/"+job.AccountID)};var tenantRows string;_ = db.QueryRowContext(ctx,`SELECT string_agg(id::text||':'||status||':'||expires_at::text,',') FROM tenants`).Scan(&tenantRows);t.Fatalf("claimed %d jobs (%v), tenants=%s, want 2 authorized active-tenant accounts",len(jobs),details,tenantRows)}
