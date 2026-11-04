@@ -128,8 +128,8 @@
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 - `GET /api/v1/groups/export.csv`（沿用群组筛选条件导出 CSV，最多 10,000 条）
 - `POST /api/v1/groups/import.csv`（tenant_admin 导入 CSV 纠错建议，最多 1,000 行；只进入待审核队列）
-- `GET /api/v1/groups` 支持 `chat_type`、`q`、`verified`、`min_members`、`max_members`、`min_sources`、`min_contributors`、`sort=recent|title|members|sources|contributors`；结果包含内部 `id` 与 Telegram `chat_id`。
-- `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源和账号信息，不泄露其他租户的账号数据）
+- `GET /api/v1/groups` 支持 `chat_type`、`q`、`verified`、`min_members`、`max_members`、`min_sources`、`min_contributors`、`sort=recent|title|members|sources|contributors`；结果包含内部 `id` 与 Telegram `chat_id`、群组默认发言权限 JSON 和采集时间。
+- `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源、账号信息及该账号在该群的权限快照，不泄露其他租户的账号数据）
 - `POST /api/v1/groups/{id}/corrections`、`GET /api/v1/groups/corrections`（租户提交/查询自身的群组资料纠错建议）
 - `GET /api/v1/admin/group-corrections`、`POST /api/v1/admin/group-corrections/{id}/review`（超级管理员审核全局群组资料建议）
 - `POST /api/v1/admin/groups/{id}/merge`（超级管理员将来源群组人工合并至目标群组；保留来源、贡献、链接关系和合并审计）
