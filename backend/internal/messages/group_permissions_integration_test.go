@@ -105,6 +105,7 @@ func TestGroupCatalogueImportAndPermissionRefreshIntegration(t *testing.T) {
 	service:=New(db)
 	tenantA:="11111111-1111-4111-8111-111111111111"
 	tenantB:="22222222-2222-4222-8222-222222222222"
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days'),($2,'active',NOW()+INTERVAL '30 days')`,tenantA,tenantB);err!=nil{t.Fatal(err)}
 	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
@@ -402,6 +403,7 @@ func TestConcurrentTenantImportsConvergeOnOneSharedGroup(t *testing.T) {
 	service := New(db)
 	ctx := context.Background()
 	tenants := []string{"11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"}
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days'),($2,'active',NOW()+INTERVAL '30 days')`,tenants[0],tenants[1]);err!=nil{t.Fatal(err)}
 	start := make(chan struct{})
 	errs := make(chan error, len(tenants))
 	var wg sync.WaitGroup
