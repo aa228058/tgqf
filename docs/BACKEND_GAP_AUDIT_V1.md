@@ -73,9 +73,9 @@
 - [x] P1-07 第一阶段：新增 `public_group_sources`、`tenant_group_contributions`，记录来源账号、发现租户、发现次数和时间。
 - [x] P1-10 第二阶段：租户可提交群组标题、公开用户名、成员数和认证标记的纠错建议；超级管理员审核通过后才更新全局资料，拒绝/通过均记录审核人、时间和备注。
 - [x] P1-11 第一阶段：超级管理员可人工合并同类型重复群组；迁移来源记录、租户贡献、公开链接关联和纠错历史，并保存合并快照与审计日志。合并不自动根据相似名称执行。
-- P1-08 记录群组默认发言权限与账号个人权限为不同字段/事实来源（后续权限采集阶段）。
-- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 改为读取共享目录，并提供来源数、贡献租户数。
-- P1-10/P1-11 已增加纠错建议审核、人工合并和合并审计；审核只由超级管理员执行，租户建议不会直接写入全局资料。
+- P1-08 待完成：从 MTGo 实际群组实体读取并分别记录群组默认发言限制（default banned rights）与当前账号个人权限（admin/restricted rights）；当前入库事件只携带群组基础资料，不能把权限未知误记为允许发言。
+- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 读取共享目录并提供来源数、贡献租户数；本轮增加稳定内部 ID、成员/来源/贡献筛选、认证状态筛选、多字段排序及最多 10,000 条 CSV 导出。
+- P1-10/P1-11 已增加纠错建议审核、人工合并和合并审计；审核只由超级管理员执行，租户建议不会直接写入全局资料。本轮增加 CSV 导入纠错建议（最多 1,000 行），所有修改仍进入待审核队列；导入不直接创建/篡改全局群组。
 
 ### P2 — 自动化业务闭环
 - [x] P2-01 第一阶段：实时新消息链接识别与公共链接目录入库；私密邀请链接加密存储，不回溯历史。链接来源和待验证状态可查询。实际 Telegram 验证及自动关联群组实体仍待补齐。
@@ -125,6 +125,9 @@
 - `GET /api/v1/message-replies/{id}`
 - `POST /api/v1/message-replies/{id}/resume`（人工审核后显式恢复 paused 回复任务）
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
+- `GET /api/v1/groups/export.csv`（沿用群组筛选条件导出 CSV，最多 10,000 条）
+- `POST /api/v1/groups/import.csv`（tenant_admin 导入 CSV 纠错建议，最多 1,000 行；只进入待审核队列）
+- `GET /api/v1/groups` 支持 `chat_type`、`q`、`verified`、`min_members`、`max_members`、`min_sources`、`min_contributors`、`sort=recent|title|members|sources|contributors`；结果包含内部 `id` 与 Telegram `chat_id`。
 - `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源和账号信息，不泄露其他租户的账号数据）
 - `POST /api/v1/groups/{id}/corrections`、`GET /api/v1/groups/corrections`（租户提交/查询自身的群组资料纠错建议）
 - `GET /api/v1/admin/group-corrections`、`POST /api/v1/admin/group-corrections/{id}/review`（超级管理员审核全局群组资料建议）
