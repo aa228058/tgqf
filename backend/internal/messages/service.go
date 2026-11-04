@@ -924,7 +924,10 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 	if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
 	for _,tenantID:=range inactiveTenants {
 		if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+			// Preserve a live processing lease while a Telegram send is in flight.
+			// Expired processing leases are safe to pause after worker recovery.
+			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+				WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,tenantID)
 			return err
 		});err!=nil{return nil,err}
 	}
@@ -944,6 +947,7 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				FROM message_reply_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
 				WHERE j.tenant_id=$1
 				AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+				AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
 				AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
 				AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
 				AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
@@ -1034,6 +1038,17 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 	message:=cause.Error();if len(message)>500{message=message[:500]}
 	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		var tenantActive bool
+		if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
+		if !tenantActive {
+			res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',last_error='tenant inactive; manual review required',lease_until=NULL,updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3`,job.TenantID,job.ID,job.LeaseUntil)
+			if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
+			if floodWait>0 {
+				if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err}
+			}
+			return nil
+		}
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,delay,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
 		if floodWait>0 { if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err} }
