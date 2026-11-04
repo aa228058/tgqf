@@ -76,7 +76,8 @@ func TestIsPermanentJoinFailure(t *testing.T) {
     tests := []struct { name string; err error; want bool }{
         {"expired invite", errors.New("INVITE_HASH_EXPIRED"), true},
         {"private channel", errors.New("CHANNEL_PRIVATE"), true},
-        {"already participant", errors.New("USER_ALREADY_PARTICIPANT"), true},
+        {"already participant", errors.New("USER_ALREADY_PARTICIPANT"), false},
+		{"approval request", errors.New("INVITE_REQUEST_SENT"), false},
         {"flood wait", errors.New("FLOOD_WAIT_120"), false},
         {"timeout", errors.New("context deadline exceeded"), false},
         {"temporary rpc", errors.New("INTERNAL"), false},
