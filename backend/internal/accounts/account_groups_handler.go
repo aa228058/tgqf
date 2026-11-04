@@ -1,7 +1,6 @@
 package accounts
 
 import (
-	"errors"
 	"net/http"
 	"database/sql"
 	"strings"
