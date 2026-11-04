@@ -29,4 +29,8 @@ jobs:
           cache-dependency-path: frontend/package.json
       - run: npm install --no-audit --no-fund
       - run: npm run lint
+      - name: Validate deployment shell scripts
+        run: bash -n ../deploy/*.sh
+      - name: Check patch whitespace
+        run: git diff --check
       - run: npm run build
