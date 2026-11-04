@@ -1222,6 +1222,14 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 			}
 			return nil
 		}
+		if floodWait<=0 && isAmbiguousTelegramSendError(cause) {
+			uncertainMessage:="send outcome uncertain; verify Telegram chat before resuming: "+message
+			if len(uncertainMessage)>500 { uncertainMessage=uncertainMessage[:500] }
+			res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',last_error=$3,lease_until=NULL,updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,uncertainMessage,job.LeaseUntil)
+			if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
+			return nil
+		}
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,delay,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
 		if floodWait>0 { if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err} }
