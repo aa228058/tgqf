@@ -23,6 +23,7 @@ type Handler struct{service *Service;auth *auth.Handler;telegram *telegrammtgo.M
 type createRequest struct{Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Session string `json:"session"`;Proxy json.RawMessage `json:"proxy"`}
 type batchImportRequest struct{Accounts []createRequest `json:"accounts"`}
 type groupRequest struct{GroupName string `json:"group_name"`}
+type displayNameRequest struct{DisplayName string `json:"display_name"`}
 type accountTagsRequest struct{Tags []string `json:"tags"`}
 type bulkAccountTagsRequest struct{AccountIDs []string `json:"account_ids"`;Tags []string `json:"tags"`}
 type bulkGroupRequest struct{AccountIDs []string `json:"account_ids"`;GroupName string `json:"group_name"`}
@@ -41,6 +42,7 @@ type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
+ m.Handle("PATCH /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateDisplayName)))
  m.Handle("GET /api/v1/accounts/{id}/profile",h.auth.Authenticated(http.HandlerFunc(h.getTelegramProfile)))
  m.Handle("GET /api/v1/accounts/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportCSV)))
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
@@ -131,6 +133,21 @@ func(h *Handler)deleteBatch(w http.ResponseWriter,r *http.Request) {
 }
 
 func(h *Handler)delete(w http.ResponseWriter,r *http.Request){u:=auth.UserFromContext(r.Context());id:=strings.TrimSpace(r.PathValue("id"));if !validAccountUUID(id){writeError(w,http.StatusBadRequest,"invalid account ID");return};if err:=h.service.Delete(r.Context(),u.TenantID,id);err!=nil{if strings.Contains(err.Error(),"not found"){writeError(w,http.StatusNotFound,"account not found")}else{writeError(w,http.StatusInternalServerError,"failed to delete account")};return};if h.telegram!=nil{if err:=h.telegram.Stop(id);err!=nil{writeJSON(w,http.StatusAccepted,map[string]string{"status":"deleted_runtime_cleanup_pending"});return}};w.WriteHeader(http.StatusNoContent)}
+func(h *Handler)updateDisplayName(w http.ResponseWriter,r *http.Request){
+ var q displayNameRequest
+ if !decode(w,r,&q){writeError(w,http.StatusBadRequest,"invalid display name request");return}
+ id:=strings.TrimSpace(r.PathValue("id"))
+ if !validAccountUUID(id){writeError(w,http.StatusBadRequest,"invalid account ID");return}
+ u:=auth.UserFromContext(r.Context())
+ name,err:=normalizeAccountDisplayName(q.DisplayName)
+ if err!=nil{writeError(w,http.StatusBadRequest,err.Error());return}
+ if err=h.service.UpdateDisplayName(r.Context(),u.TenantID,id,name);err!=nil{
+  if strings.Contains(err.Error(),"account not found"){writeError(w,http.StatusNotFound,"account not found");return}
+  writeError(w,http.StatusInternalServerError,"failed to update account display name");return
+ }
+ writeJSON(w,http.StatusOK,map[string]string{"display_name":name})
+}
+
 func(h *Handler)setGroup(w http.ResponseWriter,r *http.Request){var q groupRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return};u:=auth.UserFromContext(r.Context());if err:=h.service.SetGroup(r.Context(),u.TenantID,r.PathValue("id"),q.GroupName);err!=nil{if strings.Contains(err.Error(),"account not found"){writeError(w,404,"account not found");return};writeError(w,400,err.Error());return};writeJSON(w,200,map[string]string{"group_name":strings.TrimSpace(q.GroupName)})}
 
 func(h *Handler)setAccountTags(w http.ResponseWriter,r *http.Request){

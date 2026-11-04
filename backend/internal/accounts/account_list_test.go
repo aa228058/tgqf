@@ -23,3 +23,12 @@ func TestNormalizeAccountTags(t *testing.T) {
 		if _,err:=normalizeAccountTags(input);err==nil { t.Errorf("invalid tags accepted: %#v",input) }
 	}
 }
+
+
+func TestNormalizeAccountDisplayName(t *testing.T) {
+	got,err:=normalizeAccountDisplayName("  客户账号 A  ")
+	if err!=nil||got!="客户账号 A"{t.Fatalf("normalized display name = %q, %v",got,err)}
+	if got,err:=normalizeAccountDisplayName("   ");err!=nil||got!=""{t.Fatalf("empty display name should clear: %q, %v",got,err)}
+	if _,err:=normalizeAccountDisplayName(strings.Repeat("名",121));err==nil{t.Fatal("oversized display name accepted")}
+	if _,err:=normalizeAccountDisplayName("bad\nname");err==nil{t.Fatal("control characters accepted")}
+}

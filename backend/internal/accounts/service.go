@@ -95,6 +95,25 @@ func (s *Service) DeleteBatch(ctx context.Context,tenantID string,accountIDs []s
 	return deleted,nil
 }
 
+func normalizeAccountDisplayName(value string)(string,error){
+ value=strings.TrimSpace(value)
+ if len([]rune(value))>120{return "",errors.New("display name must be at most 120 characters")}
+ for _,r:=range value{if r<32||r==127{return "",errors.New("display name cannot contain control characters")}}
+ return value,nil
+}
+
+func(s *Service)UpdateDisplayName(ctx context.Context,tenantID,accountID,displayName string)error{
+ normalized,err:=normalizeAccountDisplayName(displayName)
+ if err!=nil{return err}
+ return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET display_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,accountID,normalized)
+  if err!=nil{return err}
+  n,err:=res.RowsAffected();if err!=nil{return err}
+  if n==0{return errors.New("account not found")}
+  return nil
+ })
+}
+
 func(s *Service)Delete(ctx context.Context,tenantID,id string)error{return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`DELETE FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,tenantID,id);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 func(s *Service)SetGroup(ctx context.Context,tenantID,id,group string)error{group=strings.TrimSpace(group);if len(group)>80{return errors.New("group name must be at most 80 characters")};return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{res,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET group_name=$3,updated_at=NOW() WHERE tenant_id=$1 AND id=$2`,tenantID,id,group);if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("account not found")};return nil})}
 
