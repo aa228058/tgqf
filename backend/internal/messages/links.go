@@ -37,8 +37,6 @@ func ExtractTelegramLinks(text string) []DiscoveredLink {
 	for _,m:=range matches {
 		if len(m)<2 { continue }
 		raw:=strings.TrimSpace(m[1])
-		parsed,parseErr:=url.Parse(raw)
-		if parseErr==nil && parsed.Host!="" && !strings.EqualFold(parsed.Host,"t.me") && !strings.EqualFold(parsed.Host,"www.t.me") && !strings.EqualFold(parsed.Host,"telegram.me") && !strings.EqualFold(parsed.Host,"www.telegram.me") { continue }
 		if raw=="" { continue }
 		if strings.HasPrefix(raw,"+") || strings.HasPrefix(strings.ToLower(raw),"joinchat/") {
 			code:=strings.TrimPrefix(raw,"+")
