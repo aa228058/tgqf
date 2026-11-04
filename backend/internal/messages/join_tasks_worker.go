@@ -129,9 +129,9 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
 		_,err=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
 			available_at=GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')),updated_at=NOW()
 			FROM tenant_join_tasks t
-			WHERE a.tenant_id=$3 AND a.id<>$4 AND (a.telegram_account_id=$5 OR a.task_id=$6)
+			WHERE a.tenant_id=$2 AND a.id<>$3 AND (a.telegram_account_id=$4 OR a.task_id=$5)
 			  AND a.status='queued' AND t.tenant_id=a.tenant_id AND t.id=a.task_id AND t.status='queued'`,
-			seconds,strings.TrimSpace(reason),job.TenantID,job.AccountRowID,job.AccountID,job.TaskID)
+			seconds,job.TenantID,job.AccountRowID,job.AccountID,job.TaskID)
 		return err
 	})
 }
