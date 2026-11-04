@@ -43,7 +43,7 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 			message_text TEXT NOT NULL DEFAULT '',action_type TEXT NOT NULL DEFAULT 'text',
 			contact_phone TEXT NOT NULL DEFAULT '',contact_first_name TEXT NOT NULL DEFAULT '',contact_last_name TEXT NOT NULL DEFAULT '',
 			media_asset_id UUID,media_type TEXT NOT NULL DEFAULT '',media_caption TEXT NOT NULL DEFAULT '',
-			media_album_items JSONB NOT NULL DEFAULT '[]'::jsonb,target_user_id BIGINT NOT NULL DEFAULT 0,telegram_call_id BIGINT,telegram_call_access_hash BIGINT,voice_call_state TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,
+			media_album_items JSONB NOT NULL DEFAULT '[]'::jsonb,action_steps JSONB NOT NULL DEFAULT '[]'::jsonb,current_step_index INTEGER NOT NULL DEFAULT 0,step_results JSONB NOT NULL DEFAULT '[]'::jsonb,target_user_id BIGINT NOT NULL DEFAULT 0,telegram_call_id BIGINT,telegram_call_access_hash BIGINT,voice_call_state TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'pending',available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			lease_until TIMESTAMPTZ,last_error TEXT NOT NULL DEFAULT '',telegram_message_id BIGINT,
 			telegram_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
