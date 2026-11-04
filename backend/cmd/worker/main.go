@@ -311,7 +311,9 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             continue
         }
         if !manager.IsConnected(job.AccountID) {
-            _=service.FinishKeywordAction(ctx,job,0,errors.New("Telegram account offline"),0)
+            if err:=service.ReleaseKeywordAction(ctx,job,30*time.Second,"Telegram account temporarily disconnected");err!=nil {
+                logger.Error("release keyword action for offline account","job_id",job.ID,"error",err)
+            }
             continue
         }
         sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
