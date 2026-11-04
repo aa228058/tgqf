@@ -461,7 +461,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
 - [x] 暂停/取消不再撤销正在执行的 Telegram RPC 租约：停止后续 claim，但允许当前 RPC 返回后写回真实加入结果；若返回可重试错误，则根据父任务 paused/cancelled 状态转为暂停/取消，不会重新排队。
 - [x] FloodWait 只延迟尚未领取的队列项，不再清空其他正在执行任务的 processing lease；账号级 FloodWait 冷却仍全局生效。新增 PostgreSQL 集成测试覆盖暂停成功写回、取消后不重试、同账号其他 in-flight lease 保留。
-- [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined；明确 left/banned 状态同步为 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。私密邀请审批不伪装成可自动查询：checkChatInvite 不提供足够信息判定申请已被管理员批准或拒绝，因此保留 request_pending，待后续接入可靠的成员状态事件/映射后再同步。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
+- [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined/approved；left、banned、无效邀请只标记失败/unknown，不将无法证明的状态伪装成管理员 declined。私密邀请审批通过 messages.checkChatInvite 轮询：返回 ChatInviteAlready 时同步为 joined/approved，仍为 RequestNeeded/valid 时保持 request_pending；无法可靠区分管理员拒绝与仍待审批时不伪造 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
 - [x] 新增 PostgreSQL 集成覆盖：公开/私密链接在有效检查租约期间被重复发现时保留租约与重试状态；租约过期后重新发现才清空旧状态并重新排队。
 - [x] GitHub Actions 已通过：Go test ./...、vet、API/Worker build；PostgreSQL 服务集成测试覆盖共享群组 insert-only 导入、租户来源权限快照刷新、公开/私密链接租约与旧 Worker fencing。
@@ -529,3 +529,13 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] XLSX 编解码使用 Go 标准库 ZIP/XML，不引入第三方 Excel 依赖；导入读取首个工作表，支持 shared strings、inline strings、数值及布尔单元格。
 - [x] 文件上传限制 2 MiB、最多 10,000 行；导入仍要求 tenant_admin，已有群资料不被导入文件覆盖，导入来源写入 tenant_group_contributions。
 - [x] 最新 CSV/TXT/群组合并测试提交对应 CI 已通过；XLSX 最新提交的 GitHub Actions 仍在执行，待最终完成后再标记 CI 通过。
+
+
+## 2026-11-04 自动加群模块闭环修正（phase-11）
+
+- [x] 新增失败任务重试 API：`POST /api/v1/join-tasks/{id}/retry`，复用租户隔离的 RetryJoinTask，仅重排仍授权账号的 failed 子任务，并保留显式授权检查。
+- [x] 修复从共享群组库选取的私密邀请链接审批同步：审批队列此前只读取任务直接输入的 private_invite_hash_ciphertext，遗漏 public_group_links.invite_ciphertext；现在查询及可领取条件均兼容两种加密来源，使用同一 AES-GCM 密钥在 Worker 内解密后调用 messages.checkChatInvite。
+- [x] 新增 PostgreSQL 集成测试，覆盖“由租户发现的私密邀请链接 -> 加群申请待审批 -> Worker 领取审批检查 -> 解密邀请 hash”闭环。
+- [x] 修复任务暂停期间在途 RPC 返回永久失败时被错误标记 failed 的问题；现在优先消费 pause_requested/父任务 paused，落为 paused；cancel 仍优先落为 cancelled。
+- [x] 扩展 PostgreSQL 集成测试覆盖父任务暂停期间在途 RPC 返回失败的状态保护。
+- [ ] 真实 Telegram 双账号验收仍需部署后验证公开加入、私密邀请、申请批准/拒绝、无效邀请、账号断线与 FloodWait；CI/模拟测试不代替真实 Telegram 结果。
