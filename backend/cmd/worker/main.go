@@ -157,6 +157,20 @@ func main() {
 				if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
 			}()
 		}
+		if time.Since(lastPrivateInviteSweep)>=15*time.Minute {
+			lastPrivateInviteSweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,5*time.Minute);defer cancelSweep()
+				accountTenants.Range(func(key,value any)bool {
+					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
+					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
+					if err:=refreshPrivateInviteLinks(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
+						logger.Warn("refresh private Telegram invite links","account_id",accountID,"error",err)
+					}
+					return sweepCtx.Err()==nil
+				})
+			}()
+		}
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
@@ -501,4 +515,35 @@ func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname
 			stopped_at=CASE WHEN EXCLUDED.status='stopped' THEN NOW() ELSE NULL END
 	`, instanceID, hostname, processID, status)
 	return err
+}
+
+
+func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
+	links,err:=service.ListPrivateInviteChecks(ctx,tenantID,accountID,50)
+	if err!=nil{return err}
+	for _,link:=range links {
+		if ctx.Err()!=nil{return ctx.Err()}
+		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+		result,checkErr:=manager.CheckPrivateInviteApproval(checkCtx,accountID,link.Hash)
+		cancel()
+		status:="unknown"
+		errorText:=""
+		if checkErr!=nil {
+			errorText=checkErr.Error()
+			upper:=strings.ToUpper(errorText)
+			if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY")||strings.Contains(upper,"INVITE_REQUEST_SENT") {
+				status="invalid"
+			}
+		} else {
+			switch result {
+			case "member","valid": status="valid"
+			case "request_pending": status="approval_required"
+			default: status="unknown"
+			}
+		}
+		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,link.LinkID,status,errorText);err!=nil {
+			logger.Warn("persist private invite check result","link_id",link.LinkID,"error",err)
+		}
+	}
+	return nil
 }
