@@ -63,6 +63,42 @@ func main() {
 	messageService := messages.New(store.DB, store.Redis)
 	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
+	manager.SetVoiceCallUpdateHandler(func(accountID string, callID int64, state string) {
+		tenantValue, ok := accountTenants.Load(accountID)
+		if !ok {
+			return
+		}
+		tenantID, ok := tenantValue.(string)
+		if !ok || tenantID == "" {
+			return
+		}
+		go func() {
+			for attempt := 0; attempt < 20; attempt++ {
+				if ctx.Err() != nil {
+					return
+				}
+				updateCtx, cancelUpdate := context.WithTimeout(ctx, 3*time.Second)
+				found, updateErr := messageService.UpdateKeywordVoiceCallState(updateCtx, tenantID, accountID, callID, state)
+				cancelUpdate()
+				if updateErr != nil {
+					logger.Warn("persist Telegram voice call update", "account_id", accountID, "call_id", callID, "state", state, "error", updateErr)
+					return
+				}
+				if found {
+					logger.Info("Telegram voice call state updated", "account_id", accountID, "call_id", callID, "state", state)
+					return
+				}
+				timer := time.NewTimer(250 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+			logger.Debug("ignored Telegram call update without a matching tenant action", "account_id", accountID, "call_id", callID, "state", state)
+		}()
+	})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
 	manager.SetMessageHandler(func(accountID string, message *types.Message, _ int64, replyToOwn bool) {
 		if message == nil || message.Chat == nil {
