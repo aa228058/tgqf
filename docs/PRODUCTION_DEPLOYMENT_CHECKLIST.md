@@ -36,6 +36,21 @@ This checklist is for the operator preparing the production VPS. Never put real 
 - [ ] Confirm the Worker heartbeat is fresh and Redis queues are being consumed.
 - [ ] Confirm system monitoring and alert history work for a super-admin session.
 
+
+## Upgrade rollback procedure
+
+The installer creates and verifies a pre-upgrade backup, but it does not automatically downgrade a database after a forward migration. Do not blindly run an older binary against a newer schema.
+
+1. Take the affected site out of service at the reverse proxy/load balancer and stop application writers: `docker compose --env-file .env -f deploy/compose.yaml stop worker api frontend`.
+2. Retrieve the verified pre-upgrade backup and the matching previous release image tag from `BACKUP_METADATA.txt`. Confirm the encrypted off-host `.env`/session key backup is available.
+3. Edit only `TGQF_IMAGE_TAG` in the live `.env` to the previous immutable tag. Do not regenerate PostgreSQL, Redis, Telegram API, or session-encryption secrets.
+4. Ensure the previous backend/frontend images are present locally (or pull the exact immutable tags while the site remains offline). Create the old-version app containers without starting them: `docker compose --env-file .env -f deploy/compose.yaml create api worker frontend`.
+5. Run `bash deploy/restore.sh /absolute/path/to/verified-backup`. It validates payloads before asking for confirmation, restores PostgreSQL and Redis, then starts the services and waits for API, frontend, Worker and Redis health.
+6. Verify `/health/ready`, Worker heartbeat, tenant/account counts, queues and audit records. Reopen traffic only after the operator signs off.
+7. Record the failed release tag, restored release tag, backup identifier, migration version, recovery time and data-loss window.
+
+If the previous immutable images are unavailable, keep the site offline and retrieve them before proceeding. Never restore production data into an unisolated test stack. The recovery script is intentionally fail-closed: an incomplete restore leaves application services stopped for operator investigation.
+
 ## Backup and restore
 
 - [ ] Run bash deploy/backup.sh; verify SHA256SUMS, BACKUP_METADATA.txt, PostgreSQL dump and Redis archive.
