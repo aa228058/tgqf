@@ -47,8 +47,10 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	service := New(db)
 	first, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	second, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	third, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
 	if len(first) != 1 || len(second) != 1 || len(third) != 1 { t.Fatalf("claim batch sizes: %d/%d/%d, want 1 each", len(first), len(second), len(third)) }
