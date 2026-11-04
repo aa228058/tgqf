@@ -64,6 +64,7 @@ export function KeywordMonitor({token}:{token:string}){
   }catch(e){setError(e instanceof Error?e.message:"关键词监控数据加载失败")}
  },[token]);
  useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),15000);return()=>window.clearInterval(timer)},[load]);
+ useEffect(()=>()=>{if(preview?.url)URL.revokeObjectURL(preview.url)},[preview?.url]);
  function edit(rule?:Rule){
   const base=rule?{...emptyRule(),...rule}:emptyRule();
   setDraft(base);
