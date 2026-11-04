@@ -1182,3 +1182,22 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 @media(prefers-reduced-motion:reduce){
  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+
+/* System configuration administration */
+.settings-config-list{display:grid;gap:0}
+.settings-config-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border-bottom:1px solid var(--line)}
+.settings-config-row:last-child{border-bottom:0}
+.settings-config-copy{min-width:0}
+.settings-config-copy strong{display:block}
+.settings-config-copy p{margin:5px 0;color:var(--muted);font-size:13px}
+.settings-config-copy small{color:var(--muted);font-size:11px}
+.settings-config-control{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-shrink:0}
+.settings-config-control input[type=number]{width:120px;min-height:40px}
+.settings-toggle{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.settings-toggle input{width:18px;height:18px;accent-color:var(--accent)}
+@media(max-width:650px){
+ .settings-config-row{align-items:flex-start;flex-direction:column;gap:12px}
+ .settings-config-control{width:100%;justify-content:flex-start}
+ .settings-config-control input[type=number]{flex:1;min-width:0}
+}
