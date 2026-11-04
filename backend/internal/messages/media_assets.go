@@ -43,7 +43,7 @@ func (s *Service) CreateMediaAsset(ctx context.Context, tenantID, fileName, mime
         VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(tenant_id,sha256) DO UPDATE SET file_name=EXCLUDED.file_name,mime_type=EXCLUDED.mime_type
         RETURNING id::text,file_name,mime_type,file_size,encode(sha256,'hex'),created_at`,
-        tenantID,fileName,mimeType,len(content),digest[:]).Scan(&out.ID,&out.FileName,&out.MIMEType,&out.FileSize,&out.SHA256,&out.CreatedAt)
+        tenantID,fileName,mimeType,len(content),digest[:],content).Scan(&out.ID,&out.FileName,&out.MIMEType,&out.FileSize,&out.SHA256,&out.CreatedAt)
     if err!=nil{return out,fmt.Errorf("store media asset: %w",err)}
     if err=tx.Commit();err!=nil{return out,err}
     return out,nil
