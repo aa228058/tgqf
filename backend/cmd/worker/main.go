@@ -90,8 +90,19 @@ func main() {
 			textBody = message.Caption
 		}
 		mediaType := ""
+		var mediaMetadataJSON []byte
 		if message.Media != nil {
 			mediaType = string(message.Media.MediaType())
+			var marshalErr error
+			mediaMetadataJSON, marshalErr = json.Marshal(message.Media)
+			if marshalErr != nil {
+				logger.Warn("serialize incoming Telegram media metadata", "account_id", accountID, "message_id", message.ID, "error", marshalErr)
+				mediaMetadataJSON = nil
+			}
+			if len(mediaMetadataJSON) > 64*1024 {
+				logger.Warn("incoming Telegram media metadata exceeds limit", "account_id", accountID, "message_id", message.ID, "bytes", len(mediaMetadataJSON))
+				mediaMetadataJSON = nil
+			}
 		}
 		var defaultPermissionsJSON, accountRightsJSON []byte
 		if message.Chat.Permissions != nil {
@@ -111,7 +122,7 @@ func main() {
 			SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(),
 			SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
-			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
+			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MediaMetadataJSON: mediaMetadataJSON, MessageDate: message.Date,
 		}
 		// Do not acknowledge the MTGo callback until Redis has durably accepted
 		// the update. Retry transient Redis outages with bounded backoff.
