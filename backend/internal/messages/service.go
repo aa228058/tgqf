@@ -440,7 +440,7 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 		clauses:=[]string{"1=1"};args:=[]any{}
 		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
 		if chatType!=""{add(chatType,"g.chat_type=$%d")}
-		if query!=""{add("%"+query+"%","(g.title ILIKE $%d OR g.username ILIKE $%d)");}
+		if query!=""{args=append(args,"%"+query+"%");n:=len(args);clauses=append(clauses,fmt.Sprintf("(g.title ILIKE $%d OR g.username ILIKE $%d)",n,n));}
 		if filter.Verified!=nil{add(*filter.Verified,"g.is_verified=$%d")}
 		if filter.MinMembers>0{add(filter.MinMembers,"g.member_count >= $%d")}
 		if filter.MaxMembers>0{add(filter.MaxMembers,"g.member_count <= $%d")}
