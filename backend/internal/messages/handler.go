@@ -315,15 +315,17 @@ func (h *Handler) listGroupSources(w http.ResponseWriter,r *http.Request) {
 }
 
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
-	user := auth.UserFromContext(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	items, total, err := h.service.ListGroupLibrary(r.Context(), user.TenantID, r.URL.Query().Get("chat_type"), r.URL.Query().Get("q"), limit, offset)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, ErrInvalidGroupLibraryQuery) { status = http.StatusBadRequest }
-		messageJSON(w, status, map[string]string{"error": err.Error()})
-		return
-	}
-	messageJSON(w, http.StatusOK, map[string]any{"groups": items, "total": total, "limit": normalizeLimit(limit), "offset": max(0, offset)})
+	user:=auth.UserFromContext(r.Context())
+	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	filter:=GroupLibraryFilter{ChatType:r.URL.Query().Get("chat_type"),Query:r.URL.Query().Get("q"),Sort:r.URL.Query().Get("sort")}
+	parseInt:=func(key string)(int,error){raw:=strings.TrimSpace(r.URL.Query().Get(key));if raw==""{return 0,nil};v,err:=strconv.Atoi(raw);if err!=nil{return 0,ErrInvalidGroupLibraryQuery};return v,nil}
+	var err error
+	if filter.MinMembers,err=parseInt("min_members");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
+	if filter.MaxMembers,err=parseInt("max_members");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
+	if filter.MinSources,err=parseInt("min_sources");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
+	if filter.MinContributors,err=parseInt("min_contributors");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
+	if raw:=strings.TrimSpace(r.URL.Query().Get("verified"));raw!=""{v,parseErr:=strconv.ParseBool(raw);if parseErr!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"verified must be true or false"});return};filter.Verified=&v}
+	items,total,err:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+	if err!=nil{status:=http.StatusInternalServerError;if errors.Is(err,ErrInvalidGroupLibraryQuery){status=http.StatusBadRequest};messageJSON(w,status,map[string]string{"error":err.Error()});return}
+	messageJSON(w,http.StatusOK,map[string]any{"groups":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
