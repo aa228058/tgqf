@@ -260,14 +260,15 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	taskPause:="33333333-3333-4333-8333-333333333333"
 	taskCancel:="44444444-4444-4444-8444-444444444444"
 	taskOther:="55555555-5555-4555-8555-555555555555"
+	taskConcurrent:="66666666-6666-4666-8666-666666666666"
 	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`,tenantID);err!=nil{t.Fatal(err)}
 	for _,account:=range []string{accountA,accountB} {
 		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`,tenantID,account);err!=nil{t.Fatal(err)}
 	}
-	for _,task:=range []struct{id,status string}{{taskPause,"queued"},{taskCancel,"queued"},{taskOther,"queued"}} {
+	for _,task:=range []struct{id,status string}{{taskPause,"queued"},{taskCancel,"queued"},{taskOther,"queued"},{taskConcurrent,"queued"}} {
 		if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_join_tasks(id,tenant_id,name,status) VALUES($1,$2,'integration task',$3)`,task.id,tenantID,task.status);err!=nil{t.Fatal(err)}
 	}
-	var pauseProcessing,pauseQueued,cancelProcessing,cancelQueued,otherProcessing int64
+	var pauseProcessing,pauseQueued,cancelProcessing,cancelQueued,otherProcessing,concurrentProcessing int64
 	lease:=time.Now().UTC().Add(2*time.Minute)
 	insertRow:=func(task,account,status string)(int64,error){
 		var id int64
@@ -281,6 +282,7 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	if cancelProcessing,err=insertRow(taskCancel,accountA,"processing");err!=nil{t.Fatal(err)}
 	if cancelQueued,err=insertRow(taskCancel,accountB,"queued");err!=nil{t.Fatal(err)}
 	if otherProcessing,err=insertRow(taskOther,accountA,"processing");err!=nil{t.Fatal(err)}
+	if concurrentProcessing,err=insertRow(taskConcurrent,accountA,"processing");err!=nil{t.Fatal(err)}
 
 	service:=New(db)
 	if err:=service.PauseJoinTask(ctx,tenantID,taskPause);err!=nil{t.Fatal(err)}
@@ -311,4 +313,6 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	if err:=service.RescheduleJoinTaskAccount(ctx,otherJob,90*time.Second,"FLOOD_WAIT_90");err!=nil{t.Fatal(err)}
 	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,otherProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
 	if status!="queued"||savedLease.Valid{t.Fatalf("current FloodWait row not rescheduled: status=%s lease=%v",status,savedLease)}
+	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,concurrentProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="processing"||!savedLease.Valid{t.Fatalf("FloodWait revoked another active RPC lease: status=%s lease=%v",status,savedLease)}
 }
