@@ -46,8 +46,8 @@
 | 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 采集与私密邀请只读验证已接入，尚待运行验收 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；worker 每 15 分钟对有来源账号执行到期检查（同一链接至少间隔 6 小时），仅调用 `messages.checkChatInvite`，不加入群；结果区分 valid/approval_required/invalid/unknown，保存最近检查时间和错误；公开 username 已接入 `contacts.resolveUsername` 只读解析（不加入群）；公开/私密链接均由 worker 按 6 小时冷却刷新并记录结果；链接与群资料自动关联完善仍待补齐 |
 | 自动加群 | tenant_join_tasks、tenant_join_task_accounts、Worker 租约执行器 | 公开用户名/公开链接/私密邀请链接执行及审批状态 Worker 轮询同步已实现代码闭环，仍需真实账号验收 | 支持明确授权、租户内账号分配、来源校验、任务状态机、过期租约回收；对 INVITE_REQUEST_SENT 记录待审批；FloodWait 向上取整并加 1 秒缓冲，同一任务及触发限流的账号进入冷却，不通过切换账号规避；Worker 领取子任务时同步返回递增后的 attempts，瞬时 CHANNELS_TOO_MUCH/USER_RESTRICTED 等错误进入有界退避，永久失效邀请/私有群等错误才终止；私密邀请审批在缺少可靠 chat_id 时保持 request_pending，不伪造审批结果 |
-| 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/regex、排除词、聊天类型、大小写；只记录命中，不触发自动动作；规则启停和命中分页 API 已提供 |
-| 自动处理 | 当前只有人工触发的文字 reply job | 未实现完整功能 | 私聊/群组独立动作链、媒体、联系人卡片、失败停止规则 |
+| 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/exact/regex、OR/AND 关键词分组、排除词、账号/聊天/媒体/发送者过滤、聊天类型和大小写；规则启停和命中分页 API 已提供 |
+| 自动处理 | keyword_action_jobs、关键词命中自动入队及 Worker 执行 | 文本动作第一阶段已实现 | 按私聊/群组区分文案；支持租约领取、账号发送节流、租户失效暂停、离线账号释放租约且不消耗重试次数、失败指数退避、FloodWait 冷却及手动暂停/恢复/重试；原生联系人卡片尚未接入关键词规则，媒体发送与真实语音通话仍未实现 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
 | 通用任务中心 | `GET /api/v1/tasks` 已聚合回复、关键词动作、资料修改、加群账号队列 | 第一阶段只读聚合已实现 | 统一任务控制 API 已支持消息回复暂停/恢复/重试/取消、关键词动作暂停/恢复/重试/取消、资料修改暂停/恢复/重试/取消、加群任务暂停/恢复/重试/取消（重试仅重新排队仍授权账号的失败子任务）；幂等键、断点恢复、统一任务生命周期和 WebSocket 推送仍待实现 |
 | 日志/监控/备份 | 基础健康检查、结构化日志、audit_logs 表 | 部分实现 | 资源监控、Worker 心跳、代理异常看板、备份恢复流程需补齐 |
