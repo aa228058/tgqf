@@ -224,7 +224,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
     WHERE a.tenant_id=$1 AND t.status='queued' AND a.status='request_pending'
       AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
-      AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
+      AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) IS NOT NULL)
       AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
       AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
     ORDER BY a.updated_at,a.id
