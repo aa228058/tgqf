@@ -161,6 +161,7 @@ func main() {
 	lastProxySweep:=time.Time{}
 	lastPrivateInviteSweep:=time.Time{}
 	lastGroupPermissionSweep:=time.Time{}
+	lastMediaCacheSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
 	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
@@ -220,6 +221,22 @@ func main() {
 					if err:=refreshGroupPermissions(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
 						logger.Warn("refresh Telegram group permissions","account_id",accountID,"error",err)
 					}
+					return sweepCtx.Err()==nil
+				})
+			}()
+		}
+		if time.Since(lastMediaCacheSweep)>=24*time.Hour {
+			lastMediaCacheSweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
+				seenTenants:=make(map[string]struct{})
+				accountTenants.Range(func(_,value any)bool {
+					tenantID,ok:=value.(string)
+					if !ok||tenantID=="" { return true }
+					if _,exists:=seenTenants[tenantID];exists{return true}
+					seenTenants[tenantID]=struct{}{}
+					removed,err:=messageService.PruneMessageMediaCache(sweepCtx,tenantID,90*24*time.Hour)
+					if err!=nil { logger.Warn("prune expired Telegram media cache links","tenant_id",tenantID,"error",err) } else if removed>0 { logger.Info("pruned expired Telegram media cache links","tenant_id",tenantID,"removed",removed) }
 					return sweepCtx.Err()==nil
 				})
 			}()
