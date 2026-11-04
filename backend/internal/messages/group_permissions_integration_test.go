@@ -273,7 +273,7 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	insertRow:=func(task,account,status string)(int64,error){
 		var id int64
 		err:=db.QueryRowContext(ctx,`INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status,lease_until)
-			VALUES($1,$2,$3,$4,CASE WHEN $4='processing' THEN $5 ELSE NULL END) RETURNING id`,tenantID,task,account,status,lease).Scan(&id)
+			VALUES($1,$2,$3,$4,CASE WHEN $4='processing' THEN $5::timestamptz ELSE NULL END) RETURNING id`,tenantID,task,account,status,lease).Scan(&id)
 		return id,err
 	}
 	var err error
