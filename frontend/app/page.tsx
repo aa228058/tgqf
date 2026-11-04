@@ -5,6 +5,7 @@ import { AppShell, AppUser } from "./AppShell";
 import { Workbench } from "./Workbench";
 import { AccountsPage } from "./AccountsPage";
 import { MessagesPage } from "./MessagesPage";
+import { GroupsPage } from "./GroupsPage";
 
 type Task = {
   id: string; group_id?: string; type: string; title: string; status: string;
@@ -132,7 +133,7 @@ export default function Home() {
   if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>管理控制台登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
   if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
-  return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />}><main className="shell">
+  return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} />}><main className="shell">
     <header className="topbar"><div><div className="eyebrow">TG MANAGER</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot">实时刷新 · 10 秒</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>刷新</button></div></header>
     {error && <div className="alert error">{error}</div>}{notice && <div className="alert success">{notice}</div>}
     <section className="summary-grid">
