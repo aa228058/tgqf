@@ -365,6 +365,28 @@ func (m *Manager) ManagedAccountIDs() []string {
      return chat.ID,nil
  }
 
+// GetChatMetadata performs a read-only MTGo chat lookup for an already-known chat.
+// It does not join, leave, or modify the chat.
+func (m *Manager) GetChatMetadata(ctx context.Context, accountID string, chatID int64) (*types.Chat, error) {
+	if chatID == 0 {
+		return nil, errors.New("Telegram chat ID is required")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return nil, errors.New("Telegram account is not connected")
+	}
+	chat, err := client.GetChat(ctx, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("get Telegram chat metadata: %w", err)
+	}
+	if chat == nil || chat.ID == 0 {
+		return nil, errors.New("Telegram returned no chat metadata")
+	}
+	return chat, nil
+}
+
 // CheckPublicUsername resolves a public Telegram username without joining the chat.
 func (m *Manager) CheckPublicUsername(ctx context.Context, accountID, username string) (bool, error) {
 	m.mu.RLock()
