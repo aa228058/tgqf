@@ -54,3 +54,25 @@ func TestParseGroupCatalogueTXTRejectsCommaSeparatedInput(t *testing.T) {
 		t.Fatal("TXT importer must require tab-delimited columns")
 	}
 }
+
+
+func TestGroupCatalogueXLSXRoundTrip(t *testing.T) {
+	rows:=[][]string{
+		{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified"},
+		{"42","-1001234567890","Research & Development","channel","research_news","1200","true"},
+		{"43","-1001234567891","Second Group","group","","0","false"},
+	}
+	data,err:=buildGroupCatalogueXLSX(rows)
+	if err!=nil{t.Fatal(err)}
+	records,err:=parseGroupCatalogueXLSX(data)
+	if err!=nil{t.Fatal(err)}
+	if len(records)!=2{t.Fatalf("records=%d, want 2",len(records))}
+	if records[0].ChatID!=-1001234567890||records[0].Title!="Research & Development"||records[0].Username!="research_news"||!records[0].IsVerified{
+		t.Fatalf("unexpected first XLSX record: %#v",records[0])
+	}
+	if records[1].ChatID!=-1001234567891||records[1].ChatType!="group"{t.Fatalf("unexpected second XLSX record: %#v",records[1])}
+}
+
+func TestGroupCatalogueXLSXRejectsInvalidArchive(t *testing.T) {
+	if _,err:=parseGroupCatalogueXLSX([]byte("not an xlsx workbook"));err==nil{t.Fatal("expected invalid XLSX archive error")}
+}
