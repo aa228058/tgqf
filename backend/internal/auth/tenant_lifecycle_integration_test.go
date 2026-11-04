@@ -234,8 +234,8 @@ func TestListAuditLogsFiltersAndIncludesActorAndTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO audit_logs(tenant_id,actor_user_id,action,resource_type,resource_id,details)
-		VALUES($1,$2,'admin.tenant.status','tenant',$1::text,'{"status":"disabled"}'::jsonb),
-		(NULL,$2,'admin.cards.issue','activation_cards','','{"count":5}'::jsonb)`, lifecycleTenantID, actorID); err != nil {
+		VALUES($1,$2,'admin.tenant.status','tenant',$3,'{"status":"disabled"}'::jsonb),
+		(NULL,$2,'admin.cards.issue','activation_cards','','{"count":5}'::jsonb)`, lifecycleTenantID, actorID, lifecycleTenantID); err != nil {
 		t.Fatal(err)
 	}
 	items, total, err := New(db).ListAuditLogs(ctx, lifecycleTenantID, "tenant.status", 50, 0)
