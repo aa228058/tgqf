@@ -481,7 +481,7 @@ func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,
             JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
             WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item KeywordActionRecord;var albumItems []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.TelegramMessageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};items=append(items,item)}
+        for rows.Next(){var item KeywordActionRecord;var albumItems,messageIDs []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&messageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};if err:=json.Unmarshal(messageIDs,&item.TelegramMessageIDs);err!=nil{return err};items=append(items,item)}
         return rows.Err()
     })
     return items,total,err
