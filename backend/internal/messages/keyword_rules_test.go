@@ -247,3 +247,19 @@ func TestKeywordAlbumJSONEmptyIsArray(t *testing.T) {
     items:=[]KeywordMediaAlbumItem{{AssetID:"11111111-1111-4111-8111-111111111111",MediaType:"photo"}}
     if got:=keywordAlbumJSON(items);!strings.Contains(got,`"media_type":"photo"`) { t.Fatalf("album JSON missing item fields: %s",got) }
 }
+
+func TestKeywordActionRecordSerializesAllTelegramMessageIDs(t *testing.T) {
+    record := KeywordActionRecord{
+        ID: "job-1",
+        ActionType: "media_album",
+        Status: "sent",
+        TelegramMessageIDs: []int64{101, 102, 103},
+    }
+    encoded, err := json.Marshal(record)
+    if err != nil { t.Fatal(err) }
+    var decoded KeywordActionRecord
+    if err := json.Unmarshal(encoded, &decoded); err != nil { t.Fatal(err) }
+    if len(decoded.TelegramMessageIDs) != 3 || decoded.TelegramMessageIDs[0] != 101 || decoded.TelegramMessageIDs[2] != 103 {
+        t.Fatalf("Telegram message IDs were not preserved: %#v", decoded.TelegramMessageIDs)
+    }
+}
