@@ -78,7 +78,7 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	}
 	var savedLease time.Time
 	if err:=db.QueryRowContext(ctx,`SELECT lease_until FROM message_reply_jobs WHERE id=$1`,jobInactiveLive).Scan(&savedLease);err!=nil{t.Fatal(err)}
-	if !savedLease.Equal(liveLease){t.Fatalf("inactive tenant sweep changed live reply lease: %s != %s",savedLease,liveLease)}
+	if delta:=savedLease.Sub(liveLease); delta < -time.Microsecond || delta > time.Microsecond {t.Fatalf("inactive tenant sweep changed live reply lease beyond database timestamp precision: %s != %s (delta %s)",savedLease,liveLease,delta)}
 
 	if _,err:=db.ExecContext(ctx,`UPDATE tenants SET status='expired',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`,activeTenant);err!=nil{t.Fatal(err)}
 	if err:=service.CompleteReply(ctx,claimed[jobA],501);err!=nil{t.Fatalf("persist successful reply after tenant expiry: %v",err)}
