@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
@@ -25,9 +27,9 @@ async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";
  Object.assign(headers,init?.headers||{});
  const response=await fetch(`${API_BASE}${path}`,{...init,headers,cache:"no-store"});
- if(!response.ok){let message=`请求失败（${response.status}）`;try{const body=await response.json();message=body.error||message}catch{}throw new Error(message)}
+ if(!response.ok){let message=`请求失败（${response.status}）`;message = await apiErrorMessage(response, message);throw new Error(message)}
  if(response.status===204)return undefined as T;
- return response.json() as Promise<T>;
+ return readAPIJSON<T>(response);
 }
 const statusLabel:Record<string,string>={authorized:"已授权",pending:"待登录",error:"异常",disconnected:"已断开"};
 const statusClass:Record<string,string>={authorized:"status-joined",pending:"status-pending",error:"status-failed",disconnected:"status-paused"};

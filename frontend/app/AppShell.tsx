@@ -94,7 +94,7 @@ export function AppShell({
       <nav className={isAdmin?"mobile-bottom-nav admin-mobile-nav":"mobile-bottom-nav"} aria-label="手机主导航">
         {primary.map(key=>{const item=items.find(x=>x.key===key)!;return <button key={key} aria-current={active===key?"page":undefined} className={active===key?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>go(key)}><span>{item.icon}</span><small>{item.label}</small></button>})}
         <div className="mobile-more-wrap" ref={moreMenuRef}><button ref={moreTriggerRef} aria-expanded={moreOpen} aria-haspopup="menu" aria-controls="mobile-more-menu" aria-label={moreOpen?"关闭更多导航":"打开更多导航"} className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
-          <div className="mobile-more-menu" id="mobile-more-menu" role="menu" aria-label="更多页面" hidden={!moreOpen}>{more.map(item=><button key={item.key} role="menuitem" aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
+          {moreOpen&&<div className="mobile-more-menu" id="mobile-more-menu" role="menu" aria-label="更多页面">{more.map(item=><button key={item.key} role="menuitem" aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>}
         </div>
       </nav>
     </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { useCallback,useEffect,useRef,useState } from "react";
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Account={id:string;phone:string;display_name:string;status:string;last_error:string;updated_at:string};
@@ -8,7 +10,7 @@ type Check={id:string;check_type:string;status:string;latency_ms:number;message:
 type Worker={instance_id:string;hostname:string;process_id:number;status:string;heartbeat_at:string;started_at:string;stopped_at?:string;stale:boolean};
 type Tenant={id:string;name:string;status:string;account_limit:number;expires_at?:string;created_at:string};
 type Summary={total:number;processing:number;expired_leases:number;counts:{type:string;status:string;count:number}[]};
-async function get<T>(path:string,token:string):Promise<T>{const r=await fetch(API+path,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return r.json() as Promise<T>}
+async function get<T>(path:string,token:string):Promise<T>{const r=await fetch(API+path,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;m=await apiErrorMessage(r,m);throw Error(m)}return readAPIJSON<T>(r)}
 const date=(s?:string)=>s?new Date(s).toLocaleString():"—";
 function State({value}:{value:string}){return <span className={`status status-${value==="active"||value==="authorized"||value==="ok"||value==="success"||value==="running"?"joined":value==="disabled"||value==="stale"||value==="failed"||value==="error"?"failed":"pending"}`}>{value}</span>}
 export function RuntimePage({token,user}:{token:string;user:{role:string}}){

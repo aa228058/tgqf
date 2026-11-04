@@ -1,4 +1,6 @@
 "use client";
+
+import { apiErrorMessage, readAPIJSON } from "./api-response";
 import {useEffect,useState} from "react";
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Row={id:number;action:string;tenant_name?:string;actor_username?:string;created_at:string};
@@ -8,7 +10,7 @@ export function AdminAuditPage({token}:{token:string}){
  useEffect(()=>{
   let alive=true;
   fetch(API+"/api/v1/admin/audit-logs?limit=50&offset=0",{headers:{Authorization:"Bearer "+token},cache:"no-store"})
-   .then(r=>{if(!r.ok)throw new Error("读取失败");return r.json()})
+   .then(async r=>{if(!r.ok)throw new Error(await apiErrorMessage(r,"读取失败"));return readAPIJSON<{logs:Row[]}>(r)})
    .then(v=>{if(alive)setRows(v.logs||[])})
    .catch(e=>{if(alive)setError(e.message||"读取失败")});
   return()=>{alive=false};

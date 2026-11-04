@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SharedGroupPicker } from "./SharedGroupPicker";
 
@@ -20,11 +22,11 @@ async function api<T>(path: string, token: string, init?: RequestInit): Promise<
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers, cache: "no-store" });
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
-    try { message = (await response.json()).error || message; } catch {}
+    message = await apiErrorMessage(response, message);
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return readAPIJSON<T>(response);
 }
 const statusName: Record<string,string> = {
   draft:"草稿", queued:"排队中", paused:"已暂停", completed:"已完成",

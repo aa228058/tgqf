@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import {FormEvent,useCallback,useEffect,useRef,useState} from "react";
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type User={role:string};
@@ -7,7 +9,7 @@ type UsernameSettings={prefix:string;random_length:number;charset:"letters"|"alp
 type Card={id:string;duration_days:number;status:string;tenant_id?:string;activated_at?:string;created_at:string};
 type IssuedCard={id:string;code:string;duration_days:number;created_at:string};
 type Tenant={id:string;name:string;status:string;account_limit:number;expires_at?:string;created_at:string};
-async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{const headers:Record<string,string>={Authorization:`Bearer ${token}`};if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";Object.assign(headers,init?.headers||{});const r=await fetch(API+path,{...init,headers,cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return r.json() as Promise<T>}
+async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{const headers:Record<string,string>={Authorization:`Bearer ${token}`};if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";Object.assign(headers,init?.headers||{});const r=await fetch(API+path,{...init,headers,cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;m=await apiErrorMessage(r,m);throw Error(m)}return readAPIJSON<T>(r)}
 const date=(s?:string)=>s?new Date(s).toLocaleString():"—";
 export function SettingsPage({token,user,initialTab="profile"}:{token:string;user:User;initialTab?:"profile"|"username"|"cards"|"tenants"}){
  const admin=user.role==="super_admin";
