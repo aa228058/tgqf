@@ -92,8 +92,8 @@ export function AppShell({
       <div className="app-content">{content||<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG MANAGER · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面正在接入真实接口；当前不展示演示数据或无效操作。</div></section>}</div>
       <nav className="mobile-bottom-nav" aria-label="手机主导航">
         {primary.map(key=>{const item=items.find(x=>x.key===key)!;return <button key={key} aria-current={active===key?"page":undefined} className={active===key?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>go(key)}><span>{item.icon}</span><small>{item.label}</small></button>})}
-        <div className="mobile-more-wrap" ref={moreMenuRef}><button aria-expanded={moreOpen} aria-controls="mobile-more-menu" aria-haspopup="menu" className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
-          {moreOpen&&<div className="mobile-more-menu" id="mobile-more-menu" role="menu">{more.map(item=><button key={item.key} role="menuitem" aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>}
+        <div className="mobile-more-wrap" ref={moreMenuRef}><button aria-expanded={moreOpen} aria-controls="mobile-more-menu" className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
+          {moreOpen&&<div className="mobile-more-menu" id="mobile-more-menu">{more.map(item=><button key={item.key} aria-current={active===item.key?"page":undefined} onClick={()=>go(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>}
         </div>
       </nav>
     </div>
