@@ -131,7 +131,6 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset,in.PhotoData).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
 			if err!=nil{return err}
 			job.HasPhoto = len(job.PhotoData) > 0
-			job.HasPhoto = len(job.PhotoData) > 0
 			out=append(out,job)
 		}
 		return nil
