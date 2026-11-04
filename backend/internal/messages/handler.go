@@ -58,6 +58,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("POST /api/v1/join-tasks/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.joinTaskAction)))
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/messages/{id}/media",h.auth.Authenticated(http.HandlerFunc(h.messageMedia)))
+	mux.Handle("GET /api/v1/messages/{id}/album",h.auth.Authenticated(http.HandlerFunc(h.messageAlbum)))
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
@@ -155,6 +156,16 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 	messageJSON(w, http.StatusOK, map[string]any{"type": taskType, "id": id, "status": "updated"})
 }
 
+
+func (h *Handler) messageAlbum(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	items,err:=h.service.ListMediaAlbum(r.Context(),user.TenantID,r.PathValue("id"))
+	if err!=nil {
+		if err.Error()=="message not found"{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message not found"})}else{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load media album"})}
+		return
+	}
+	messageJSON(w,http.StatusOK,map[string]any{"messages":items,"total":len(items)})
+}
 
 func (h *Handler) messageMedia(w http.ResponseWriter,r *http.Request){
  user:=auth.UserFromContext(r.Context())
