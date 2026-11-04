@@ -155,9 +155,15 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
 	user:=auth.UserFromContext(r.Context())
 	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
-	include:=r.URL.Query().Get("include_processed")=="true"
-	items,total,err:=h.service.List(r.Context(),user.TenantID,ListOptions{Limit:limit,Offset:offset,IncludeProcessed:include})
-	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load messages"});return}
+	include,parseErr:=strconv.ParseBool(r.URL.Query().Get("include_processed"))
+	if parseErr!=nil&&r.URL.Query().Get("include_processed")!=""{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid include_processed filter"});return}
+	chatID:=int64(0)
+	if raw:=strings.TrimSpace(r.URL.Query().Get("chat_id"));raw!=""{var err error;chatID,err=strconv.ParseInt(raw,10,64);if err!=nil||chatID==0{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid chat_id filter"});return}}
+	items,total,err:=h.service.List(r.Context(),user.TenantID,ListOptions{
+		Limit:limit,Offset:offset,IncludeProcessed:include,AccountID:r.URL.Query().Get("account_id"),
+		ChatID:chatID,ChatType:r.URL.Query().Get("chat_type"),MediaType:r.URL.Query().Get("media_type"),Query:r.URL.Query().Get("q"),
+	})
+	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
 	messageJSON(w,http.StatusOK,map[string]any{"messages":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
 func(h *Handler)markProcessed(w http.ResponseWriter,r *http.Request){
