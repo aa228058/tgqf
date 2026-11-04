@@ -64,8 +64,10 @@ func main() {
 	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
-	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool) {
-		if message == nil || message.Chat == nil { return }
+	manager.SetMessageHandler(func(accountID string, message *types.Message, _ int64, replyToOwn bool) {
+		if message == nil || message.Chat == nil {
+			return
+		}
 		chatType := ""
 		switch message.Chat.Type {
 		case types.ChatTypePrivate, types.ChatTypeDirect:
@@ -80,28 +82,64 @@ func main() {
 			return
 		}
 		tenantValue, ok := accountTenants.Load(accountID)
-		if !ok { return }
+		if !ok {
+			return
+		}
 		textBody := message.Text
-		if textBody == "" { textBody = message.Caption }
+		if textBody == "" {
+			textBody = message.Caption
+		}
 		mediaType := ""
-		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
-		var defaultPermissionsJSON,accountRightsJSON []byte
-		if message.Chat.Permissions!=nil { defaultPermissionsJSON,_=json.Marshal(message.Chat.Permissions) }
-		accountRightsJSON,_=json.Marshal(map[string]any{
-			"is_admin":message.Chat.IsAdmin,"is_creator":message.Chat.IsCreator,
-			"admin_rights":message.Chat.AdminRights,"banned_rights":message.Chat.BannedRights,
-			"channel_admin_rights":message.Chat.ChannelAdminRights,"chat_admin_rights":message.Chat.ChatAdminRights,
+		if message.Media != nil {
+			mediaType = string(message.Media.MediaType())
+		}
+		var defaultPermissionsJSON, accountRightsJSON []byte
+		if message.Chat.Permissions != nil {
+			defaultPermissionsJSON, _ = json.Marshal(message.Chat.Permissions)
+		}
+		accountRightsJSON, _ = json.Marshal(map[string]any{
+			"is_admin": message.Chat.IsAdmin, "is_creator": message.Chat.IsCreator,
+			"admin_rights": message.Chat.AdminRights, "banned_rights": message.Chat.BannedRights,
+			"channel_admin_rights": message.Chat.ChannelAdminRights, "chat_admin_rights": message.Chat.ChatAdminRights,
 		})
-		ingestCtx, cancelIngest := context.WithTimeout(ctx, 5*time.Second)
-		defer cancelIngest()
-		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
+		incoming := messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, DefaultPermissionsJSON:defaultPermissionsJSON, AccountRightsJSON:accountRightsJSON, SenderID: message.FromID, SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(), SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified,
+			DefaultPermissionsJSON: defaultPermissionsJSON, AccountRightsJSON: accountRightsJSON,
+			SenderID: message.FromID,
+			SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(),
+			SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
-		})
-		if err != nil { logger.Warn("store filtered Telegram message", "account_id", accountID, "message_id", message.ID, "error", err) }
+		}
+		// Do not acknowledge the MTGo callback until Redis has durably accepted
+		// the update. Retry transient Redis outages with bounded backoff.
+		delay := 250 * time.Millisecond
+		for {
+			enqueueCtx, cancelEnqueue := context.WithTimeout(ctx, 5*time.Second)
+			_, enqueueErr := messageService.EnqueueIncomingUpdate(enqueueCtx, tenantValue.(string), incoming)
+			cancelEnqueue()
+			if enqueueErr == nil {
+				return
+			}
+			if ctx.Err() != nil {
+				logger.Error("incoming Telegram update was not queued before shutdown", "account_id", accountID, "message_id", message.ID, "error", enqueueErr)
+				return
+			}
+			logger.Warn("queue incoming Telegram update; retrying", "account_id", accountID, "message_id", message.ID, "error", enqueueErr, "retry_in", delay.String())
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			delay *= 2
+			if delay > 5*time.Second {
+				delay = 5 * time.Second
+			}
+		}
 	})
 
 	lastSavedSessions := make(map[string]string)
@@ -146,6 +184,7 @@ func main() {
 		}
 	}()
 	for {
+		processIncomingUpdates(ctx, messageService, workerID, logger)
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		processKeywordActionJobs(ctx, messageService, manager, logger)
@@ -685,5 +724,45 @@ func refreshGroupPermissions(ctx context.Context, service *messages.Service, man
 				logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
 			}
 		}
+	}
+}
+
+
+// processIncomingUpdates commits queued Telegram updates to PostgreSQL before
+// acknowledging their Redis Stream deliveries. Failed writes remain pending and
+// are reclaimed after the visibility timeout by a live or replacement worker.
+func processIncomingUpdates(ctx context.Context, service *messages.Service, consumer string, logger *slog.Logger) {
+	events, err := service.ReadIncomingUpdates(ctx, consumer, 100)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Warn("read incoming Telegram update queue", "error", err)
+		}
+		return
+	}
+	for _, event := range events {
+		if ctx.Err() != nil {
+			return
+		}
+		if event.DecodeErr != nil {
+			logger.Error("discard malformed incoming Telegram update", "stream_id", event.ID, "error", event.DecodeErr)
+			ackCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			if ackErr := service.AckIncomingUpdate(ackCtx, event.ID); ackErr != nil {
+				logger.Warn("ack malformed incoming Telegram update", "stream_id", event.ID, "error", ackErr)
+			}
+			cancel()
+			continue
+		}
+		ingestCtx, cancelIngest := context.WithTimeout(ctx, 15*time.Second)
+		_, ingestErr := service.Ingest(ingestCtx, event.TenantID, event.Incoming)
+		cancelIngest()
+		if ingestErr != nil {
+			logger.Warn("persist queued Telegram update; delivery remains pending", "stream_id", event.ID, "account_id", event.Incoming.AccountID, "message_id", event.Incoming.MessageID, "error", ingestErr)
+			continue
+		}
+		ackCtx, cancelAck := context.WithTimeout(ctx, 3*time.Second)
+		if ackErr := service.AckIncomingUpdate(ackCtx, event.ID); ackErr != nil {
+			logger.Warn("ack persisted Telegram update; duplicate-safe replay will recover", "stream_id", event.ID, "error", ackErr)
+		}
+		cancelAck()
 	}
 }
