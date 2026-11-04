@@ -119,7 +119,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.ActionType=strings.ToLower(strings.TrimSpace(rule.ActionType)); if rule.ActionType=="" { rule.ActionType="text" }
     rule.ContactPhone=strings.TrimSpace(rule.ContactPhone); rule.ContactFirstName=strings.TrimSpace(rule.ContactFirstName); rule.ContactLastName=strings.TrimSpace(rule.ContactLastName)
     rule.MediaAssetID=strings.TrimSpace(rule.MediaAssetID); rule.MediaType=strings.ToLower(strings.TrimSpace(rule.MediaType)); rule.MediaCaption=strings.TrimSpace(rule.MediaCaption)
-    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" { return rule,fmt.Errorf("%w: action_type must be text, contact, or media",ErrInvalidKeywordRule) }
+    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" { return rule,fmt.Errorf("%w: action_type must be text, contact, media, or media_album",ErrInvalidKeywordRule) }
     if rule.ActionType=="contact" {
         if rule.ContactPhone=="" || rule.ContactFirstName=="" || len(rule.ContactPhone)>64 || len(rule.ContactFirstName)>128 || len(rule.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact action requires phone and first name",ErrInvalidKeywordRule) }
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: contact action cannot include text replies",ErrInvalidKeywordRule) }
