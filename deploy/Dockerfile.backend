@@ -5,7 +5,8 @@ WORKDIR /src
 COPY backend/go.mod ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tgqf-api ./cmd/api \
+RUN go mod tidy \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tgqf-api ./cmd/api \
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tgqf-worker ./cmd/worker
 
 FROM alpine:3.22
