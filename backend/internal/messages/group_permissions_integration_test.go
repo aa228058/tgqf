@@ -20,7 +20,7 @@ import (
 func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" { t.Skip("TEST_DATABASE_URL is not configured") }
+	if dsn == "" { if os.Getenv("CI") == "true" { t.Fatal("TEST_DATABASE_URL is required in CI; refusing to skip PostgreSQL integration tests") }; t.Skip("TEST_DATABASE_URL is not configured") }
 	adminConfig, err := pgx.ParseConfig(dsn)
 	if err != nil { t.Fatal(err) }
 	adminDB := stdlib.OpenDB(*adminConfig)
