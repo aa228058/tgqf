@@ -50,7 +50,7 @@ export function KeywordMonitor({token}:{token:string}){
  const [privateReplyText,setPrivateReplyText]=useState(""),[groupReplyText,setGroupReplyText]=useState("");
  const [status,setStatus]=useState("");
  const loadSequence=useRef(0),previewSequence=useRef(0),operationLock=useRef(false);
- const [loading,setLoading]=useState(false);
+ const [loading,setLoading]=useState(false),[previewLoading,setPreviewLoading]=useState(false);
  const [preview,setPreview]=useState<{asset:Asset;url:string}|null>(null);
  const load=useCallback(async()=>{
   const sequence=++loadSequence.current;
@@ -124,7 +124,7 @@ export function KeywordMonitor({token}:{token:string}){
    if(sequence!==previewSequence.current)return;
    setPreview(old=>{if(old?.url)URL.revokeObjectURL(old.url);return {asset,url:URL.createObjectURL(blob)}});
   }catch(e){if(sequence===previewSequence.current)setError(e instanceof Error?e.message:"素材预览加载失败")}
-  finally{if(sequence===previewSequence.current)setBusy(false)}
+  finally{if(sequence===previewSequence.current)setPreviewLoading(false)}
  }
  function closeAssetPreview(){previewSequence.current++;if(preview)URL.revokeObjectURL(preview.url);setPreview(null)}
  async function deleteAsset(asset:Asset){
@@ -157,7 +157,9 @@ export function KeywordMonitor({token}:{token:string}){
  return <section className="keyword-monitor">
   <div className="keyword-toolbar"><div><div className="eyebrow">LIVE MESSAGE AUTOMATION</div><h1>监控回复</h1><p>实时新消息关键词匹配、规则组合、命中追踪及自动动作执行。</p></div><button className="secondary" onClick={()=>void load()} disabled={busy||loading}>{loading?"同步中…":"↻ 刷新数据"}</button></div>
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
-  <div className="keyword-tabs">
+  <div className="keyword-tabs" role="tablist" aria-label="监控回复模块"><button className={tab==="rules"?"active":""} role="tab" aria-selected={tab==="rules"} onClick={()=>setTab("rules")}>规则配置（{rules.length}）</button><button className={tab==="matches"?"active":""} role="tab" aria-selected={tab==="matches"} onClick={()=>setTab("matches")}>命中记录（{matches.length}）</button><button className={tab==="actions"?"active":""} role="tab" aria-selected={tab==="actions"} onClick={()=>setTab("actions")}>动作任务（{actions.length}）</button></div>
+  <div className="sr-only" role="status" aria-live="polite">{loading?"正在同步监控数据":busy?"正在处理操作":""}</div>
+  {false&&<div className="keyword-tabs">
    <button className={tab==="rules"?"active":""} onClick={()=>setTab("rules")}>规则配置（{rules.length}）</button>
    <button className={tab==="matches"?"active":""} onClick={()=>setTab("matches")}>命中记录（{matches.length}）</button>
    <button className={tab==="actions"?"active":""} onClick={()=>setTab("actions")}>动作任务（{actions.length}）</button>
@@ -171,7 +173,7 @@ export function KeywordMonitor({token}:{token:string}){
     </div>
     <div className="keyword-actions"><button className="secondary" onClick={()=>edit(rule)}>编辑</button><button className="secondary danger" onClick={()=>void remove(rule)} disabled={busy}>删除</button></div>
    </article>)}{!rules.length&&<div className="empty">{loading?"正在加载规则…":error?"加载失败，请检查提示后重试":"尚未配置关键词规则"}</div>}</div>
-   <div className="keyword-assets"><strong>媒体素材库</strong><label className="secondary">上传素材<input type="file" hidden accept="image/*,video/*,audio/*,.pdf,.doc,.docx" onChange={e=>{const file=e.target.files?.[0];if(file)void uploadAsset(file);e.currentTarget.value=""}}/></label><div className="keyword-asset-list">{assets.map(a=><span key={a.id}>{a.file_name} · {(a.file_size/1024).toFixed(0)} KB <button className="secondary" disabled={busy} onClick={()=>void openAssetPreview(a)}>预览</button><button className="danger-text" disabled={busy} onClick={()=>void deleteAsset(a)}>删除</button></span>)}</div></div>
+   <div className="keyword-assets"><strong>媒体素材库</strong><label className="secondary">上传素材<input type="file" hidden accept="image/*,video/*,audio/*,.pdf,.doc,.docx" onChange={e=>{const file=e.target.files?.[0];if(file)void uploadAsset(file);e.currentTarget.value=""}}/></label><div className="keyword-asset-list">{assets.map(a=><span key={a.id}>{a.file_name} · {(a.file_size/1024).toFixed(0)} KB <button className="secondary" disabled={busy||previewLoading} onClick={()=>void openAssetPreview(a)}>{previewLoading?"加载中…":"预览"}</button><button className="danger-text" disabled={busy} onClick={()=>void deleteAsset(a)}>删除</button></span>)}</div></div>
   </>}
   {tab==="matches"&&<div className="keyword-table-wrap"><table className="keyword-table"><thead><tr><th>规则</th><th>账号</th><th>Chat ID</th><th>消息 ID</th><th>命中词</th><th>时间</th></tr></thead><tbody>{matches.map(m=><tr key={m.id}><td data-label="规则">{m.rule_name}</td><td data-label="账号">{m.account_id.slice(0,8)}…</td><td data-label="Chat ID">{m.chat_id}</td><td data-label="消息 ID">{m.message_id}</td><td data-label="命中词">{m.matched_terms.join("、")}</td><td data-label="命中时间">{date(m.matched_at)}</td></tr>)}</tbody></table>{!matches.length&&<div className="empty">{loading?"正在同步命中记录…":error?"加载失败，请检查提示后重试":"暂无命中记录"}</div>}</div>}
   {tab==="actions"&&<><div className="keyword-filter"><label>任务状态<select value={status} onChange={e=>setStatus(e.target.value)}><option value="">全部状态</option>{["pending","processing","sent","failed","paused"].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="keyword-rule-list">{shownActions.map(a=><article className="keyword-card" key={a.id}><div><strong>{a.rule_name} · {a.action_type}</strong><span className="keyword-state">{a.status}</span><p>Chat {a.chat_id} · 尝试 {a.attempts} 次 · {date(a.created_at)}</p>{a.last_error&&<small className={a.last_error.includes("uncertain")?"keyword-error":"muted"}>{a.last_error}</small>}{a.telegram_message_ids?.length>0&&<small>Telegram 消息 ID：{a.telegram_message_ids.join(", ")}</small>}{a.voice_call_state&&<small>语音呼叫状态：{a.voice_call_state} · Call ID：{a.telegram_call_id||"—"}</small>}</div><div className="keyword-actions">{(a.status==="pending"||a.status==="failed")&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"pause")}>暂停</button>}{a.status==="paused"&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"resume")}>恢复（核验后）</button>}{a.status==="failed"&&<button className="primary" disabled={busy} onClick={()=>void control(a,"retry")}>重试</button>}</div></article>)}{!shownActions.length&&<div className="empty">{loading?"正在同步动作任务…":error?"加载失败，请检查提示后重试":"暂无符合条件的动作任务"}</div>}</div></>}
