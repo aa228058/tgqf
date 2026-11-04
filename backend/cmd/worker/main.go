@@ -442,8 +442,11 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 			var checkErr error
 			if job.ChatID>0 {
 				memberStatus,checkErr=manager.CheckOwnChatMembership(checkCtx,job.AccountID,job.ChatID)
+			} else if job.InviteHash!="" {
+				memberStatus,checkErr=manager.CheckPrivateInviteApproval(checkCtx,job.AccountID,job.InviteHash)
 			} else {
 				cancel()
+				logger.Warn("pending Telegram join approval has neither chat ID nor private invite hash","task_id",job.TaskID,"account_id",job.AccountID)
 				continue
 			}
 			cancel()
@@ -453,8 +456,13 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 					if deferErr:=service.DeferJoinApprovalCheck(ctx,job,wait);deferErr!=nil {logger.Warn("defer Telegram approval check","task_id",job.TaskID,"error",deferErr)}
 					continue
 				}
-				logger.Warn("check Telegram join approval","task_id",job.TaskID,"account_id",job.AccountID,"error",checkErr)
-				continue
+				upper:=strings.ToUpper(checkErr.Error())
+				if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY") {
+					memberStatus="invalid"
+				} else {
+					logger.Warn("check Telegram join approval","task_id",job.TaskID,"account_id",job.AccountID,"error",checkErr)
+					continue
+				}
 			}
 			if err:=service.SyncJoinApproval(ctx,job,strings.ToLower(memberStatus));err!=nil {logger.Error("persist Telegram join approval status","task_id",job.TaskID,"account_id",job.AccountID,"error",err)}
 		}
