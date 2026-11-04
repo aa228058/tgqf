@@ -12,8 +12,10 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose.yaml")
 BACKUP_ROOT="${BACKUP_DIR:-$ROOT/backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
-mkdir -p -m 0700 "$DEST"
-chmod 0700 "$BACKUP_ROOT" "$DEST"
+mkdir -p -m 0700 "$BACKUP_ROOT"
+chmod 0700 "$BACKUP_ROOT"
+mkdir -m 0700 "$DEST"
+chmod 0700 "$DEST"
 stopped=0
 restart_stack() {
   if [[ "$stopped" == "1" ]]; then
@@ -25,7 +27,7 @@ trap restart_stack EXIT
 echo "Stopping writers for a consistent Redis stream snapshot..."
 stopped=1
 "${COMPOSE[@]}" stop worker api frontend
-"${COMPOSE[@]}" exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" SAVE >/dev/null
+"${COMPOSE[@]}" exec -T -e REDISCLI_AUTH="$REDIS_PASSWORD" redis redis-cli --no-auth-warning SAVE >/dev/null
 "${COMPOSE[@]}" exec -T redis sh -c 'tar -czf /tmp/tgqf-redis-data.tar.gz -C /data .'
 "${COMPOSE[@]}" stop redis
 
@@ -37,6 +39,6 @@ echo "Dumping PostgreSQL..."
   sha256sum postgres.dump redis-data.tar.gz > SHA256SUMS
   chmod 0600 SHA256SUMS
 )
-stopped=0
 "${COMPOSE[@]}" start redis api worker frontend
+stopped=0
 echo "Backup complete: $DEST"
