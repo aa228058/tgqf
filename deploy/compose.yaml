@@ -42,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
-    image: tgqf-backend:local
+    image: tgqf-backend:${TGQF_IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     env_file:
@@ -104,7 +104,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ""
-    image: tgqf-frontend:local
+    image: tgqf-frontend:${TGQF_IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     environment:
