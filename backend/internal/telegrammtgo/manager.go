@@ -375,9 +375,9 @@ func (m *Manager) CheckPrivateInviteApproval(ctx context.Context,accountID,invit
 		return "member",nil
 	case *tg.ChatInvite:
 		if value.RequestNeeded{return "request_pending",nil}
-		return "unknown",nil
+		return "valid",nil
 	case *tg.ChatInvitePeek:
-		return "unknown",nil
+		return "valid",nil
 	default:
 		return "unknown",fmt.Errorf("unexpected Telegram invite status %T",result)
 	}
