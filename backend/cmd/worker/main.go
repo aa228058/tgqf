@@ -424,7 +424,11 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 			}
 			cancel()
 			if checkErr!=nil {
-				if wait,ok:=tgerr.AsFloodWait(checkErr);ok {logger.Warn("Telegram approval sync FloodWait; deferring checks","account_id",job.AccountID,"wait",wait.String());continue}
+				if wait,ok:=tgerr.AsFloodWait(checkErr);ok {
+					logger.Warn("Telegram approval sync FloodWait; deferring checks","account_id",job.AccountID,"wait",wait.String())
+					if deferErr:=service.DeferJoinApprovalCheck(ctx,job,wait);deferErr!=nil {logger.Warn("defer Telegram approval check","task_id",job.TaskID,"error",deferErr)}
+					continue
+				}
 				logger.Warn("check Telegram join approval","task_id",job.TaskID,"account_id",job.AccountID,"error",checkErr)
 				continue
 			}
