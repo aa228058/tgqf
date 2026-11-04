@@ -60,6 +60,9 @@ func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, er
 	if filter.Offset < 0 {
 		filter.Offset = 0
 	}
+	if filter.Offset > 10000000 {
+		return filter, errors.New("task offset exceeds maximum")
+	}
 	return filter, nil
 }
 
