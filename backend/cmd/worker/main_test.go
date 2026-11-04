@@ -81,6 +81,7 @@ func TestIsPermanentJoinFailure(t *testing.T) {
         {"flood wait", errors.New("FLOOD_WAIT_120"), false},
         {"timeout", errors.New("context deadline exceeded"), false},
         {"temporary rpc", errors.New("INTERNAL"), false},
+		{"temporary account restriction", errors.New("USER_RESTRICTED"), false},
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
