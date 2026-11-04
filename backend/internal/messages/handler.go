@@ -390,11 +390,20 @@ func (h *Handler) listGroupLinks(w http.ResponseWriter,r *http.Request) {
 	messageJSON(w,http.StatusOK,map[string]any{"links":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
 
+func groupCatalogueTenantScope(user auth.User) string {
+	if user.Role == "super_admin" && user.TenantID == "" {
+		// Super-admins may inspect the global catalogue, but the zero UUID
+		// deliberately exposes no tenant-specific source/contribution counts.
+		return "00000000-0000-0000-0000-000000000000"
+	}
+	return user.TenantID
+}
+
 func (h *Handler) listGroupSources(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
 	id,err:=strconv.ParseInt(r.PathValue("id"),10,64)
 	if err!=nil||id<=0 { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid group id"});return }
-	items,err:=h.service.ListGroupSources(r.Context(),user.TenantID,id)
+	items,err:=h.service.ListGroupSources(r.Context(),groupCatalogueTenantScope(user),id)
 	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load group sources"});return }
 	messageJSON(w,http.StatusOK,map[string]any{"sources":items})
 }
@@ -418,7 +427,7 @@ func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
 	writer:=csv.NewWriter(&output);_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
 	for offset:=0;offset<maxRows;offset+=100 {
 		limit:=100;if offset+limit>maxRows{limit=maxRows-offset}
-		items,_,err:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+		items,_,err:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,limit,offset)
 		if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to export public groups"});return}
 		for _,item:=range items{_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),string(item.DefaultPermissions),func()string{if item.PermissionsObservedAt==nil{return ""};return item.PermissionsObservedAt.UTC().Format(time.RFC3339)}(),strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})}
 		if len(items)<limit{break}
@@ -466,7 +475,7 @@ func (h *Handler) exportGroupLibraryTXT(w http.ResponseWriter, r *http.Request) 
 	_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
 	for offset:=0; offset<maxRows; offset+=100 {
 		limit:=100; if offset+limit>maxRows { limit=maxRows-offset }
-		items,_,listErr:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+		items,_,listErr:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,limit,offset)
 		if listErr!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to export public groups"}); return }
 		for _,item:=range items { observed:=""; if item.PermissionsObservedAt!=nil { observed=item.PermissionsObservedAt.UTC().Format(time.RFC3339) }
 			_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),string(item.DefaultPermissions),observed,strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})
@@ -514,7 +523,7 @@ func (h *Handler) getGroupLibraryItem(w http.ResponseWriter, r *http.Request) {
 		messageJSON(w, http.StatusBadRequest, map[string]string{"error":"invalid group id"})
 		return
 	}
-	item, err := h.service.GetGroupLibraryItem(r.Context(), user.TenantID, id)
+	item, err := h.service.GetGroupLibraryItem(r.Context(), groupCatalogueTenantScope(user), id)
 	if errors.Is(err, ErrGroupLibraryNotFound) {
 		messageJSON(w, http.StatusNotFound, map[string]string{"error":"group not found"})
 		return
@@ -557,7 +566,7 @@ func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
 	if filter.MinSources,err=parseInt("min_sources");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
 	if filter.MinContributors,err=parseInt("min_contributors");err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
 	if raw:=strings.TrimSpace(r.URL.Query().Get("verified"));raw!=""{v,parseErr:=strconv.ParseBool(raw);if parseErr!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"verified must be true or false"});return};filter.Verified=&v}
-	items,total,err:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+	items,total,err:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,limit,offset)
 	if err!=nil{status:=http.StatusInternalServerError;if errors.Is(err,ErrInvalidGroupLibraryQuery){status=http.StatusBadRequest};messageJSON(w,status,map[string]string{"error":err.Error()});return}
 	messageJSON(w,http.StatusOK,map[string]any{"groups":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
