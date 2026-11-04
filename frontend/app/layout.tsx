@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TG Manager · Telegram 管理控制台",
-  description: "Telegram 账号、消息、群组和任务管理控制台",
+  title: "TG 账号管理工具",
+  description: "Telegram 账号、群组、消息与任务统一管理工具",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

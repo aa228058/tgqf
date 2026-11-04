@@ -39,6 +39,7 @@ export default function Home() {
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [loginMode, setLoginMode] = useState<"tenant" | "admin">("tenant");
   const [signedIn, setSignedIn] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -102,10 +103,10 @@ export default function Home() {
         setUser(null);
       });
   }, []);
-  useEffect(() => { if (signedIn && token) void load(token); }, [signedIn, token, load]);
+  useEffect(() => { if (signedIn && token && user?.role !== "super_admin") void load(token); }, [signedIn, token, user?.role, load]);
   useEffect(() => { setSelected([]); }, [offset, status, type, accountID]);
   useEffect(() => {
-    if (!signedIn || !token) return;
+    if (!signedIn || !token || user?.role === "super_admin") return;
     const refresh = () => { if (document.visibilityState === "visible" && !actionLock.current) void load(token, true); };
     const timer = window.setInterval(refresh, 10000);
     document.addEventListener("visibilitychange", refresh);
@@ -114,12 +115,12 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [signedIn, token, load]);
+  }, [signedIn, token, user?.role, load]);
 
   async function login(event: FormEvent) {
     event.preventDefault(); if (loginLock.current) return; loginLock.current = true; setBusy(true); setError("");
     try {
-      const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, device_label: "web-task-center" }) });
+      const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, login_type: loginMode, device_label: "tg-account-manager-web" }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "登录失败");
       window.localStorage.setItem("tgqf_access_token", body.access_token);
@@ -158,7 +159,7 @@ export default function Home() {
   }
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(v => v !== id) : [...current, id]);
 
-  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>管理控制台登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
+  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG 账号管理工具</h1><p>Telegram 账号、群组、消息与任务统一管理</p><div className="login-mode-switch" role="group" aria-label="选择登录身份"><button type="button" className={loginMode==="tenant"?"active":""} aria-pressed={loginMode==="tenant"} onClick={()=>setLoginMode("tenant")}><strong>租户号登录</strong><small>进入租户业务工作台</small></button><button type="button" className={loginMode==="admin"?"active":""} aria-pressed={loginMode==="admin"} onClick={()=>setLoginMode("admin")}><strong>管理号登录</strong><small>进入系统管理后台</small></button></div><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>安全登录 · 租户数据隔离</small></form></main>;
   if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
   return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} />} adminContent={<AdminConsole token={token} user={user}/>}><main className="shell">

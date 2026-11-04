@@ -1221,3 +1221,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .monitor-alert-row div{display:grid;gap:5px;min-width:0}
 .monitor-alert-row small{color:var(--muted);font-size:11px;overflow-wrap:anywhere}
 @media(max-width:480px){.monitor-alert-row{align-items:flex-start}}
+
+
+/* Keep the mobile disclosure closed even when the menu has display:grid. */
+.mobile-more-menu[hidden]{display:none!important}
+/* Login identity selector. */
+.login-mode-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:18px 0 20px}
+.login-mode-switch button{display:grid;gap:5px;min-height:72px;padding:12px;text-align:left;background:var(--surface,#fff);border:1px solid var(--line,#e5eaf0);color:var(--ink,#182230)}
+.login-mode-switch button small{font-size:11px;font-weight:400;color:var(--muted,#687586)}
+.login-mode-switch button.active{border-color:var(--accent,#315efb);background:color-mix(in srgb,var(--accent,#315efb) 9%,white);color:var(--accent,#315efb)}
+@media(max-width:420px){.login-mode-switch{gap:6px}.login-mode-switch button{padding:10px;font-size:12px}}
