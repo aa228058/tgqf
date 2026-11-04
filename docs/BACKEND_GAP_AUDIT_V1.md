@@ -47,7 +47,7 @@
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 采集与私密邀请只读验证已接入，尚待运行验收 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；worker 每 15 分钟对有来源账号执行到期检查（同一链接至少间隔 6 小时），仅调用 `messages.checkChatInvite`，不加入群；结果区分 valid/approval_required/invalid/unknown，保存最近检查时间和错误；公开 username 已接入 `contacts.resolveUsername` 只读解析（不加入群）；公开/私密链接均由 worker 按 6 小时冷却刷新并记录结果；链接与群资料自动关联完善仍待补齐 |
 | 自动加群 | tenant_join_tasks、tenant_join_task_accounts、Worker 租约执行器 | 公开用户名/公开链接/私密邀请链接执行及审批状态 Worker 轮询同步已实现代码闭环，仍需真实账号验收 | 支持明确授权、租户内账号分配、来源校验、任务状态机、过期租约回收；对 INVITE_REQUEST_SENT 记录待审批；FloodWait 向上取整并加 1 秒缓冲，同一任务及触发限流的账号进入冷却，不通过切换账号规避；Worker 领取子任务时同步返回递增后的 attempts，瞬时 CHANNELS_TOO_MUCH/USER_RESTRICTED 等错误进入有界退避，永久失效邀请/私有群等错误才终止；私密邀请审批在缺少可靠 chat_id 时保持 request_pending，不伪造审批结果 |
 | 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/exact/regex、OR/AND 关键词分组、排除词、账号/聊天/媒体/发送者过滤、聊天类型和大小写；规则启停和命中分页 API 已提供 |
-| 自动处理 | keyword_action_jobs、关键词命中自动入队及 Worker 执行 | 文本与原生联系人卡片动作已接入；租户媒体素材库基础 API 已实现 | 文本支持私聊/群组独立文案；联系人卡片支持私聊/群组，规则配置、租户持久化、命中入队、Worker 发送及任务结果查询已贯通；媒体素材支持租户隔离上传、列表、下载和删除，单文件上限 20 MiB、内容类型嗅探和 SHA-256 去重；MTGo 已增加基于受控字节内容的单条图片/视频/文件/音频/语音/圆形视频消息发送封装；素材尚未接入关键词动作队列，媒体动作配置、相册混合顺序发送和动作失败停止策略仍待实现 |
+| 自动处理 | keyword_action_jobs、关键词命中自动入队及 Worker 执行 | 文本与原生联系人卡片动作已接入；租户媒体素材库基础 API 已实现 | 文本支持私聊/群组独立文案；联系人卡片支持私聊/群组，规则配置、租户持久化、命中入队、Worker 发送及任务结果查询已贯通；媒体素材支持租户隔离上传、列表、下载和删除，单文件上限 20 MiB、内容类型嗅探和 SHA-256 去重；MTGo 已增加基于受控字节内容的单条图片/视频/文件/音频/语音/圆形视频消息发送封装；媒体动作已接入关键词动作队列，支持租户素材引用、单媒体发送、2-10 项相册发送及逐项结果回写；相册先完成全部上传再一次提交，上传失败不会发送不完整相册；发送结果不确定时暂停人工核验，避免超时后盲目重发 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
 | 通用任务中心 | `GET /api/v1/tasks` 已聚合回复、关键词动作、资料修改、加群账号队列 | 第一阶段只读聚合已实现 | 统一任务控制 API 已支持消息回复暂停/恢复/重试/取消、关键词动作暂停/恢复/重试/取消、资料修改暂停/恢复/重试/取消、加群任务暂停/恢复/重试/取消（重试仅重新排队仍授权账号的失败子任务）；幂等键、断点恢复、统一任务生命周期和 WebSocket 推送仍待实现 |
 | 日志/监控/备份 | 基础健康检查、结构化日志、audit_logs 表 | 部分实现 | 资源监控、Worker 心跳、代理异常看板、备份恢复流程需补齐 |
@@ -539,3 +539,14 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 修复任务暂停期间在途 RPC 返回永久失败时被错误标记 failed 的问题；现在优先消费 pause_requested/父任务 paused，落为 paused；cancel 仍优先落为 cancelled。
 - [x] 扩展 PostgreSQL 集成测试覆盖父任务暂停期间在途 RPC 返回失败的状态保护。
 - [ ] 真实 Telegram 双账号验收仍需部署后验证公开加入、私密邀请、申请批准/拒绝、无效邀请、账号断线与 FloodWait；CI/模拟测试不代替真实 Telegram 结果。
+
+
+## 2026-11-04 监控回复模块闭环增量（phase-12）
+
+- [x] 修复 Redis incoming stream 的长期增长：入站事件在 PostgreSQL 持久化成功后，使用 Redis 事务同时 XACK 和 XDEL；未成功落库的消息仍留在 pending，可由 XAUTOCLAIM 重领。
+- [x] 修复发送结果不确定时的重复回复风险：网络超时、context deadline/cancel、EOF、连接重置、broken pipe 等不确定发送结果不再自动重试，回复任务/关键词动作进入 paused 并记录“send outcome uncertain”，等待人工核验 Telegram 对话后再恢复。
+- [x] Telegram 相册发送返回数量与请求数量不一致时明确标记 send outcome uncertain；避免可能部分成功的相册被自动重复发送。
+- [x] 已发布的 Redis 实时事件 outbox 增加 30 天保留清理，每 24 小时最多清理 1000 条；pending outbox 不会被清理。
+- [x] 新增测试覆盖模糊发送错误分类、回复与关键词动作在途发送结果不确定时转人工暂停，以及已发布 outbox 清理保留策略。
+- [ ] 仍需补 Redis 实例集成测试验证 XACK+XDEL 原子确认、消费者重领及 Redis 故障恢复；当前 CI 的 PostgreSQL 集成测试不替代真实 Redis 验收。
+- [ ] 仍需真实 Telegram 账号验证关键词文本/联系人/媒体/相册动作、部分相册异常、断线重连和 FloodWait。
