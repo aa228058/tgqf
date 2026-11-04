@@ -458,7 +458,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 自动加群仅由明确创建并确认授权的 tenant_join_tasks 执行；支持公共 username/link 与私密邀请链接。MTGo Client.JoinChat 对私密邀请内部调用 messages.importChatInvite，该调用只在实际加群任务执行路径发生。
 - [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次执行尝试后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。`INVITE_REQUEST_SENT` 进入 request_pending，`USER_ALREADY_PARTICIPANT` 记为 already_member，不误记失败；可能临时的 USER_RESTRICTED 保留重试。
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
-- [x] 审批通过通过 MTGo membership 查询同步为 joined；已知 chat ID 时可将 left/banned 状态同步为 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后，避免多个 Worker 重复查询。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
+- [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined；明确 left/banned 状态同步为 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。私密邀请审批不伪装成可自动查询：checkChatInvite 不提供足够信息判定申请已被管理员批准或拒绝，因此保留 request_pending，待后续接入可靠的成员状态事件/映射后再同步。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
 - [ ] 本批提交尚未运行 Go test、vet、API/Worker build、数据库迁移或 GitHub Actions；当前只能确认代码已提交，不能声称编译和测试通过。
 - [ ] 仍需 PostgreSQL 多 Worker 集成测试，验证链接和审批轮询租约过期重领、旧 Worker 延迟写回被 fencing、链接状态全局共享语义，以及不同账号/租户来源下的检查公平性。
