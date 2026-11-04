@@ -15,6 +15,10 @@ type GroupPermissionRefresh struct {
 	GroupID int64
 	ChatID int64
 	LeaseUntil time.Time
+	Title string
+	Username string
+	MemberCount int
+	IsVerified bool
 }
 
 // ListGroupPermissionRefreshes claims stale shared-group permission snapshots
@@ -100,17 +104,7 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 				    username=COALESCE(NULLIF($8,''),username),
 				    is_verified=is_verified OR $9
 				WHERE id=$1 AND permissions_check_tenant_id=$2 AND permissions_check_account_id=$3 AND permissions_check_lease_until=$4`,
-				item.GroupID,tenantID,accountID,item.LeaseUntil,nullJSON(defaultPermissions),0,"","",false)
-		}
-		if err != nil { return err }
-		n, _ := result.RowsAffected()
-		if n == 0 { return ErrGroupPermissionLeaseLost }
-		if refreshErr == nil && len(accountRights) > 0 {
-			_, err = tx.ExecContext(ctx, `UPDATE public_group_sources
-				SET account_rights_snapshot=$5::jsonb,account_rights_observed_at=NOW()
-				WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND EXISTS (
-					SELECT 1 FROM public_groups g WHERE g.id=$1 AND g.telegram_chat_id=$4
-				)`, item.GroupID,tenantID,accountID,item.ChatID,accountRights)
+				item.GroupID,tenantID,accountID,item.LeaseUntil,nullJSON(defaultPermissions),max(0,item.MemberCount),item.Title,item.Username,item.IsVerified)
 			if err != nil { return fmt.Errorf("store tenant account rights snapshot: %w",err) }
 		}
 		return nil
