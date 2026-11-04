@@ -16,6 +16,18 @@ import (
 var ErrInvalidKeywordRule = errors.New("invalid keyword rule")
 
 type KeywordMediaAlbumItem struct { AssetID string `json:"asset_id"`; MediaType string `json:"media_type"`; Caption string `json:"caption,omitempty"` }
+type KeywordActionStep struct {
+ ActionType string `json:"action_type"`
+ Text string `json:"text,omitempty"`
+ ReplyTextByChatType map[string]string `json:"reply_text_by_chat_type,omitempty"`
+ ContactPhone string `json:"contact_phone,omitempty"`
+ ContactFirstName string `json:"contact_first_name,omitempty"`
+ ContactLastName string `json:"contact_last_name,omitempty"`
+ MediaAssetID string `json:"media_asset_id,omitempty"`
+ MediaType string `json:"media_type,omitempty"`
+ MediaCaption string `json:"media_caption,omitempty"`
+ MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
+}
 
 type KeywordRule struct {
     KeywordGroups [][]string `json:"keyword_groups"`
@@ -43,6 +55,7 @@ type KeywordRule struct {
     MediaType string `json:"media_type,omitempty"`
     MediaCaption string `json:"media_caption,omitempty"`
     MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
+    ActionSteps []KeywordActionStep `json:"action_steps,omitempty"`
     ReplyTextByChatType map[string]string `json:"reply_text_by_chat_type"`
     CaseSensitive bool `json:"case_sensitive"`
     Enabled bool `json:"enabled"`
