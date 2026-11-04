@@ -143,7 +143,7 @@ export function MessagesPage({token}:{token:string}){
      <div className="message-pagination"><button className="secondary" disabled={offset===0||busy} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</button><span>第 {Math.floor(offset/50)+1} / {Math.max(1,Math.ceil(messageTotal/50))} 页</span><button className="secondary" disabled={offset+50>=messageTotal||busy} onClick={()=>setOffset(offset+50)}>下一页</button></div>
     </>}
    </section>
-  </div>
+  </div>}
   {mediaPreview&&<div className="modal-backdrop media-preview-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setMediaPreview(null)}}><section className="media-preview-modal"><div className="modal-heading"><div><h2>消息图片预览</h2><p>通过当前租户授权账号从 Telegram 安全读取；不公开 Telegram 文件地址。</p></div><button type="button" className="ghost" onClick={()=>setMediaPreview(null)}>关闭</button></div><img src={mediaPreview.url} alt="Telegram 消息媒体预览"/></section></div>}
   {settingsOpen&&settings&&<div className="modal-backdrop"><form className="account-modal message-settings" onSubmit={saveSettings}><div className="modal-heading"><div><h2>消息采集设置</h2><p>设置只影响后续实时消息，不回溯历史消息。</p></div><button type="button" className="ghost" onClick={()=>setSettingsOpen(false)}>关闭</button></div>
    <label className="setting-toggle"><input type="checkbox" checked={settings.enabled} onChange={e=>updateSettings("enabled",e.target.checked)}/>启用消息采集</label>
