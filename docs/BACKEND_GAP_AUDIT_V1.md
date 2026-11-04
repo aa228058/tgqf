@@ -34,7 +34,7 @@
 |---|---|---|---|
 | 多租户/认证 | tenants、users、activation_cards、auth_sessions、RLS；auth handlers | 已有基础实现，待完整验收 | 多设备会话、密码变更撤销策略、到期停任务/恢复暂停语义需集成测试 |
 | 超管/卡密 | admin handlers、activation_cards | 部分实现 | 租户生命周期完整操作、审计、续期暂停任务闭环需核验 |
-| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 单账号及批量登录 API 已实现；OTP/2FA challenge 暂存于 Manager 进程内，进程重启后需重新发起登录；Session 文件导入支持 JSON/CSV/TXT 及 Telethon/Pyrogram SQLite .session，仍需真实账号验收 |
+| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 单账号及批量登录 API 已实现；OTP/2FA challenge 暂存于 Manager 进程内，10 分钟到期定时清理并断开未完成的临时客户端（QR token 可刷新但整个挑战最多 10 分钟），进程重启后需重新发起登录；Session 文件导入支持 JSON/CSV/TXT 及 Telethon/Pyrogram SQLite .session，仍需真实账号验收 |
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
