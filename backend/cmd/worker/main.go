@@ -406,6 +406,10 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 		if err!=nil {logger.Error("list pending Telegram join approvals","tenant_id",tenantID,"error",err);continue}
 		for _,job:=range jobs {
 			if ctx.Err()!=nil{return}
+			if job.CheckError!="" {
+				logger.Warn("skip Telegram approval check because invite could not be decrypted","task_id",job.TaskID,"account_id",job.AccountID,"error",job.CheckError)
+				continue
+			}
 			if !manager.IsConnected(job.AccountID) {continue}
 			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
 			var memberStatus string
