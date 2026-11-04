@@ -899,3 +899,38 @@ td,th{padding:13px 11px}
   .keyword-table tbody tr{grid-template-columns:minmax(0,1fr)}
   .keyword-table td[data-label="规则"],.keyword-table td[data-label="命中词"]{grid-column:1}
 }
+
+
+/* Workbench interaction and perceived-performance polish */
+button{transition:background-color .16s ease,color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+button:not(:disabled):active{transform:translateY(1px)}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.workbench-refresh{min-height:40px}
+.workbench-update{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.workbench-update i{width:7px;height:7px;border-radius:50%;background:#27ae60;box-shadow:0 0 0 3px color-mix(in srgb,#27ae60 14%,transparent)}
+.workbench-update i.is-refreshing{background:var(--accent);animation:workbench-pulse 1s ease-in-out infinite}
+.workbench-refresh-button{min-width:112px;min-height:40px}
+.button-spinner{display:inline-block;width:12px;height:12px;margin-right:7px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:workbench-spin .7s linear infinite}
+.workbench-alert{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.workbench-stat,.workbench-columns .panel,.workbench-runtime{transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.workbench-stat:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));box-shadow:0 7px 22px rgba(25,45,75,.055);transform:translateY(-1px)}
+.workbench-row{transition:background-color .16s ease;padding-left:7px;padding-right:7px;border-radius:9px}
+.workbench-row:hover{background:var(--shell-hover)}
+.workbench-row .status{flex:0 0 auto}
+.workbench-row-main small{max-width:100%}
+.workbench-refresh-button:disabled{cursor:wait}
+@keyframes workbench-spin{to{transform:rotate(360deg)}}
+@keyframes workbench-pulse{50%{opacity:.35;box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 10%,transparent)}}
+:root[data-theme="dark"] .workbench-stat:hover{box-shadow:0 8px 24px rgba(0,0,0,.18)}
+@media(max-width:600px){
+ .workbench-refresh{align-items:stretch;gap:9px}
+ .workbench-refresh-button{min-width:104px}
+ .workbench-update{font-size:10px}
+ .workbench-row{padding-top:13px;padding-bottom:13px}
+ .workbench-row .status{font-size:10px;padding:4px 7px}
+ .workbench-alert{align-items:flex-start}
+}
+@media(prefers-reduced-motion:reduce){
+ button,.workbench-stat,.workbench-row{transition:none}
+ .button-spinner,.workbench-update i.is-refreshing{animation:none}
+}
