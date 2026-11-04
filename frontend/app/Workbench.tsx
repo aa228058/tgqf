@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppUser } from "./AppShell";
 
-const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\\/$/,"");
+const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Account={id:string;phone:string;display_name:string;status:string;last_error:string;created_at:string;updated_at:string};
 type AccountPage={accounts:Account[];total:number};
 type MessagePage={messages:unknown[];total:number};
