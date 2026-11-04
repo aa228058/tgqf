@@ -647,13 +647,7 @@ func (s *Service) FinishKeywordVoiceCall(ctx context.Context, job KeywordActionJ
         return errors.New("invalid Telegram voice call result")
     }
     return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
-        var active bool
-        if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`, job.TenantID).Scan(&active); err != nil {
-            return err
-        }
-        if !active {
-            return errors.New("tenant inactive before voice call result persistence")
-        }
+        // Persist a successful external call request even if the tenant expires during the RPC.
         updated, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
             SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,
                 voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW()
