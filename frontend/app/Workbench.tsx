@@ -17,7 +17,7 @@ type Workers={workers:Worker[];total:number;stale:number;stale_after_seconds:num
 
 async function get<T>(path:string,token:string):Promise<T>{
  const response=await fetch(`${API_BASE}${path}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});
- if(!response.ok){let message=`请求失败（${response.status}）`;try{const body=await response.json();message=body.error||message}catch{}throw new Error(message)}
+ if(!response.ok){let message=`请求失败（${response.status}）`;message = await apiErrorMessage(response, message);throw new Error(message)}
  return readAPIJSON<T>(response);
 }
 function time(value?:string){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?"—":date.toLocaleString()}
