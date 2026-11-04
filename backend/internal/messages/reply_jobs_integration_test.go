@@ -113,6 +113,11 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 		if err:=db.QueryRowContext(ctx,`SELECT status FROM message_reply_jobs WHERE id=$1`,id).Scan(&status);err!=nil{t.Fatal(err)}
 		if status!=want{t.Fatalf("reply job %s status=%q, want %q",id,status,want)}
 	}
+	var outgoingCount,outboxCount int
+	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM unified_messages WHERE telegram_account_id=$1 AND chat_id=101 AND message_id=501 AND is_outgoing=TRUE`,accountA).Scan(&outgoingCount);err!=nil{t.Fatal(err)}
+	if outgoingCount!=1{t.Fatalf("persisted outgoing reply rows=%d, want 1",outgoingCount)}
+	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`,activeTenant).Scan(&outboxCount);err!=nil{t.Fatal(err)}
+	if outboxCount!=1{t.Fatalf("reply realtime outbox rows=%d, want 1",outboxCount)}
 	var cooldown time.Time
 	if err:=db.QueryRowContext(ctx,`SELECT telegram_send_cooldown_until FROM telegram_accounts WHERE tenant_id=$1 AND id=$2`,activeTenant,accountB).Scan(&cooldown);err!=nil{t.Fatal(err)}
 	if !cooldown.After(time.Now()){t.Fatalf("FloodWait cooldown was not preserved after tenant expiry: %s",cooldown)}
