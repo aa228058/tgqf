@@ -84,6 +84,8 @@ Firewall: allow SSH, TCP 80 and TCP 443 only. Do not open 3000, 5432, 6379 or 80
 
 ## Upgrade and rollback
 
+The production installer automatically creates a consistent PostgreSQL + Redis backup before replacing an existing stack. The backup is written under `backups/` with owner-only directory/file permissions. Copy it off-host and encrypt it; it contains tenant data and queued Telegram updates. To skip this safety step only after independently verifying a recent external backup, set `TGQF_SKIP_PREDEPLOY_BACKUP=1` for that installer invocation.
+
 Use a new immutable `TGQF_IMAGE_TAG` for every release:
 
 ```bash
@@ -97,7 +99,7 @@ To roll back, restore the previous image tag in `.env` and run `docker compose u
 
 ## Backups
 
-Run `deploy/backup.sh` from any directory. It creates a compressed PostgreSQL dump and a Redis RDB snapshot under `BACKUP_DIR` (default `./backups`). Copy backups off-host and encrypt them. The Redis snapshot is important because the incoming Telegram update stream can contain durable, not-yet-ingested events.
+Run `deploy/backup.sh` from any directory. It creates a compressed PostgreSQL dump and a Redis data snapshot under `BACKUP_DIR` (default `./backups`). Backup directories are mode 0700 and backup files are mode 0600; keep them private. Copy backups off-host and encrypt them. The Redis snapshot is important because the incoming Telegram update stream can contain durable, not-yet-ingested events.
 
 Restore instructions are in `deploy/restore.sh`; restore only into a stopped, isolated stack after verifying the backup.
 
