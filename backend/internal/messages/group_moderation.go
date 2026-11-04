@@ -190,3 +190,40 @@ func (s *Service) MergePublicGroups(ctx context.Context,actorID string,sourceID,
         VALUES($1,'admin.public_group.merge','public_group',$2,$3::jsonb)`,actorID,fmt.Sprint(targetID),string(auditDetails));err!=nil{return err}
     return tx.Commit()
 }
+
+
+// UpdatePublicGroup lets only a super administrator edit the canonical shared row.
+func (s *Service) UpdatePublicGroup(ctx context.Context, actorID string, groupID int64, fields GroupCorrectionFields) error {
+	if groupID <= 0 { return ErrInvalidGroupCorrection }
+	_, raw, err := normalizeGroupCorrectionFields(fields)
+	if err != nil { return err }
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return err }; defer tx.Rollback()
+	var snapshot []byte
+	if err = tx.QueryRowContext(ctx, `SELECT to_jsonb(g) FROM public_groups g WHERE id=$1 FOR UPDATE`, groupID).Scan(&snapshot); err != nil {
+		if errors.Is(err, sql.ErrNoRows) { return ErrGroupCorrectionNotFound }; return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE public_groups SET
+		title=CASE WHEN $1::jsonb ? 'title' THEN $1::jsonb->>'title' ELSE title END,
+		username=CASE WHEN $1::jsonb ? 'username' THEN $1::jsonb->>'username' ELSE username END,
+		member_count=CASE WHEN $1::jsonb ? 'member_count' THEN ($1::jsonb->>'member_count')::integer ELSE member_count END,
+		is_verified=CASE WHEN $1::jsonb ? 'is_verified' THEN ($1::jsonb->>'is_verified')::boolean ELSE is_verified END,
+		updated_at=NOW() WHERE id=$2`, string(raw), groupID); err != nil { return err }
+	details, _ := json.Marshal(map[string]any{"group_id":groupID,"before":json.RawMessage(snapshot),"changes":json.RawMessage(raw)})
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(actor_user_id,action,resource_type,resource_id,details) VALUES($1,'admin.public_group.update','public_group',$2,$3::jsonb)`, actorID, fmt.Sprint(groupID), string(details)); err != nil { return err }
+	return tx.Commit()
+}
+
+// DeletePublicGroup removes a canonical group and records its full pre-delete snapshot.
+func (s *Service) DeletePublicGroup(ctx context.Context, actorID string, groupID int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if groupID <= 0 || len(reason) < 5 || len(reason) > 500 { return ErrGroupMergeConflict }
+	tx, err := s.db.BeginTx(ctx, nil); if err != nil { return err }; defer tx.Rollback()
+	var snapshot []byte
+	if err = tx.QueryRowContext(ctx, `SELECT to_jsonb(g) FROM public_groups g WHERE id=$1 FOR UPDATE`, groupID).Scan(&snapshot); err != nil {
+		if errors.Is(err, sql.ErrNoRows) { return ErrGroupCorrectionNotFound }; return err
+	}
+	details, _ := json.Marshal(map[string]any{"group_id":groupID,"reason":reason,"snapshot":json.RawMessage(snapshot)})
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(actor_user_id,action,resource_type,resource_id,details) VALUES($1,'admin.public_group.delete','public_group',$2,$3::jsonb)`, actorID, fmt.Sprint(groupID), string(details)); err != nil { return err }
+	if _, err = tx.ExecContext(ctx, `DELETE FROM public_groups WHERE id=$1`, groupID); err != nil { return err }
+	return tx.Commit()
+}
