@@ -12,6 +12,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose.yaml")
 "${COMPOSE[@]}" config --quiet
 BACKUP_ROOT="${BACKUP_DIR:-$ROOT/backups}"
 mkdir -p "$BACKUP_ROOT"
+BACKUP_ROOT="$(cd "$BACKUP_ROOT" && pwd -P)"
 chmod 0700 "$BACKUP_ROOT"
 MIN_BACKUP_FREE_KB="${MIN_BACKUP_FREE_KB:-0}"
 [[ "$MIN_BACKUP_FREE_KB" =~ ^[0-9]+$ ]] || { echo "MIN_BACKUP_FREE_KB must be a non-negative integer" >&2; exit 1; }
