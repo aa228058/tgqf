@@ -125,7 +125,7 @@ type Message struct {
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 }
 
-type ListOptions struct { Limit int; Offset int; IncludeProcessed bool }
+type ListOptions struct { Limit int; Offset int; IncludeProcessed bool; AccountID string; ChatID int64; ChatType string; MediaType string; Query string }
 
 type CollectionSettings struct {
 	Enabled bool `json:"enabled"`
@@ -313,12 +313,29 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 
 func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]Message,int,error){
 	if opts.Limit<1||opts.Limit>100{opts.Limit=50};if opts.Offset<0{opts.Offset=0}
+	opts.AccountID=strings.TrimSpace(opts.AccountID)
+	opts.ChatType=strings.ToLower(strings.TrimSpace(opts.ChatType))
+	opts.MediaType=strings.ToLower(strings.TrimSpace(opts.MediaType))
+	opts.Query=strings.TrimSpace(opts.Query)
+	if opts.AccountID!=""&&!validUUID(opts.AccountID){return nil,0,errors.New("invalid account filter")}
+	if opts.ChatID==0&&strings.TrimSpace(fmt.Sprint(opts.ChatID))!="" { /* zero means no chat filter */ }
+	if opts.ChatType!=""&&opts.ChatType!="private"&&opts.ChatType!="group"&&opts.ChatType!="channel"{return nil,0,errors.New("invalid chat type filter")}
+	if len(opts.MediaType)>32||len(opts.Query)>120{return nil,0,errors.New("invalid message filter")}
 	out:=[]Message{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		filter:="tenant_id=$1";if !opts.IncludeProcessed{filter+=" AND processed_at IS NULL"}
-		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM unified_messages WHERE "+filter,tenantID).Scan(&total);err!=nil{return err}
-		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+strings.ReplaceAll(filter,"tenant_id","m.tenant_id")+" ORDER BY m.message_date DESC,m.id DESC LIMIT $2 OFFSET $3"
-		rows,err:=tx.QueryContext(ctx,query,tenantID,opts.Limit,opts.Offset);if err!=nil{return err};defer rows.Close()
+		filter:="m.tenant_id=$1"
+		args:=[]any{tenantID}
+		if !opts.IncludeProcessed{filter+=" AND m.processed_at IS NULL"}
+		if opts.AccountID!=""{args=append(args,opts.AccountID);filter+=fmt.Sprintf(" AND m.telegram_account_id=$%d",len(args))}
+		if opts.ChatID!=0{args=append(args,opts.ChatID);filter+=fmt.Sprintf(" AND m.chat_id=$%d",len(args))}
+		if opts.ChatType!=""{args=append(args,opts.ChatType);filter+=fmt.Sprintf(" AND m.chat_type=$%d",len(args))}
+		if opts.MediaType!=""{args=append(args,opts.MediaType);filter+=fmt.Sprintf(" AND m.media_type=$%d",len(args))}
+		if opts.Query!=""{args=append(args,"%"+opts.Query+"%");filter+=fmt.Sprintf(" AND (m.message_text ILIKE $%d OR m.chat_title ILIKE $%d)",len(args),len(args))}
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM unified_messages m WHERE "+filter,args...).Scan(&total);err!=nil{return err}
+		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+filter+" ORDER BY m.message_date DESC,m.id DESC"
+		listArgs:=append(append([]any{},args...),opts.Limit,opts.Offset)
+		query+=fmt.Sprintf(" LIMIT $%d OFFSET $%d",len(listArgs)-1,len(listArgs))
+		rows,err:=tx.QueryContext(ctx,query,listArgs...);if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var m Message;if err:=rows.Scan(&m.ID,&m.AccountID,&m.AccountName,&m.ChatID,&m.MessageID,&m.ChatType,&m.ChatTitle,&m.SenderID,&m.ReplyToMessageID,&m.Text,&m.MediaType,&m.MessageDate,&m.ProcessedAt);err!=nil{return err};out=append(out,m)}
 		return rows.Err()
 	})
