@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"database/sql"
 	"fmt"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -84,12 +85,21 @@ func main() {
 		if textBody == "" { textBody = message.Caption }
 		mediaType := ""
 		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
+		var defaultPermissionsJSON,accountRightsJSON []byte
+		if message.Chat.Permissions!=nil { defaultPermissionsJSON,_=json.Marshal(message.Chat.Permissions) }
+		if message.Chat.AdminRights!=nil || message.Chat.BannedRights!=nil || message.Chat.ChannelAdminRights!=nil || message.Chat.ChatAdminRights!=nil {
+			accountRightsJSON,_=json.Marshal(map[string]any{
+				"is_admin":message.Chat.IsAdmin,"is_creator":message.Chat.IsCreator,
+				"admin_rights":message.Chat.AdminRights,"banned_rights":message.Chat.BannedRights,
+				"channel_admin_rights":message.Chat.ChannelAdminRights,"chat_admin_rights":message.Chat.ChatAdminRights,
+			})
+		}
 		ingestCtx, cancelIngest := context.WithTimeout(ctx, 5*time.Second)
 		defer cancelIngest()
 		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, SenderID: message.FromID, SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(), SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, DefaultPermissionsJSON:defaultPermissionsJSON, AccountRightsJSON:accountRightsJSON, SenderID: message.FromID, SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(), SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
 		})
