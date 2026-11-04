@@ -12,7 +12,7 @@ async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>
  if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";
  Object.assign(headers,init?.headers||{});
  const response=await fetch(API+path,{...init,headers,cache:"no-store"});
- if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message)throw new Error(message)}
+ if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message);throw new Error(message)}
  return readAPIJSON<T>(response);
 }
 const date=(value:string)=>new Date(value).toLocaleString();
