@@ -48,7 +48,7 @@ set_env(){
     escaped=${escaped//|/\\|}
     sed -i -E "s|^#?${key}=.*$|${key}=${escaped}|" "$ENV_FILE"
   else
-    printf '%s=%s\\n' "$key" "$value" >> "$ENV_FILE"
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
   fi
 }
 
