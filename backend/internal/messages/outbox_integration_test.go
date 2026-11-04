@@ -7,7 +7,7 @@ import (
 )
 
 func TestPrunePublishedMessageEventsKeepsPendingAndRecentRows(t *testing.T) {
-	db, cleanup := openGroupIntegrationDB(t)
+	db, cleanup := openMigratedIntegrationDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	tenantID := "99999999-9999-4999-8999-999999999999"
