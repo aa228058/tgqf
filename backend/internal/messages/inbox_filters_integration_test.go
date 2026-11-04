@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -42,7 +43,9 @@ func TestMessageListSupportsTenantScopedInboxFilters(t *testing.T) {
 	items,total,err=service.List(ctx,tenantID,ListOptions{Limit:10,AccountID:accountA,ChatID:101,ChatType:"private",MediaType:"photo"})
 	if err!=nil{t.Fatal(err)}
 	if total!=1||len(items)!=1||items[0].MediaType!="photo"{t.Fatalf("media filter result total=%d items=%#v",total,items)}
-	if string(items[0].MediaMetadata)!=`{"width":1280,"height":720,"file_size":4096}`{t.Fatalf("media metadata=%s, want persisted dimensions and file size",items[0].MediaMetadata)}
+	var metadata map[string]int64
+	if err:=json.Unmarshal(items[0].MediaMetadata,&metadata);err!=nil{t.Fatalf("decode media metadata %s: %v",items[0].MediaMetadata,err)}
+	if metadata["width"]!=1280||metadata["height"]!=720||metadata["file_size"]!=4096{t.Fatalf("media metadata=%v, want width=1280 height=720 file_size=4096",metadata)}
 	if _,err:=db.ExecContext(ctx,`UPDATE unified_messages SET grouped_id=987654321 WHERE id=$1`,"10000000-0000-4000-8000-000000000002");err!=nil{t.Fatal(err)}
 	if _,err:=db.ExecContext(ctx,`INSERT INTO unified_messages(id,tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,message_text,media_type,media_metadata,grouped_id,message_date)
 		VALUES($1,$2,$3,101,99,'private','Chat','','video','{}'::jsonb,987654321,NOW())`,
