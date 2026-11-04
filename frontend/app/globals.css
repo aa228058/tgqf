@@ -267,3 +267,29 @@
 .group-permissions small{font-size:10px;color:var(--muted)}
 .group-source{flex-direction:column;align-items:flex-start}
 .group-source pre{width:100%}
+
+
+.runtime-page{max-width:1480px;margin:0 auto;padding:27px 32px 45px}
+.runtime-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:20px}
+.runtime-heading h1{font-size:27px;margin:7px 0 4px;letter-spacing:-.03em}
+.runtime-heading p{margin:0;color:var(--muted);font-size:12px}
+.runtime-refresh{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:11px}
+.runtime-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:15px}
+.runtime-stats article{padding:17px;border:1px solid var(--line);border-radius:11px;background:var(--surface)}
+.runtime-stats small,.runtime-stats strong{display:block}
+.runtime-stats small{font-size:11px;color:var(--muted)}
+.runtime-stats strong{font-size:26px;margin-top:8px}
+.runtime-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.runtime-list{display:grid}
+.runtime-list article{padding:12px 0;border-bottom:1px solid var(--line)}
+.runtime-list article:last-child{border-bottom:0}
+.runtime-list article>div{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.runtime-list article strong{font-size:12px;overflow-wrap:anywhere}
+.runtime-list article small{display:block;margin-top:6px;color:var(--muted);font-size:10px;overflow-wrap:anywhere}
+.runtime-error{color:#b33b37!important}
+.runtime-proxy-select{width:100%;padding:9px 11px;margin-bottom:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.runtime-note{margin-top:14px}
+.runtime-note h2{font-size:13px;margin:0 0 7px}
+.runtime-note p{margin:0;color:var(--muted);font-size:11px;line-height:1.7}
+@media(max-width:900px){.runtime-page{padding:20px 14px 30px}.runtime-heading{align-items:flex-start;flex-direction:column}.runtime-refresh{width:100%;justify-content:space-between}.runtime-columns{grid-template-columns:1fr}}
+@media(max-width:520px){.runtime-stats{gap:8px}.runtime-stats article{padding:12px}.runtime-stats strong{font-size:22px}}
