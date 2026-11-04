@@ -374,6 +374,26 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
 }
 
 
+type KeywordActionStepResult struct {
+ StepIndex int `json:"step_index"`
+ ActionType string `json:"action_type"`
+ Status string `json:"status"`
+ TelegramMessageIDs []int64 `json:"telegram_message_ids,omitempty"`
+ TelegramCallID int64 `json:"telegram_call_id,omitempty"`
+ Error string `json:"error,omitempty"`
+ CompletedAt time.Time `json:"completed_at"`
+}
+
+func appendKeywordActionStepResult(existing []KeywordActionStepResult, job KeywordActionJob, messageIDs []int64, callID int64) ([]KeywordActionStepResult, []byte, error) {
+ if len(job.ActionSteps)==0 { return existing, nil, nil }
+ if job.CurrentStepIndex<0 || job.CurrentStepIndex>=len(job.ActionSteps) { return nil,nil,errors.New("invalid keyword action step cursor") }
+ step:=job.ActionSteps[job.CurrentStepIndex]
+ result:=KeywordActionStepResult{StepIndex:job.CurrentStepIndex,ActionType:step.ActionType,Status:"sent",TelegramMessageIDs:messageIDs,TelegramCallID:callID,CompletedAt:time.Now().UTC()}
+ if len(existing)>0 && existing[len(existing)-1].StepIndex>=job.CurrentStepIndex { return nil,nil,errors.New("keyword action step already recorded") }
+ existing=append(existing,result)
+ encoded,err:=json.Marshal(existing); return existing,encoded,err
+}
+
 type KeywordActionJob struct {
     ID string
     TenantID string
@@ -391,6 +411,8 @@ type KeywordActionJob struct {
     MediaAlbumItems []KeywordMediaAlbumItem
     ActionSteps []KeywordActionStep
     CurrentStepIndex int
+    StepResults []KeywordActionStepResult
+    StepResultsJSON []byte
     TargetUserID int64
     Attempts int
     LeaseUntil time.Time
@@ -460,14 +482,14 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
             ), claimed AS (
                 UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '3 minutes',updated_at=NOW()
                 FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
-                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.action_steps,j.current_step_index,COALESCE(j.target_user_id,0),j.attempts,j.lease_until
+                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.action_steps,j.current_step_index,j.step_results,COALESCE(j.target_user_id,0),j.attempts,j.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
             ) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
             if err!=nil{return err}
             beforeClaimed:=len(jobs)
-            for picked.Next(){var job KeywordActionJob;var albumItems,actionSteps []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&actionSteps,&job.CurrentStepIndex,&job.TargetUserID,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};if len(actionSteps)>0 {if err:=json.Unmarshal(actionSteps,&job.ActionSteps);err!=nil{picked.Close();return err}};jobs=append(jobs,job)}
+            for picked.Next(){var job KeywordActionJob;var albumItems,actionSteps []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&actionSteps,&job.CurrentStepIndex,&job.StepResultsJSON,&job.TargetUserID,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};if len(actionSteps)>0 {if err:=json.Unmarshal(actionSteps,&job.ActionSteps);err!=nil{picked.Close();return err}};if len(job.StepResultsJSON)>0 {if err:=json.Unmarshal(job.StepResultsJSON,&job.StepResults);err!=nil{picked.Close();return err}};jobs=append(jobs,job)}
             rowsErr:=picked.Err()
             closeErr:=picked.Close()
             if rowsErr!=nil{return rowsErr};if closeErr!=nil{return closeErr}
@@ -502,7 +524,16 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             }
             if messageIDs[0]!=telegramMessageID { return errors.New("primary Telegram message id does not match result list") }
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
-            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
+            stepResults,encodedStepResults,stepErr:=appendKeywordActionStepResult(job.StepResults,job,messageIDs,0);if stepErr!=nil{return stepErr}
+nextStatus:="sent";nextIndex:=job.CurrentStepIndex
+if len(job.ActionSteps)>0 && job.CurrentStepIndex<len(job.ActionSteps)-1 {nextStatus="pending";nextIndex++}
+var result sql.Result
+if len(job.ActionSteps)>0 {
+ result,err=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$6,current_step_index=$7,step_results=$8::jsonb,telegram_message_id=CASE WHEN $6='sent' THEN $3 ELSE telegram_message_id END,telegram_message_ids=CASE WHEN $6='sent' THEN $4::jsonb ELSE telegram_message_ids END,lease_until=NULL,last_error='',available_at=NOW(),updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil,nextStatus,nextIndex,string(encodedStepResults))
+} else {
+ result,err=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
+}
+if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
             if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
             // Keep the conversation timeline consistent with Telegram: write
             // every sent message (including each album item) and its realtime
@@ -692,11 +723,18 @@ func (s *Service) FinishKeywordVoiceCall(ctx context.Context, job KeywordActionJ
     }
     return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
         // Persist a successful external call request even if the tenant expires during the RPC.
-        updated, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
-            SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,
-                voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW()
-            WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3 AND action_type='voice_call'`,
-            job.TenantID, job.ID, job.LeaseUntil, result.CallID, result.AccessHash)
+        var updated sql.Result
+var err error
+var stepResultsJSON []byte
+nextStatus:="sent";nextIndex:=job.CurrentStepIndex
+if len(job.ActionSteps)>0 {
+ _,stepResultsJSON,err=appendKeywordActionStepResult(job.StepResults,job,nil,result.CallID);if err!=nil{return err}
+ if job.CurrentStepIndex<len(job.ActionSteps)-1 {nextStatus="pending";nextIndex++}
+ updated,err=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$4,current_step_index=$5,step_results=$6::jsonb,telegram_call_id=$7,telegram_call_access_hash=$8,voice_call_state='ringing',lease_until=NULL,last_error='',available_at=NOW(),updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3`,job.TenantID,job.ID,job.LeaseUntil,nextStatus,nextIndex,string(stepResultsJSON),result.CallID,result.AccessHash)
+} else {
+ updated,err=tx.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3 AND action_type='voice_call'`,job.TenantID,job.ID,job.LeaseUntil,result.CallID,result.AccessHash)
+}
+if err!=nil{return err}
         if err != nil {
             return err
         }
