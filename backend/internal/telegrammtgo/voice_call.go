@@ -84,14 +84,12 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 	// Generate a fresh ephemeral exponent and the corresponding g_a value.
 	// The exponent is intentionally not persisted or logged. This endpoint is
 	// the dial/ring action only; it does not negotiate or expose media keys.
-	aBytes := make([]byte, 256)
-	if _, err := rand.Read(aBytes); err != nil {
+	aLimit := new(big.Int).Sub(p, big.NewInt(2))
+	a, err := rand.Int(rand.Reader, aLimit)
+	if err != nil {
 		return VoiceCallRequestResult{}, fmt.Errorf("generate call DH exponent: %w", err)
 	}
-	a := new(big.Int).SetBytes(aBytes)
-	if a.Sign() == 0 {
-		a.SetInt64(1)
-	}
+	a.Add(a, big.NewInt(1))
 	g := big.NewInt(int64(params.G))
 	gAValue := new(big.Int).Exp(g, a, p)
 	if gAValue.Cmp(big.NewInt(1)) <= 0 || gAValue.Cmp(new(big.Int).Sub(p, big.NewInt(1))) >= 0 {
