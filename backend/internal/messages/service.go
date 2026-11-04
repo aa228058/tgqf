@@ -454,25 +454,25 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 	chatType,query,err:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);if err!=nil{return nil,0,err}
 	if err:=validateGroupLibraryFilter(filter);err!=nil{return nil,0,err}
 	sortExpr:="g.last_seen_at DESC,g.title ASC,g.id ASC"
-	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC"}
+	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC"}
 	items:=[]GroupLibraryItem{};total:=0
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		clauses:=[]string{"1=1"};args:=[]any{}
+		clauses:=[]string{"scope.tenant_id=$1"};args:=[]any{tenantID}
 		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
 		if chatType!=""{add(chatType,"g.chat_type=$%d")}
 		if query!=""{args=append(args,query);n:=len(args);clauses=append(clauses,fmt.Sprintf("(strpos(lower(g.title),lower($%d))>0 OR strpos(lower(g.username),lower($%d))>0)",n,n));}
 		if filter.Verified!=nil{add(*filter.Verified,"g.is_verified=$%d")}
 		if filter.MinMembers>0{add(filter.MinMembers,"g.member_count >= $%d")}
 		if filter.MaxMembers>0{add(filter.MaxMembers,"g.member_count <= $%d")}
-		if filter.MinSources>0{add(filter.MinSources,"(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) >= $%d")}
-		if filter.MinContributors>0{add(filter.MinContributors,"(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) >= $%d")}
+		if filter.MinSources>0{add(filter.MinSources,"(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id) >= $%d")}
+		if filter.MinContributors>0{add(filter.MinContributors,"(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id) >= $%d")}
 		where:=strings.Join(clauses," AND ")
-		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+where,args...).Scan(&total);err!=nil{return err}
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE "+where,args...).Scan(&total);err!=nil{return err}
 		args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
 		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,g.default_permissions,g.permissions_observed_at,
-			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id),
-			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
-			FROM public_groups g WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
+			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id),g.last_seen_at
+			FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
 		rows,err:=tx.QueryContext(ctx,querySQL,args...);if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
@@ -502,8 +502,8 @@ func (s *Service) GetGroupLibraryItem(ctx context.Context, tenantID string, grou
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
 			g.default_permissions,g.permissions_observed_at,
-			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id),
-			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
+			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id AND src.tenant_id=$2),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=$2),g.last_seen_at
 			FROM public_groups g WHERE g.id=$1`, groupID).Scan(
 			&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,
 			&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt)
