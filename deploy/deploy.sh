@@ -141,7 +141,7 @@ if [[ "$FIRST_INSTALL" == "1" ]]; then
   log "Removing one-time super-admin bootstrap credentials from .env"
   set_env SUPER_ADMIN_USERNAME ""
   set_env SUPER_ADMIN_PASSWORD ""
-  "${COMPOSE[@]}" up -d api worker
+  "${COMPOSE[@]}" up -d --force-recreate api worker
 fi
 
 log "Running HTTPS smoke checks"
