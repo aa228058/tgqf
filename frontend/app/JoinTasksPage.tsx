@@ -77,6 +77,13 @@ export function JoinTasksPage({ token }: { token: string }) {
   },[token,offset]);
 
   useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),10000);return()=>window.clearInterval(timer)},[load]);
+  useEffect(()=>{
+    if(!detail)return;
+    let active=true;
+    const refreshDetail=async()=>{try{const result=await api<{task:Task}>(`/api/v1/join-tasks/${detail.id}`,token);if(active)setDetail(result.task)}catch(e){if(active)setError(e instanceof Error?e.message:"任务详情刷新失败")}};
+    const timer=window.setInterval(()=>void refreshDetail(),10000);
+    return()=>{active=false;window.clearInterval(timer)};
+  },[detail?.id,token]);
 
   function openCreate() {
     setName("");setTargetMode("group");setGroupID("");setLinkID("");setInvite("");
