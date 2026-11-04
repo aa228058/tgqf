@@ -58,6 +58,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
 			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID,
 			UNIQUE(link_type,public_url))`,
+		`CREATE UNIQUE INDEX public_group_links_public_username_unique ON public_group_links(lower(public_url)) WHERE link_type='public'`,
 		`CREATE TABLE public_group_corrections (
 				id BIGSERIAL PRIMARY KEY, group_id BIGINT NOT NULL, tenant_id UUID NOT NULL,
 				submitted_by_user_id UUID NOT NULL, proposed_fields JSONB NOT NULL,
