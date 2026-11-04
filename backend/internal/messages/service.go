@@ -2,7 +2,6 @@ package messages
 
 import (
 	"context"
-	"encoding/json"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
