@@ -448,7 +448,7 @@ func (h *Handler) exportGroupLibraryXLSX(w http.ResponseWriter, r *http.Request)
 	rows,err:=reader.ReadAll()
 	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to read group catalogue export"});return }
 	data,err:=buildGroupCatalogueXLSX(rows)
-	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to generate XLSX workbook"});return }
+	if err!=nil { status:=http.StatusInternalServerError; if strings.Contains(err.Error(),"XLSX worksheet row limit") { status=http.StatusRequestEntityTooLarge }; messageJSON(w,status,map[string]string{"error":err.Error()});return }
 	w.Header().Set("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition",`attachment; filename="public-groups.xlsx"`)
 	w.Header().Set("Content-Length",strconv.Itoa(len(data)))
