@@ -134,10 +134,10 @@ export function JoinTasksPage({ token }: { token: string }) {
         <button className="join-task-main" onClick={()=>void openDetail(task)}><span className="join-task-title">{task.name}</span><span className={`status status-${task.status}`}>{statusName[task.status]||task.status}</span><span className="join-task-target">{targetLabel(task)}</span><small>{task.account_count} 个账号 · 创建于 {date(task.created_at)}</small></button>
         <div className="join-task-actions">
           {task.status==="draft"&&<button disabled={busy} className="primary" onClick={()=>void action(task,"start")}>启动</button>}
-          {task.status==="queued"&&<button disabled={busy} className="secondary" onClick={()=>void action(task,"pause")}>暂停</button>}
+          {(task.status==="queued"||task.status==="processing")&&<button disabled={busy} className="secondary" onClick={()=>void action(task,"pause")}>暂停</button>}
           {task.status==="paused"&&<button disabled={busy} className="secondary" onClick={()=>void action(task,"resume")}>恢复</button>}
           {task.status==="failed"&&<button disabled={busy} className="primary" onClick={()=>void action(task,"retry")}>重试失败账号</button>}
-          {["draft","queued","paused"].includes(task.status)&&<button disabled={busy} className="danger-text" onClick={()=>void action(task,"cancel")}>取消</button>}
+          {["draft","queued","processing","paused"].includes(task.status)&&<button disabled={busy} className="danger-text" onClick={()=>void action(task,"cancel")}>取消</button>}
         </div>
       </article>)}{!tasks.length&&<div className="empty">{busy?"正在加载任务…":"暂无加群任务"}</div>}</div>
       <footer className="pagination"><span>共 {total} 条</span><div><button className="secondary" disabled={!offset||busy} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</button><span>第 {Math.floor(offset/50)+1} / {Math.max(1,Math.ceil(total/50))} 页</span><button className="secondary" disabled={offset+50>=total||busy} onClick={()=>setOffset(offset+50)}>下一页</button></div></footer>
