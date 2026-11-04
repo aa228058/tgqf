@@ -73,6 +73,7 @@ type ProfileUpdateJob struct {
 	About string `json:"about"`
 	GenerateUsername bool `json:"generate_username"`
 	PhotoData []byte `json:"-"`
+	HasPhoto bool `json:"has_photo"`
 	UsernamePrefix string `json:"-"`
 	UsernameRandomLength int `json:"-"`
 	UsernameCharset string `json:"-"`
