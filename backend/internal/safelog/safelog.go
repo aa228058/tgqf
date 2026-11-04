@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	sensitiveKey = regexp.MustCompile(`(?i)(password|passwd|secret|token|api.?hash|session|authorization|cookie|credential|private.?key|database.?url|redis.?url|dsn)`)
-	urlCredential = regexp.MustCompile(`(?i)(postgres(?:ql)?|redis)://[^:/@\s]+:[^@\s]+@`)
+	sensitiveKey    = regexp.MustCompile(`(?i)(password|passwd|secret|token|api.?hash|session|authorization|cookie|credential|private.?key|database.?url|redis.?url|dsn)`)
+	urlCredential   = regexp.MustCompile(`(?i)(postgres(?:ql)?|redis)://[^:/@\s]+:[^@\s]+@`)
 	parameterSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)=([^&\s,;]+)`)
-	bearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	bearerSecret    = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 )
 
 const redacted = "[REDACTED]"
