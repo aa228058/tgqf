@@ -73,7 +73,7 @@ services:
         max-file: "5"
 
   worker:
-    image: tgqf-backend:local
+    image: tgqf-backend:${TGQF_IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     command: ["/app/tgqf-worker"]
