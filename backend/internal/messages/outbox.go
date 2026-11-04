@@ -31,8 +31,8 @@ func (s *Service) PublishPendingMessageEvents(ctx context.Context, limit int) (i
 		FROM message_event_outbox
 		WHERE published_at IS NULL
 		ORDER BY id
-		FOR UPDATE SKIP LOCKED
-		LIMIT $1`, limit)
+		LIMIT $1
+		FOR UPDATE SKIP LOCKED`, limit)
 	if err != nil {
 		return 0, err
 	}
