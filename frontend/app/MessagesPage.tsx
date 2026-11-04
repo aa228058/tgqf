@@ -46,7 +46,7 @@ export function MessagesPage({token}:{token:string}){
  },[token]);
  const loadMessages=useCallback(async()=>{
   const sequence=++messageLoadSequence.current;
-  if(!selectedChat){setMessages([]);setMessageTotal(0);return}
+  if(!selectedChat){setMessages([]);setMessageTotal(0);setBusy(false);return}
   setBusy(true);setError("");
   try{
    const params=new URLSearchParams({limit:"50",offset:String(offset),account_id:selectedChat.account_id,chat_id:String(selectedChat.chat_id),chat_type:selectedChat.chat_type,include_processed:String(includeProcessed)});
@@ -145,7 +145,7 @@ export function MessagesPage({token}:{token:string}){
   try{await request(`/api/v1/message-replies/${jobID}/resume`,token,{method:"POST"});await refreshReply(messageID,jobID);setNotice("回复任务已恢复")}
   catch(e){setError(e instanceof Error?e.message:"恢复回复任务失败")}
  }
- async function selectChat(chat:Chat){setSelectedChat(chat);setOffset(0);setQuery("");setMediaType("");setIncludeProcessed(false)}
+ async function selectChat(chat:Chat){setSelectedChat(chat);setMessages([]);setMessageTotal(0);setOffset(0);setQuery("");setDebouncedQuery("");setMediaType("");setIncludeProcessed(false)}
  function updateSettings<K extends keyof Settings>(key:K,value:Settings[K]){setSettings(s=>s?{...s,[key]:value}:s)}
  function toggleSettingID(key:"account_ids"|"chat_ids",value:string|number,checked:boolean){
   if(!settings)return;
