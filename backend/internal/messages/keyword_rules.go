@@ -361,7 +361,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
             return err
         });err!=nil{return nil,err}
     }
-    rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY id`)
+    rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY keyword_actions_last_claimed_at NULLS FIRST,id`)
     if err!=nil{return nil,err}
     var tenants []string
     for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
@@ -395,9 +395,16 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
             ) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
-            if err!=nil{return err};defer picked.Close()
-            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.Attempts,&job.LeaseUntil);err!=nil{return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{return err};jobs=append(jobs,job)}
-            return picked.Err()
+            if err!=nil{return err}
+            beforeClaimed:=len(jobs)
+            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};jobs=append(jobs,job)}
+            rowsErr:=picked.Err()
+            closeErr:=picked.Close()
+            if rowsErr!=nil{return rowsErr};if closeErr!=nil{return closeErr}
+            if len(jobs)>beforeClaimed {
+                if _,err:=tx.ExecContext(ctx,`UPDATE tenants SET keyword_actions_last_claimed_at=clock_timestamp() WHERE id=$1`,tenantID);err!=nil{return err}
+            }
+            return nil
         });if err!=nil{return nil,err}
     }
     return jobs,nil
