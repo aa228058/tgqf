@@ -9,6 +9,9 @@ func TestSystemHealthHasWarnings(t *testing.T) {
     tests:=[]struct{name string;health SystemHealth;want bool}{
         {"healthy",SystemHealth{Database:DatabaseHealth{Status:"ok"},Host:HostHealth{DiskUsedPercent:50}},false},
         {"database error",SystemHealth{Database:DatabaseHealth{Status:"error"}},true},
+        {"redis error",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"error"}},true},
+        {"incoming queue backlog",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Queues:QueueHealth{IncomingPending:101}},true},
+        {"outbox backlog",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Queues:QueueHealth{MessageOutboxPending:1001}},true},
         {"stale worker",SystemHealth{Database:DatabaseHealth{Status:"ok"},Workers:WorkerHealth{Stale:1}},true},
         {"account error",SystemHealth{Database:DatabaseHealth{Status:"ok"},Accounts:AccountHealth{Error:1}},true},
         {"proxy failure",SystemHealth{Database:DatabaseHealth{Status:"ok"},Proxies:ProxyHealth{FailedChecks15m:1}},true},
