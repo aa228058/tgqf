@@ -139,7 +139,7 @@
 - `GET/POST /api/v1/join-tasks`、`GET /api/v1/join-tasks/{id}`（自动加群任务及账号分配状态）
 - `POST /api/v1/join-tasks/{id}/{action}`（`start`、`pause`、`resume`、`cancel`；公开目标启动后由 Worker 调用 MTProto 加入）
 - `GET/PUT /api/v1/group-links/settings`（分别启停私聊、群组、频道来源及总开关）
-- `GET /api/v1/group-links` 对外返回 `last_checked_at`、`last_check_error`；公开 username 使用 `contacts.resolveUsername` 只读解析，私密邀请使用 `messages.checkChatInvite`；两者均由 worker 定期检查，临时网络错误/FloodWait 保留为 `unknown`，不会误标失效，也不会触发加群。
+- `GET /api/v1/group-links` 对外返回 `last_checked_at`、`last_check_error`；公开 username 使用 `contacts.resolveUsername` 只读解析，私密邀请使用 `messages.checkChatInvite`；两者均由 worker 定期检查，临时网络错误/FloodWait 保留为 `unknown`，不会误标失效，也不会触发加群；链接再次被消息发现时会重置为 pending 并重新排队检查。
 
 ## 5. CI 与代码状态
 
