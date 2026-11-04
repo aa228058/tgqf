@@ -961,7 +961,12 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 		});err!=nil{return nil,err}
 	}
 	jobs:=make([]ReplyJob,0,maxJobs)
-	for len(jobs)<maxJobs {
+	// Bound scheduler probes: a concurrent Worker may hold a selected job/account
+	// lock after the tenant cursor is advanced, yielding no claim this pass.
+	// Never spin indefinitely when all eligible work is temporarily locked.
+	maxTenantProbes:=maxJobs*10
+	if maxTenantProbes<10 { maxTenantProbes=10 }
+	for probes:=0; len(jobs)<maxJobs && probes<maxTenantProbes; probes++ {
 		tenantID,err:=s.nextReplyTenant(ctx)
 		if err!=nil{return nil,err}
 		if tenantID==""{break}
