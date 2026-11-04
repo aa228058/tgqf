@@ -531,7 +531,9 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 		if checkErr!=nil {
 			errorText=checkErr.Error()
 			upper:=strings.ToUpper(errorText)
-			if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY")||strings.Contains(upper,"INVITE_REQUEST_SENT") {
+			if strings.Contains(upper,"INVITE_REQUEST_SENT") {
+				status="approval_required"
+			} else if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY") {
 				status="invalid"
 			}
 		} else {
