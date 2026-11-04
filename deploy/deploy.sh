@@ -95,6 +95,12 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 log "Validating Compose configuration"
 "${COMPOSE[@]}" config --quiet
 
+if [[ "$FIRST_INSTALL" == "0" && "${TGQF_SKIP_PREDEPLOY_BACKUP:-0}" != "1" ]]; then
+  log "Creating a consistent pre-upgrade database and Redis backup"
+  log "Backup files are private; copy them off-host and encrypt them after deployment."
+  bash "$ROOT/deploy/backup.sh"
+fi
+
 log "Building release images"
 "${COMPOSE[@]}" build
 log "Starting database, cache, API, Worker and frontend"
@@ -162,6 +168,7 @@ fi
 cat <<'EOF'
 
 IMPORTANT:
+- Upgrade backup can be skipped only with TGQF_SKIP_PREDEPLOY_BACKUP=1 after verifying an external backup.
 - Back up .env securely; it contains the session encryption key and infrastructure secrets.
 - This script does not open your cloud firewall. Allow SSH, TCP 80 and TCP 443 only.
 - Do not delete or regenerate .env on an existing installation.
