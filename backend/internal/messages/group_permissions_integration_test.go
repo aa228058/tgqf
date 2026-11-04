@@ -354,9 +354,9 @@ func TestMergePublicGroupsPreservesMetadataAndCombinesTenantSources(t *testing.T
 	actorID := "99999999-9999-4999-8999-999999999999"
 	var sourceID, targetID int64
 	if err := db.QueryRowContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,default_permissions,permissions_observed_at)
-		VALUES(100,'group','Source title','source_name',900,true,'{"send_messages":false}'::jsonb,'2026-01-02T00:00:00Z') RETURNING id`).Scan(&sourceID); err != nil { t.Fatal(err) }
+		VALUES(100,'group','Source title','source_name',900,true,'{"send_messages":false}'::jsonb,'2026-01-01T00:00:00Z') RETURNING id`).Scan(&sourceID); err != nil { t.Fatal(err) }
 	if err := db.QueryRowContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,default_permissions,permissions_observed_at)
-		VALUES(200,'group','Canonical title','',120,false,'{"send_messages":true}'::jsonb,'2026-01-01T00:00:00Z') RETURNING id`).Scan(&targetID); err != nil { t.Fatal(err) }
+		VALUES(200,'group','Canonical title','',120,false,'{"send_messages":true}'::jsonb,'2026-01-02T00:00:00Z') RETURNING id`).Scan(&targetID); err != nil { t.Fatal(err) }
 
 	// A colliding source identity merges discovery counters and time bounds.
 	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count,account_rights_snapshot,account_rights_observed_at)
