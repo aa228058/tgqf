@@ -402,7 +402,7 @@ func processJoinApprovalSync(ctx context.Context, service *messages.Service, man
 	tenantSet:=map[string]bool{}
 	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
 	for tenantID:=range tenantSet {
-		jobs,err:=service.ListPendingJoinApprovals(ctx,tenantID,50)
+		jobs,err:=service.ListPendingJoinApprovals(ctx,tenantID,4)
 		if err!=nil {logger.Error("list pending Telegram join approvals","tenant_id",tenantID,"error",err);continue}
 		for _,job:=range jobs {
 			if ctx.Err()!=nil{return}
