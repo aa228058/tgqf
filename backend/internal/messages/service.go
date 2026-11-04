@@ -422,6 +422,11 @@ func normalizeGroupLibraryFilters(chatType, query string) (string, string, error
 	return chatType, query, nil
 }
 
+func validateGroupLibraryFilter(filter GroupLibraryFilter) error {
+	if filter.MinMembers < 0 || filter.MaxMembers < 0 || filter.MinSources < 0 || filter.MinContributors < 0 || (filter.MaxMembers > 0 && filter.MinMembers > filter.MaxMembers) { return ErrInvalidGroupLibraryQuery }
+	switch filter.Sort { case "", "recent", "title", "members", "sources", "contributors": return nil; default: return ErrInvalidGroupLibraryQuery }
+}
+
 // ListGroupLibrary returns the shared system catalogue. Tenant identity is
 // retained for authorization context, but the catalogue itself is global.
 func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, query string, limit, offset int) ([]GroupLibraryItem, int, error) {
@@ -432,9 +437,9 @@ func (s *Service) ListGroupLibrary(ctx context.Context, tenantID, chatType, quer
 func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,filter GroupLibraryFilter,limit,offset int)([]GroupLibraryItem,int,error) {
 	if limit<1||limit>100 {limit=50};if offset<0 {offset=0}
 	chatType,query,err:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);if err!=nil{return nil,0,err}
-	if filter.MinMembers<0||filter.MaxMembers<0||filter.MinSources<0||filter.MinContributors<0||(filter.MaxMembers>0&&filter.MinMembers>filter.MaxMembers){return nil,0,ErrInvalidGroupLibraryQuery}
+	if err:=validateGroupLibraryFilter(filter);err!=nil{return nil,0,err}
 	sortExpr:="g.last_seen_at DESC,g.title ASC,g.id ASC"
-	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";default:return nil,0,ErrInvalidGroupLibraryQuery}
+	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC"}
 	items:=[]GroupLibraryItem{};total:=0
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		clauses:=[]string{"1=1"};args:=[]any{}
