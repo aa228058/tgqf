@@ -107,6 +107,7 @@ type Incoming struct {
 	Text string
 	MediaType string
 	MediaMetadataJSON []byte
+	GroupedID int64
 	MessageDate time.Time
 }
 
@@ -123,6 +124,7 @@ type Message struct {
 	Text string `json:"text"`
 	MediaType string `json:"media_type"`
 	MediaMetadata json.RawMessage `json:"media_metadata"`
+	GroupedID int64 `json:"grouped_id,omitempty"`
 	MessageDate time.Time `json:"message_date"`
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 }
@@ -267,8 +269,8 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
-		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,media_metadata,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,COALESCE(NULLIF($12,'')::jsonb,'{}'::jsonb),$13) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
-			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,string(in.MediaMetadataJSON),in.MessageDate)
+		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,media_metadata,grouped_id,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,COALESCE(NULLIF($12,'')::jsonb,'{}'::jsonb),NULLIF($13,0),$14) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
+			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,string(in.MediaMetadataJSON),in.GroupedID,in.MessageDate)
 		if insertErr!=nil { return insertErr }
 		inserted,_:=result.RowsAffected()
 		collected=inserted>0
@@ -351,11 +353,11 @@ func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]M
 		if opts.MediaType!=""{args=append(args,opts.MediaType);filter+=fmt.Sprintf(" AND m.media_type=$%d",len(args))}
 		if opts.Query!=""{args=append(args,"%"+opts.Query+"%");filter+=fmt.Sprintf(" AND (m.message_text ILIKE $%d OR m.chat_title ILIKE $%d)",len(args),len(args))}
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM unified_messages m WHERE "+filter,args...).Scan(&total);err!=nil{return err}
-		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.media_metadata,m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+filter+" ORDER BY m.message_date DESC,m.id DESC"
+		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.media_metadata,COALESCE(m.grouped_id,0),m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+filter+" ORDER BY m.message_date DESC,m.id DESC"
 		listArgs:=append(append([]any{},args...),opts.Limit,opts.Offset)
 		query+=fmt.Sprintf(" LIMIT $%d OFFSET $%d",len(listArgs)-1,len(listArgs))
 		rows,err:=tx.QueryContext(ctx,query,listArgs...);if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var m Message;if err:=rows.Scan(&m.ID,&m.AccountID,&m.AccountName,&m.ChatID,&m.MessageID,&m.ChatType,&m.ChatTitle,&m.SenderID,&m.ReplyToMessageID,&m.Text,&m.MediaType,&m.MediaMetadata,&m.MessageDate,&m.ProcessedAt);err!=nil{return err};out=append(out,m)}
+		for rows.Next(){var m Message;if err:=rows.Scan(&m.ID,&m.AccountID,&m.AccountName,&m.ChatID,&m.MessageID,&m.ChatType,&m.ChatTitle,&m.SenderID,&m.ReplyToMessageID,&m.Text,&m.MediaType,&m.MediaMetadata,&m.GroupedID,&m.MessageDate,&m.ProcessedAt);err!=nil{return err};out=append(out,m)}
 		return rows.Err()
 	})
 	return out,total,err
