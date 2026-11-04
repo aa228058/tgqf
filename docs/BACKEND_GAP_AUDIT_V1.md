@@ -456,7 +456,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
 - [x] 自动加群仅由明确创建并确认授权的 tenant_join_tasks 执行；支持公共 username/link 与私密邀请链接。MTGo Client.JoinChat 对私密邀请内部调用 messages.importChatInvite，该调用只在实际加群任务执行路径发生。
-- [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次重试窗口后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。
+- [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次执行尝试后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
 - [x] 审批通过通过 MTGo membership 查询同步为 joined；已知 chat ID 时可将 left/banned 状态同步为 declined。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
