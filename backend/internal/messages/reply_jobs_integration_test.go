@@ -28,7 +28,7 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),lease_until TIMESTAMPTZ,telegram_message_id BIGINT,
 			last_error TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE IF NOT EXISTS unified_messages (
-			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
 			message_id BIGINT NOT NULL,chat_type TEXT NOT NULL DEFAULT 'private',chat_title TEXT NOT NULL DEFAULT '',
 			sender_id BIGINT NOT NULL DEFAULT 0,reply_to_message_id BIGINT,reply_to_own_message BOOLEAN NOT NULL DEFAULT FALSE,
 			is_outgoing BOOLEAN NOT NULL DEFAULT FALSE,message_text TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT '',
