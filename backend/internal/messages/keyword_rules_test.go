@@ -3,6 +3,7 @@ package messages
 import (
     "strings"
     "testing"
+    "time"
 )
 
 func TestNormalizeKeywordRule(t *testing.T) {
