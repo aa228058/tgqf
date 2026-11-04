@@ -451,6 +451,18 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             }
             continue
         }
+        // Execute exactly one persisted step per claim. FinishKeywordAction advances
+        // the durable cursor before the next worker claim can send another step.
+        if len(job.ActionSteps)>0 {
+            if job.CurrentStepIndex<0 || job.CurrentStepIndex>=len(job.ActionSteps) {
+                if err:=service.PauseKeywordAction(ctx,job,"invalid action sequence cursor; manual review required");err!=nil{logger.Error("pause invalid keyword action sequence","job_id",job.ID,"error",err)}
+                continue
+            }
+            step:=job.ActionSteps[job.CurrentStepIndex]
+            job.ActionType=step.ActionType; job.Text=step.Text
+            job.ContactPhone=step.ContactPhone; job.ContactFirstName=step.ContactFirstName; job.ContactLastName=step.ContactLastName
+            job.MediaAssetID=step.MediaAssetID; job.MediaType=step.MediaType; job.MediaCaption=step.MediaCaption; job.MediaAlbumItems=step.MediaAlbumItems
+        }
         sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
         var telegramMessageID int64
         var telegramMessageIDs []int64
