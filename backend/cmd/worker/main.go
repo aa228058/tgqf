@@ -336,7 +336,7 @@ func isPermanentJoinFailure(err error) bool {
         "INVITE_HASH_EXPIRED", "INVITE_HASH_INVALID", "INVITE_HASH_EMPTY",
         "USERNAME_NOT_OCCUPIED", "USERNAME_INVALID", "CHANNEL_PRIVATE",
         "USER_BANNED_IN_CHANNEL",
-        "CHANNELS_TOO_MUCH", "USER_RESTRICTED", "CHAT_WRITE_FORBIDDEN",
+        "CHANNELS_TOO_MUCH", "CHAT_WRITE_FORBIDDEN",
         "PEER_ID_INVALID",
     }
     for _, marker := range permanent {
