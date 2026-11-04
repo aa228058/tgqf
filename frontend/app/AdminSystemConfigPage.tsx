@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import {useCallback,useEffect,useState} from "react";
 
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -9,8 +11,8 @@ const labels:Record<string,string>={registration_enabled:"开放租户注册",de
 
 async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  const response=await fetch(API+path,{...init,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(init?.headers||{})},cache:"no-store"});
- if(!response.ok){let message=`请求失败（${response.status}）`;try{message=(await response.json()).error||message}catch{}throw new Error(message)}
- return response.json() as Promise<T>;
+ if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message)throw new Error(message)}
+ return readAPIJSON<T>(response);
 }
 
 export function AdminSystemConfigPage({token}:{token:string}){
