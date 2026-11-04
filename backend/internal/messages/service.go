@@ -213,7 +213,7 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		// Keep the chat catalogue independent from message-content collection:
 		// observing a group must not require a reply to our own message or pass
 		// the tenant's text/media filters. Only metadata is stored here.
-		_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
+		_,err=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
 			ON CONFLICT(tenant_id,telegram_account_id,chat_id) DO UPDATE SET
 			chat_title=COALESCE(NULLIF(EXCLUDED.chat_title,''),tenant_message_chats.chat_title),
