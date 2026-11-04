@@ -328,6 +328,23 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
     }
 }
 
+
+func isPermanentJoinFailure(err error) bool {
+    if err == nil { return false }
+    upper := strings.ToUpper(err.Error())
+    permanent := []string{
+        "INVITE_HASH_EXPIRED", "INVITE_HASH_INVALID", "INVITE_HASH_EMPTY",
+        "USERNAME_NOT_OCCUPIED", "USERNAME_INVALID", "CHANNEL_PRIVATE",
+        "USER_BANNED_IN_CHANNEL", "USER_ALREADY_PARTICIPANT",
+        "CHANNELS_TOO_MUCH", "USER_RESTRICTED", "CHAT_WRITE_FORBIDDEN",
+        "PEER_ID_INVALID", "INVITE_REQUEST_SENT",
+    }
+    for _, marker := range permanent {
+        if strings.Contains(upper, marker) { return true }
+    }
+    return false
+}
+
 func processJoinTasks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
     tenantSet:=map[string]bool{}
     accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
@@ -367,8 +384,12 @@ func processJoinTasks(ctx context.Context, service *messages.Service, manager *t
                     if err:=service.CompleteJoinTaskAccount(ctx,job,0,"already_member");err!=nil{logger.Error("record existing Telegram membership","task_id",job.TaskID,"error",err)}
                     continue
                 }
-                if err:=service.FailJoinTaskAccount(ctx,job,joinErr.Error());err!=nil{logger.Error("record failed Telegram join","task_id",job.TaskID,"error",err)}
-                logger.Warn("Telegram group join failed","task_id",job.TaskID,"account_id",job.AccountID,"error",joinErr)
+                if isPermanentJoinFailure(joinErr) {
+                    if err:=service.FailJoinTaskAccount(ctx,job,joinErr.Error());err!=nil{logger.Error("record failed Telegram join","task_id",job.TaskID,"error",err)}
+                } else {
+                    if err:=service.RescheduleJoinTaskRetry(ctx,job,joinErr.Error());err!=nil{logger.Error("retry transient Telegram join failure","task_id",job.TaskID,"error",err)}
+                }
+                logger.Warn("Telegram group join failed","task_id",job.TaskID,"account_id",job.AccountID,"attempt",job.Attempts,"permanent",isPermanentJoinFailure(joinErr),"error",joinErr)
                 continue
             }
             if err:=service.CompleteJoinTaskAccount(ctx,job,chatID,"not_required");err!=nil{logger.Error("persist Telegram group join","task_id",job.TaskID,"chat_id",chatID,"error",err);continue}
