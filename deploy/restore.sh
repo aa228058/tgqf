@@ -27,15 +27,21 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose.yaml")
 if [[ -f "$BACKUP_DIR/SHA256SUMS" ]]; then
   (cd "$BACKUP_DIR" && sha256sum -c SHA256SUMS) || fail "Backup checksum validation failed"
 fi
-pg_restore --list "$BACKUP_DIR/postgres.dump" >/dev/null || fail "PostgreSQL dump is invalid"
 tar -tzf "$BACKUP_DIR/redis-data.tar.gz" >/dev/null || fail "Redis archive is invalid"
 
-# Pull the helper image before downtime; restore should not depend on a registry
-# being reachable after the production services have been stopped.
+# Pull the validation/restore images before downtime; restore should not depend
+# on a registry being reachable after the production services have been stopped.
+if ! docker image inspect postgres:16-alpine >/dev/null 2>&1; then
+  log "Pulling the PostgreSQL validation image"
+  docker pull postgres:16-alpine
+fi
 if ! docker image inspect alpine:3.22 >/dev/null 2>&1; then
   log "Pulling the Redis-volume restore helper image"
   docker pull alpine:3.22
 fi
+# Use the same PostgreSQL major version as the production Compose service. The
+# installer does not require host-side PostgreSQL client packages.
+docker run --rm -v "$BACKUP_DIR:/backup:ro" postgres:16-alpine pg_restore --list /backup/postgres.dump >/dev/null || fail "PostgreSQL dump is invalid"
 
 docker volume inspect tgqf_redis_data >/dev/null 2>&1 || fail "Expected Docker volume tgqf_redis_data does not exist"
 
