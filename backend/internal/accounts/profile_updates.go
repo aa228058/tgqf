@@ -268,6 +268,18 @@ func (s *Service) PauseProfileUpdate(ctx context.Context,job ProfileUpdateJob,re
 	})
 }
 
+func (s *Service) PauseQueuedProfileUpdate(ctx context.Context,tenantID,id string)error {
+ if !validAccountUUID(id){return errors.New("profile update job not found")}
+ return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='paused',last_error='paused by user',updated_at=NOW()
+   WHERE tenant_id=$1 AND id=$2 AND status='pending'`,tenantID,id)
+  if err!=nil{return err}
+  n,_:=res.RowsAffected()
+  if n==0{return errors.New("pending profile update job not found; processing jobs cannot be interrupted")}
+  return nil
+ })
+}
+
 func (s *Service) CancelProfileUpdate(ctx context.Context,tenantID,id string)error {
  if !validAccountUUID(id){return errors.New("profile update job not found")}
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
