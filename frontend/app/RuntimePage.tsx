@@ -10,7 +10,7 @@ type Tenant={id:string;name:string;status:string;account_limit:number;expires_at
 type Summary={total:number;processing:number;expired_leases:number;counts:{type:string;status:string;count:number}[]};
 async function get<T>(path:string,token:string):Promise<T>{const r=await fetch(API+path,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return r.json() as Promise<T>}
 const date=(s?:string)=>s?new Date(s).toLocaleString():"—";
-function State({value}:{value:string}){return <span className={`status status-${value==="active"||value==="authorized"||value==="ok"||value==="running"?"joined":value==="disabled"||value==="stale"||value==="failed"||value==="error"?"failed":"pending"}`}>{value}</span>}
+function State({value}:{value:string}){return <span className={`status status-${value==="active"||value==="authorized"||value==="ok"||value==="success"||value==="running"?"joined":value==="disabled"||value==="stale"||value==="failed"||value==="error"?"failed":"pending"}`}>{value}</span>}
 export function RuntimePage({token,user}:{token:string;user:{role:string}}){
  const admin=user.role==="super_admin";
  const [workers,setWorkers]=useState<Worker[]>([]),[tenants,setTenants]=useState<Tenant[]>([]);
@@ -19,24 +19,24 @@ export function RuntimePage({token,user}:{token:string;user:{role:string}}){
  const [summary,setSummary]=useState<Summary|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[updated,setUpdated]=useState("");
  const load=useCallback(async()=>{
   setBusy(true);setError("");
-  const requests=await Promise.allSettled(admin?[
-   get<{workers:Worker[]}>("/api/v1/admin/workers?limit=100",token),
-   get<{tenants:Tenant[]}>("/api/v1/admin/tenants?limit=100",token),
-   get<{summary:Summary}>("/api/v1/tasks/summary",token)
-  ]:[
-   get<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0",token),
-   get<{proxies:Proxy[]}>("/api/v1/proxies",token),
-   get<{summary:Summary}>("/api/v1/tasks/summary",token)
-  ]);
   const failures:string[]=[];
   if(admin){
-   if(requests[0].status==="fulfilled")setWorkers(requests[0].value.workers||[]);else failures.push("Worker 心跳："+String(requests[0].reason));
-   if(requests[1].status==="fulfilled")setTenants(requests[1].value.tenants||[]);else failures.push("租户状态："+String(requests[1].reason));
-   if(requests[2].status==="fulfilled")setSummary(requests[2].value.summary);else failures.push("任务状态："+String(requests[2].reason));
+   const [workerResult,tenantResult]=await Promise.allSettled([
+    get<{workers:Worker[]}>("/api/v1/admin/workers?limit=100",token),
+    get<{tenants:Tenant[]}>("/api/v1/admin/tenants?limit=100",token)
+   ]);
+   if(workerResult.status==="fulfilled")setWorkers(workerResult.value.workers||[]);else failures.push("Worker 心跳："+String(workerResult.reason));
+   if(tenantResult.status==="fulfilled")setTenants(tenantResult.value.tenants||[]);else failures.push("租户状态："+String(tenantResult.reason));
+   setSummary(null);
   }else{
-   if(requests[0].status==="fulfilled")setAccounts(requests[0].value.accounts||[]);else failures.push("账号状态："+String(requests[0].reason));
-   if(requests[1].status==="fulfilled"){const list=requests[1].value.proxies||[];setProxies(list);if(!selectedProxy&&list.length)setSelectedProxy(list[0].id)}else failures.push("代理配置："+String(requests[1].reason));
-   if(requests[2].status==="fulfilled")setSummary(requests[2].value.summary);else failures.push("任务状态："+String(requests[2].reason));
+   const [accountResult,proxyResult,summaryResult]=await Promise.allSettled([
+    get<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0",token),
+    get<{proxies:Proxy[]}>("/api/v1/proxies",token),
+    get<{summary:Summary}>("/api/v1/tasks/summary",token)
+   ]);
+   if(accountResult.status==="fulfilled")setAccounts(accountResult.value.accounts||[]);else failures.push("账号状态："+String(accountResult.reason));
+   if(proxyResult.status==="fulfilled"){const list=proxyResult.value.proxies||[];setProxies(list);if(!selectedProxy&&list.length)setSelectedProxy(list[0].id)}else failures.push("代理配置："+String(proxyResult.reason));
+   if(summaryResult.status==="fulfilled")setSummary(summaryResult.value.summary);else failures.push("任务状态："+String(summaryResult.reason));
   }
   setError(failures.join("；"));setUpdated(new Date().toLocaleTimeString());setBusy(false);
  },[token,admin,selectedProxy]);
