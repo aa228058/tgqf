@@ -32,7 +32,7 @@ func TestJSONHandlerRedactsSensitiveFieldsAndEmbeddedCredentials(t *testing.T) {
 }
 
 func TestRedactText(t *testing.T) {
-	got := RedactText("redis://:redis-password@cache:6379/0 https://proxy-user:proxy-password@proxy password=another-secret Bearer bearer-token {"session":"session-value"}")
+	got := RedactText("redis://:redis-password@cache:6379/0 https://proxy-user:proxy-password@proxy password=another-secret Bearer bearer-token {\"session\":\"session-value\"}")
 	for _, secret := range []string{"redis-password", "proxy-password", "another-secret", "bearer-token", "session-value"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("RedactText leaked %q: %s", secret, got)
