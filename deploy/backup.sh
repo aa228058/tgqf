@@ -12,7 +12,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose.yaml")
 BACKUP_ROOT="${BACKUP_DIR:-$ROOT/backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
-mkdir -p -m 0700 "$BACKUP_ROOT"
+mkdir -p "$BACKUP_ROOT"
 chmod 0700 "$BACKUP_ROOT"
 mkdir -m 0700 "$DEST"
 chmod 0700 "$DEST"
