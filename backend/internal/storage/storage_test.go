@@ -89,3 +89,60 @@ INSERT INTO sample(value) VALUES ("not;identifier");`
 		t.Fatalf("function body was split: %s", statements[1])
 	}
 }
+
+func TestDatabasePoolRecoversAfterBackendConnectionTermination(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		if os.Getenv("CI") == "true" {
+			t.Fatal("TEST_DATABASE_URL is required in CI; refusing to skip PostgreSQL recovery test")
+		}
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	defer db.Close()
+	admin := stdlib.OpenDB(*config)
+	defer admin.Close()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backendPID int
+	if err := conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&backendPID); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	if _, err := admin.ExecContext(ctx, "SELECT pg_terminate_backend($1)", backendPID); err != nil {
+		conn.Close()
+		t.Fatalf("terminate pooled PostgreSQL connection: %v", err)
+	}
+	_ = conn.Close()
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		pingCtx, pingCancel := context.WithTimeout(ctx, 3*time.Second)
+		lastErr = db.PingContext(pingCtx)
+		pingCancel()
+		if lastErr == nil {
+			var one int
+			if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+				t.Fatalf("query after PostgreSQL reconnect: %v", err)
+			}
+			if one != 1 {
+				t.Fatalf("query after reconnect returned %d, want 1", one)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("database pool did not reconnect after backend termination: %v", lastErr)
+}
