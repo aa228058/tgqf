@@ -52,11 +52,11 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			contribution_count BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(tenant_id,group_id))`,
 		`CREATE TABLE public_group_links (
 			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT,
-			invite_hash BYTEA, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
+			invite_hash BYTEA UNIQUE, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
 			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
 			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID,
-			UNIQUE(link_type,public_url), UNIQUE(link_type,invite_hash))`,
+			UNIQUE(link_type,public_url))`,
 		`CREATE TABLE public_group_link_sources (
 			link_id BIGINT NOT NULL, tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
 			source_chat_id BIGINT NOT NULL, source_message_id BIGINT NOT NULL,
