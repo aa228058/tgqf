@@ -15,7 +15,7 @@ func (h *Handler) listAccountGroups(w http.ResponseWriter, r *http.Request) {
 	includeLeft := r.URL.Query().Get("include_left") == "true"
 	groups, state, err := h.service.ListAccountGroups(r.Context(), user.TenantID, accountID, includeLeft)
 	if err != nil {
-		if errors.Is(err, errors.New("account not found")) { writeError(w, http.StatusNotFound, "账号不存在"); return }
+		if strings.Contains(err.Error(), "account not found") { writeError(w, http.StatusNotFound, "账号不存在"); return }
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
