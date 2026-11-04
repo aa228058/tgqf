@@ -31,8 +31,8 @@ func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst 
 	return nil
 }
 
-type Handler struct { service *Service; auth *auth.Handler }
-func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
+type Handler struct { service *Service; auth *auth.Handler; telegram *telegrammtgo.Manager }
+func NewHandler(service *Service,authHandler *auth.Handler, managers ...*telegrammtgo.Manager)*Handler{ h:=&Handler{service:service,auth:authHandler};if len(managers)>0{h.telegram=managers[0]};return h }
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
 	mux.Handle("GET /api/v1/tasks/summary",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskSummary)))
@@ -55,6 +55,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/join-tasks/{id}",h.auth.Authenticated(http.HandlerFunc(h.joinTask)))
 	mux.Handle("POST /api/v1/join-tasks/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.joinTaskAction)))
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/messages/{id}/media",h.auth.Authenticated(http.HandlerFunc(h.messageMedia)))
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
@@ -150,6 +151,26 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	messageJSON(w, http.StatusOK, map[string]any{"type": taskType, "id": id, "status": "updated"})
+}
+
+
+func (h *Handler) messageMedia(w http.ResponseWriter,r *http.Request){
+ user:=auth.UserFromContext(r.Context())
+ identity,err:=h.service.GetMediaIdentity(r.Context(),user.TenantID,r.PathValue("id"))
+ if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message media not found"});return}
+ if strings.TrimSpace(identity.MediaType)==""{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message has no media"});return}
+ if h.telegram==nil{messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Telegram runtime is not configured"});return}
+ data,err:=h.telegram.DownloadMessagePhoto(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
+ if err!=nil{messageJSON(w,http.StatusBadGateway,map[string]string{"error":"Telegram media could not be retrieved"});return}
+ contentType:=http.DetectContentType(data)
+ switch contentType {case "image/jpeg","image/png","image/gif","image/webp":default:messageJSON(w,http.StatusUnsupportedMediaType,map[string]string{"error":"only JPEG, PNG, GIF and WebP previews are supported"});return}
+ w.Header().Set("Content-Type",contentType)
+ w.Header().Set("Content-Length",strconv.Itoa(len(data)))
+ w.Header().Set("Content-Disposition",mime.FormatMediaType("inline",map[string]string{"filename":"telegram-media"}))
+ w.Header().Set("Cache-Control","private, no-store, max-age=0")
+ w.Header().Set("Content-Security-Policy","default-src 'none'; sandbox")
+ w.Header().Set("X-Content-Type-Options","nosniff")
+ w.WriteHeader(http.StatusOK);_,_=w.Write(data)
 }
 
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
