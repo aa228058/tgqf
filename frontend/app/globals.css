@@ -54,3 +54,36 @@
 @media(max-width:900px){.app-frame{display:block;padding-bottom:68px}.app-sidebar{display:none}.app-topbar{height:56px;padding:0 15px}.role-label,.topbar-username{display:none}.app-content{padding-bottom:16px}.mobile-bottom-nav{position:fixed;left:0;right:0;bottom:0;height:64px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch;background:var(--shell-sidebar);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:40}.mobile-nav-item{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;border-radius:0;background:transparent;color:var(--muted);padding:5px}.mobile-nav-item>span{font-size:18px;line-height:20px}.mobile-nav-item small{font-size:10px}.mobile-nav-item.active{color:var(--accent);background:transparent}.mobile-more-wrap{position:relative}.mobile-more-wrap>.mobile-nav-item{width:100%;height:100%}.mobile-more-menu{position:absolute;right:8px;bottom:70px;min-width:180px;padding:7px;background:var(--shell-sidebar);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 35px #0002}.mobile-more-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:11px;text-align:left;background:transparent;color:var(--ink);font-size:12px}.mobile-more-menu button:hover{background:var(--shell-hover)}.module-placeholder{margin:24px 15px;padding:26px 22px}.shell{padding:20px 14px 35px}}
 @media(min-width:901px){.app-content>.shell{max-width:1480px;padding-top:27px}}
 @media(max-width:440px){.app-topbar{padding:0 12px}.topbar-logout{font-size:10px}.module-placeholder h1{font-size:22px}}
+
+
+.workbench-page{max-width:1480px;margin:0 auto;padding:27px 32px 45px}
+.workbench-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin-bottom:22px}
+.workbench-heading h1{font-size:27px;margin:7px 0 4px;letter-spacing:-.03em}
+.workbench-heading p{margin:0;color:var(--muted)}
+.workbench-refresh{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:11px}
+.workbench-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-bottom:16px}
+.workbench-stat{min-height:122px;padding:18px 20px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.workbench-stat>span,.workbench-stat>small{display:block;color:var(--muted)}
+.workbench-stat>span{font-size:12px}
+.workbench-stat>strong{display:block;margin:9px 0 4px;font-size:28px;letter-spacing:-.03em}
+.workbench-stat>small{font-size:10px}
+.workbench-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.workbench-columns .panel{min-width:0}
+.workbench-list{display:grid}
+.workbench-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);min-width:0}
+.workbench-row:last-child{border-bottom:0}
+.workbench-avatar{width:34px;height:34px;flex:0 0 34px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-weight:800}
+.task-avatar{font-size:17px}
+.workbench-row-main{min-width:0;flex:1}
+.workbench-row-main strong,.workbench-row-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workbench-row-main strong{font-size:12px}
+.workbench-row-main small{font-size:10px;color:var(--muted);margin-top:4px}
+.workbench-runtime{margin-top:15px}
+.worker-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.worker-card{padding:12px;border:1px solid var(--line);border-radius:9px;min-width:0}
+.worker-card>div{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.worker-card strong{font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.worker-card>small{display:block;color:var(--muted);font-size:10px;margin-top:8px}
+.worker-summary{margin-top:12px;color:var(--muted);font-size:11px}
+@media(max-width:900px){.workbench-page{padding:20px 14px 30px}.workbench-heading{align-items:flex-start;flex-direction:column}.workbench-refresh{width:100%;justify-content:space-between}.workbench-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.workbench-columns{grid-template-columns:1fr}}
+@media(max-width:480px){.workbench-stats{gap:9px}.workbench-stat{padding:14px;min-height:108px}.workbench-stat>strong{font-size:24px}.worker-grid{grid-template-columns:1fr}.workbench-row{gap:8px}}
