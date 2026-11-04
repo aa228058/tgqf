@@ -74,6 +74,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("PUT /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateProxy)))
  m.Handle("DELETE /api/v1/proxies/{id}",h.auth.Authenticated(http.HandlerFunc(h.deleteProxy)))
  m.Handle("POST /api/v1/proxies/{id}/check",h.auth.Authenticated(http.HandlerFunc(h.checkProxy)))
+ m.Handle("POST /api/v1/proxies/bulk-check",h.auth.Authenticated(http.HandlerFunc(h.checkProxyBatch)))
  if h.telegram!=nil { m.Handle("POST /api/v1/accounts/phone/bulk/start",h.auth.Authenticated(http.HandlerFunc(h.startBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/bulk/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelBulkPhoneLogin))); m.Handle("POST /api/v1/accounts/phone/start",h.auth.Authenticated(http.HandlerFunc(h.startPhoneLogin))); m.Handle("POST /api/v1/accounts/{id}/phone/verify",h.auth.Authenticated(http.HandlerFunc(h.verifyPhoneCode))); m.Handle("POST /api/v1/accounts/{id}/phone/2fa",h.auth.Authenticated(http.HandlerFunc(h.verifyPhonePassword))); m.Handle("POST /api/v1/accounts/qr/start",h.auth.Authenticated(http.HandlerFunc(h.startQR))); m.Handle("GET /api/v1/accounts/{id}/qr/status",h.auth.Authenticated(http.HandlerFunc(h.pollQR))); m.Handle("DELETE /api/v1/accounts/{id}/qr",h.auth.Authenticated(http.HandlerFunc(h.cancelQR))) }
 }
 
