@@ -347,6 +347,25 @@ type KeywordActionJob struct {
 
 func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]KeywordActionJob,error) {
     if limit<1||limit>50 {limit=20}
+    // A crashed worker may have lost the RPC response after Telegram accepted
+    // the action. Quarantine expired in-flight sends instead of blindly replaying
+    // them; an operator can verify the chat and explicitly resume the action.
+    uncertainRows,err:=s.db.QueryContext(ctx,`SELECT DISTINCT tenant_id::text FROM keyword_action_jobs
+        WHERE status='processing' AND lease_until<=NOW()`)
+    if err!=nil{return nil,err}
+    var uncertainTenants []string
+    for uncertainRows.Next(){var id string;if err:=uncertainRows.Scan(&id);err!=nil{uncertainRows.Close();return nil,err};uncertainTenants=append(uncertainTenants,id)}
+    if err:=uncertainRows.Err();err!=nil{uncertainRows.Close();return nil,err}
+    uncertainRows.Close()
+    for _,tenantID:=range uncertainTenants {
+        if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,
+                last_error='send outcome uncertain after worker lease expired; verify Telegram chat before resuming',
+                updated_at=NOW()
+                WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()`,tenantID)
+            return err
+        });err!=nil{return nil,err}
+    }
     inactiveRows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status<>'active' OR expires_at IS NULL OR expires_at<=NOW()`)
     if err!=nil{return nil,err}
     inactiveTenants:=[]string{}
@@ -376,7 +395,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 FROM keyword_action_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
                 WHERE j.tenant_id=$1
                 AND EXISTS (SELECT 1 FROM tenants active_tenant WHERE active_tenant.id=j.tenant_id AND active_tenant.status='active' AND active_tenant.expires_at>NOW())
-                AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+                AND j.status='pending' AND j.available_at<=NOW()
                 AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
                 AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
                 AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
@@ -385,7 +404,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                 AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                 AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
-                AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+                AND e.status='pending' AND e.available_at<=NOW() AND (e.created_at,e.id)<(j.created_at,j.id))
                 ORDER BY j.created_at,j.id FOR UPDATE OF j,a SKIP LOCKED LIMIT $2
             ), claimed AS (
                 UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '3 minutes',updated_at=NOW()
