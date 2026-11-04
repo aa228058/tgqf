@@ -106,6 +106,7 @@ export default function Home() {
       });
   }, []);
   useEffect(() => { if (signedIn && token) void load(token); }, [signedIn, token, load]);
+  useEffect(() => { setSelected([]); }, [offset, status, type, accountID]);
   useEffect(() => {
     if (!signedIn || !token) return;
     const refresh = () => { if (document.visibilityState === "visible") void load(token, true); };
