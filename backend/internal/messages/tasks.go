@@ -113,7 +113,9 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 			WHERE ja.tenant_id=$1
 		`
 		const where = ` FROM (` + source + `) tasks
-			WHERE ($2='' OR tasks.status=$2)
+			WHERE ($2='' OR tasks.status=$2
+				OR ($2='queued' AND tasks.status IN ('pending','queued'))
+				OR ($2='completed' AND tasks.status IN ('sent','joined','already_member','skipped','completed')))
 			  AND ($3='' OR tasks.task_type=$3)
 			  AND ($4='' OR tasks.account_id=$4)`
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)`+where, tenantID, filter.Status, filter.Type, filter.AccountID).Scan(&total); err != nil {
