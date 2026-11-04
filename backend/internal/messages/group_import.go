@@ -59,24 +59,24 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		for _, item := range normalized {
 			var groupID int64
+			var wasInserted bool
 			err := tx.QueryRowContext(ctx, `INSERT INTO public_groups
 				(telegram_chat_id,chat_type,title,username,member_count,is_verified,first_seen_at,last_seen_at,created_at,updated_at)
 				VALUES($1,$2,$3,$4,$5,$6,NOW(),NOW(),NOW(),NOW())
-				ON CONFLICT(chat_type,telegram_chat_id) DO NOTHING
-				RETURNING id`,
-				item.ChatID,item.ChatType,item.Title,item.Username,item.MemberCount,item.IsVerified).Scan(&groupID)
-			if errors.Is(err, sql.ErrNoRows) {
-				skipped++
-				continue
-			}
+				ON CONFLICT(chat_type,telegram_chat_id) DO UPDATE
+				SET last_seen_at=GREATEST(public_groups.last_seen_at,NOW())
+				RETURNING id,(xmax=0)`,
+				item.ChatID,item.ChatType,item.Title,item.Username,item.MemberCount,item.IsVerified).Scan(&groupID,&wasInserted)
 			if err != nil { return err }
+			if wasInserted { inserted++ } else { skipped++ }
+			// Every tenant that imports an already-known shared group must still
+			// receive its own contribution record; the global row is not tenant-owned.
 			if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_group_contributions
 				(tenant_id,group_id,first_contributed_at,last_contributed_at,contribution_count)
 				VALUES($1,$2,NOW(),NOW(),1)
 				ON CONFLICT(tenant_id,group_id) DO UPDATE SET
 				last_contributed_at=NOW(),contribution_count=tenant_group_contributions.contribution_count+1`,
 				tenantID,groupID); err != nil { return err }
-			inserted++
 		}
 		return nil
 	})
