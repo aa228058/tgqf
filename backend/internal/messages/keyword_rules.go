@@ -266,7 +266,11 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
         if errors.Is(err,sql.ErrNoRows) {continue}
         if err!=nil{return err}
         actionText:=keywordReplyTextForChat(rule,in.ChatType)
-        if actionText!="" {
+        if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,contact_phone,contact_first_name,contact_last_name)
+                VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName)
+            if err!=nil{return err}
+        } else if actionText!="" {
             _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text)
                 VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,actionText)
             if err!=nil{return err}
@@ -283,6 +287,10 @@ type KeywordActionJob struct {
     ChatID int64
     ReplyToMessageID int64
     Text string
+    ActionType string
+    ContactPhone string
+    ContactFirstName string
+    ContactLastName string
     Attempts int
     LeaseUntil time.Time
 }
@@ -327,13 +335,13 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
             ), claimed AS (
                 UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '3 minutes',updated_at=NOW()
                 FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
-                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.attempts,j.lease_until
+                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
             ) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
             if err!=nil{return err};defer picked.Close()
-            for picked.Next(){var job KeywordActionJob;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.Attempts,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
+            for picked.Next(){var job KeywordActionJob;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
             return picked.Err()
         });if err!=nil{return nil,err}
     }
@@ -401,6 +409,10 @@ type KeywordActionRecord struct {
     ChatID int64 `json:"chat_id"`
     ReplyToMessageID int64 `json:"reply_to_message_id"`
     Text string `json:"message_text"`
+    ActionType string `json:"action_type"`
+    ContactPhone string `json:"contact_phone,omitempty"`
+    ContactFirstName string `json:"contact_first_name,omitempty"`
+    ContactLastName string `json:"contact_last_name,omitempty"`
     Status string `json:"status"`
     Attempts int `json:"attempts"`
     TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
@@ -419,12 +431,12 @@ func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,
         if status!=""{args=append(args,status);where+=" AND j.status=$2"}
         if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM keyword_action_jobs j WHERE `+where,args...).Scan(&total);err!=nil{return err}
         args=append(args,limit,offset);li,oi:=len(args)-1,len(args)
-        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.status,j.attempts,j.telegram_message_id,j.last_error,j.available_at,j.created_at,j.updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.status,j.attempts,j.telegram_message_id,j.last_error,j.available_at,j.created_at,j.updated_at
             FROM keyword_action_jobs j JOIN tenant_keyword_matches m ON m.id=j.keyword_match_id AND m.tenant_id=j.tenant_id
             JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
             WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item KeywordActionRecord;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};items=append(items,item)}
+        for rows.Next(){var item KeywordActionRecord;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.Status,&item.Attempts,&item.TelegramMessageID,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};items=append(items,item)}
         return rows.Err()
     })
     return items,total,err
