@@ -1,52 +1,32 @@
-# 一对一 Telegram 语音通话实现记录
+# Telegram 原生语音来电弹出功能
 
-状态：进行中（技术路径已确认，尚未实现真实通话）
+状态：进行中；已提交 MTGo 原生拨号请求的第一步，尚未完成业务闭环。
 
-## 目标与不可降低的验收条件
+## 用户需求范围
 
-本模块只实现用户明确授权、且 Telegram 隐私设置允许联系对象的一对一 Telegram 原生语音通话。语音消息（voice note）、文字邀请、群组语音聊天室均不满足本模块验收。
+监控回复规则命中后，由指定的普通 Telegram 用户账号向目标用户发起 Telegram 原生语音呼叫，让目标设备出现 Telegram 原生来电界面。
 
-完成必须同时具备：
-1. MTProto 呼叫生命周期：发起、来电、接听、拒绝、挂断、忙线、超时、断线恢复。
-2. Telegram 要求的 DH 密钥协商、指纹校验及端到端媒体加密。
-3. phone.sendSignalingData / updatePhoneCallSignalingData 双向信令转发。
-4. ICE/STUN/TURN 或 Telegram 提供的呼叫连接建立，以及真实双向音频 RTP 收发。
-5. 接听、拒绝、无应答、网络中断、主动挂断的状态和持久化结果。
-6. 自动化测试覆盖协议状态机；真实双账号端到端测试通过后才能标记“已完成”。
+本阶段不开发独立通话产品、语音聊天室或自动接听功能；但必须如实区分“已发起/正在响铃”和“已接听/通话已连接”。不把语音消息当作来电。
 
-## 当前依赖核查
+## 已完成
 
-项目当前固定依赖 github.com/mtgo-labs/mtgo v0.22.0（见 backend/go.mod）。
+- 核实 MTGo v0.22.0 提供一对一呼叫相关 TL 类型、phone.requestCall RPC、DH 配置 RPC 和原始更新处理能力。
+- 新增 `backend/internal/telegrammtgo/voice_call.go`。
+- 新增 `Manager.RequestVoiceCall(ctx, accountID, targetUserID)`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性随机呼叫材料，并调用 Telegram `phone.requestCall`。
+- 返回 Telegram 的 call ID/access hash 和 ringing 状态；不会把 ringing 伪报为接听或已连接。
 
-在该版本源码中确认：
-- telegram/group_call.go 实现的是群组通话创建及群组直播流读取，不是一对一电话。
-- telegram/handler_raw_update.go 提供 OnRawUpdate，可以接收 *tg.UpdatePhoneCallSignalingData。
-- 生成的 tg TL schema/types 包含 PhoneCallProtocol、PhoneCallRequested、PhoneCallAccepted、PhoneCall、PhoneConnectionWebrtc、PhoneRequestCallRequest、PhoneAcceptCallRequest、PhoneConfirmCallRequest、PhoneDiscardCallRequest、PhoneSendSignalingDataRequest 等协议对象。
-- MTGo 的高层 telegram 包没有发现一对一呼叫控制器或音频媒体引擎；其 go.mod 也没有 Pion WebRTC、Opus 或 tgcalls 媒体依赖。
-- 仓库现有 SendVoice 仅用于发送语音消息，不是实时通话。
+## 尚未完成的闭环
 
-结论：MTGo 已具备足够的底层 MTProto 类型/RPC 和原始更新入口作为信令适配基础，但仅靠现有高层 API 无法完成真实通话。不得只调用原始呼叫 RPC 后就宣称通话可用；没有 WebRTC/音频媒体层仍然不完整。
+1. 将此方法接入监控回复动作类型和任务执行器，使用当前租户已授权账号及消息事件中的目标用户。
+2. 为呼叫请求加上租户隔离的任务/动作记录、幂等键和速率限制；同一条命中消息不能重复拨号。
+3. 监听 `UpdatePhoneCall`，同步对方拒绝、接听、结束、超时和失败状态。
+4. 明确处理接听后的协议状态：如果产品只要求来电弹出，则在收到接听状态后按产品规则结束并记录“对方已接听来电提示，但未建立音频通话”；不得显示“通话成功”。
+5. 增加租户授权、Telegram 隐私拒绝、FloodWait、账号断线、重复事件和进程重启测试。
+6. 对真实 Telegram 双账号验证：目标设备确实出现原生来电界面，呼叫状态事件可被准确接收。
 
-## 实施路径
+## 边界与安全
 
-1. 保持 MTGo 为唯一 Telegram MTProto 客户端，不引入 gotd 或 Gogram 作为第二套账号连接栈。
-2. 在 telegrammtgo 内新增一对一呼叫适配器：使用 MTGo 的 Raw() RPC、tg 类型和 OnRawUpdate，实现呼叫信令状态机。
-3. 为媒体面单独接入经过审查的纯 Go WebRTC/Opus 实现；信令数据与媒体密钥不得写入普通日志或租户可读字段。
-4. 先以可注入接口隔离 MTGo RPC、随机数/DH、媒体引擎，覆盖状态机和并发取消测试；再接入真实网络。
-5. HTTP/任务层只接受 tenant/account 上下文，不允许客户端传入任意 account ID 越权控制；账号必须由当前租户授权。
-6. 将当前呼叫状态和最终结果写入租户隔离的数据表/任务记录；进程重启后对未决呼叫采取安全结束/同步策略，不自动重拨。
-
-## 明确禁止
-
-- 不用 SendVoice 代替通话。
-- 不向 Telegram 隐私设置禁止联系或未明确授权的对象发起呼叫。
-- 不通过账号轮换、代理切换或并发呼叫绕过 Telegram 限制。
-- 在真实双账号音频链路验收前，不将该模块标记为完成。
-
-## 参考实现与协议资料
-
-- MTGo v0.22.0：https://github.com/mtgo-labs/mtgo/tree/v0.22.0
-- Telegram 一对一呼叫协议：https://core.telegram.org/api/calls
-- Telegram 端到端语音/视频加密：https://core.telegram.org/api/end-to-end/video-calls
-- gotd calls package（仅作为协议实现参考，不作为项目账号客户端）：https://pkg.go.dev/github.com/gotd/td/telegram/calls
-- gortc（需单独核实 1:1 子包与信令适配，不可把群组通话能力误当作 1:1）：https://github.com/AmarnathCJD/gortc
+- 只允许由租户明确选择并授权的账号执行；目标必须来自当前消息/联系人上下文，不能接受任意客户端传入的目标 user ID。
+- 尊重 Telegram 隐私设置和平台限制，不通过账号轮换、代理切换或并发拨号规避限制。
+- DH 随机材料不写普通日志；不得声称已经建立双向音频。
+- 未通过真实双账号来电弹窗测试前，不标记模块完成。
