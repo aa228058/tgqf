@@ -77,6 +77,7 @@ export function MessagesPage({token}:{token:string}){
  async function previewMedia(message:Message){
   setBusy(true);setError("");
   const created:MediaPreviewItem[]=[];
+  let totalBytes=0;
   try{
    let album=[message];
    if(message.grouped_id){
@@ -90,6 +91,8 @@ export function MessagesPage({token}:{token:string}){
     const disposition=response.headers.get("Content-Disposition")||"";
     const nameMatch=disposition.match(/filename="?([^";]+)"?/i);
     const blob=await response.blob();
+    totalBytes+=blob.size;
+    if(totalBytes>100*1024*1024)throw new Error("相册预览总大小超过 100 MiB，请逐条查看媒体");
     created.push({url:URL.createObjectURL(blob),type,messageID:item.id,fileName:nameMatch?.[1]||`telegram-media-${item.message_id}`});
    }
    if(!created.length)throw new Error("该消息没有可预览的媒体内容");
