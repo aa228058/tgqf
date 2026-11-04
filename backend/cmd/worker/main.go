@@ -317,7 +317,16 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             continue
         }
         sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
-        telegramMessageID,sendErr:=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+        var telegramMessageID int64
+        var sendErr error
+        switch job.ActionType {
+        case "", "text":
+            telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+        case "contact":
+            telegramMessageID,sendErr=manager.SendContactReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.ContactPhone,job.ContactFirstName,job.ContactLastName)
+        default:
+            sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
+        }
         cancel()
         floodWait,_:=tgerr.AsFloodWait(sendErr)
         if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait);err!=nil {
