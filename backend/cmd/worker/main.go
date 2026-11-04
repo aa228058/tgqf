@@ -164,6 +164,8 @@ func main() {
 		}
 	}()
 	logger.Info("Telegram account worker started", "worker_id", workerID, "hostname", hostname)
+	go runIncomingUpdateLoop(ctx, messageService, workerID, logger)
+	go runMessageEventOutboxLoop(ctx, messageService, logger)
 	// Heartbeats run independently from queue processing. Telegram RPCs can
 	// legitimately take longer than one heartbeat interval; they must not make
 	// a live worker look stale merely because the main loop is busy.
@@ -184,10 +186,6 @@ func main() {
 		}
 	}()
 	for {
-		if _, err := messageService.PublishPendingMessageEvents(ctx, 100); err != nil && ctx.Err() == nil {
-			logger.Warn("publish committed message events", "error", err)
-		}
-		processIncomingUpdates(ctx, messageService, workerID, logger)
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		processKeywordActionJobs(ctx, messageService, manager, logger)
@@ -767,5 +765,34 @@ func processIncomingUpdates(ctx context.Context, service *messages.Service, cons
 			logger.Warn("ack persisted Telegram update; duplicate-safe replay will recover", "stream_id", event.ID, "error", ackErr)
 		}
 		cancelAck()
+	}
+}
+
+
+func runIncomingUpdateLoop(ctx context.Context, service *messages.Service, consumer string, logger *slog.Logger) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		processIncomingUpdates(ctx, service, consumer, logger)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func runMessageEventOutboxLoop(ctx context.Context, service *messages.Service, logger *slog.Logger) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := service.PublishPendingMessageEvents(ctx, 100); err != nil && ctx.Err() == nil {
+			logger.Warn("publish committed message events", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
