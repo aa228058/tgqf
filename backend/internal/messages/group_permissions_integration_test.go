@@ -57,6 +57,18 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
 			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID,
 			UNIQUE(link_type,public_url))`,
+		`CREATE TABLE public_group_corrections (
+				id BIGSERIAL PRIMARY KEY, group_id BIGINT NOT NULL, tenant_id UUID NOT NULL,
+				submitted_by_user_id UUID NOT NULL, proposed_fields JSONB NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending', review_note TEXT NOT NULL DEFAULT '',
+				reviewed_by_user_id UUID, reviewed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE UNIQUE INDEX public_group_corrections_pending_unique ON public_group_corrections(group_id,tenant_id) WHERE status='pending'`,
+		`CREATE TABLE public_group_merge_audits (
+				id BIGSERIAL PRIMARY KEY, source_group_id BIGINT NOT NULL, target_group_id BIGINT NOT NULL,
+				actor_user_id UUID NOT NULL, reason TEXT NOT NULL, source_snapshot JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE TABLE audit_logs (
+				id BIGSERIAL PRIMARY KEY, actor_user_id UUID NOT NULL, action TEXT NOT NULL,
+				resource_type TEXT NOT NULL, resource_id TEXT NOT NULL, details JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE public_group_link_sources (
 			link_id BIGINT NOT NULL, tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
 			source_chat_id BIGINT NOT NULL, source_message_id BIGINT NOT NULL,
@@ -328,4 +340,55 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	if status!="queued"||savedLease.Valid{t.Fatalf("current FloodWait row not rescheduled: status=%s lease=%v",status,savedLease)}
 	if err:=db.QueryRowContext(ctx,`SELECT status,lease_until FROM tenant_join_task_accounts WHERE id=$1`,concurrentProcessing).Scan(&status,&savedLease);err!=nil{t.Fatal(err)}
 	if status!="processing"||!savedLease.Valid{t.Fatalf("FloodWait revoked another active RPC lease: status=%s lease=%v",status,savedLease)}
+}
+
+
+func TestMergePublicGroupsPreservesMetadataAndCombinesTenantSources(t *testing.T) {
+	db, cleanup := openGroupIntegrationDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	service := New(db)
+	tenantID := "11111111-1111-4111-8111-111111111111"
+	accountID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	actorID := "99999999-9999-4999-8999-999999999999"
+	var sourceID, targetID int64
+	if err := db.QueryRowContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,default_permissions,permissions_observed_at)
+		VALUES(100,'group','Source title','source_name',900,true,'{"send_messages":false}'::jsonb,'2026-01-02T00:00:00Z') RETURNING id`).Scan(&sourceID); err != nil { t.Fatal(err) }
+	if err := db.QueryRowContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,default_permissions,permissions_observed_at)
+		VALUES(200,'group','Canonical title','',120,false,'{"send_messages":true}'::jsonb,'2026-01-01T00:00:00Z') RETURNING id`).Scan(&targetID); err != nil { t.Fatal(err) }
+
+	// A colliding source identity merges discovery counters and time bounds.
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count,account_rights_snapshot,account_rights_observed_at)
+		VALUES($1,$2,$3,10,'2026-01-01','2026-01-03',2,'{"admin":true}'::jsonb,'2026-01-03')`, sourceID, tenantID, accountID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count,account_rights_snapshot,account_rights_observed_at)
+		VALUES($1,$2,$3,20,'2026-01-02','2026-01-04',3,'{"admin":false}'::jsonb,'2026-01-04')`, targetID, tenantID, accountID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_group_contributions(tenant_id,group_id,first_contributed_at,last_contributed_at,contribution_count)
+		VALUES($1,$2,'2026-01-01','2026-01-02',2),($1,$3,'2026-01-02','2026-01-04',4)`, tenantID, sourceID, targetID); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_links(group_id,link_type,public_url,status) VALUES($1,'public','https://t.me/source_link','valid')`, sourceID); err != nil { t.Fatal(err) }
+
+	if err := service.MergePublicGroups(ctx, actorID, sourceID, targetID, "duplicate Telegram group"); err != nil { t.Fatal(err) }
+
+	var title, username, permissions string
+	var members int
+	var verified bool
+	if err := db.QueryRowContext(ctx, `SELECT title,username,member_count,is_verified,default_permissions::text FROM public_groups WHERE id=$1`, targetID).Scan(&title,&username,&members,&verified,&permissions); err != nil { t.Fatal(err) }
+	if title != "Canonical title" || username != "source_name" || members != 900 || !verified {
+		t.Fatalf("merged metadata title=%q username=%q members=%d verified=%v", title,username,members,verified)
+	}
+	var permissionMap map[string]bool
+	if err := json.Unmarshal([]byte(permissions), &permissionMap); err != nil { t.Fatal(err) }
+	if permissionMap["send_messages"] { t.Fatalf("older source permission snapshot overwrote newer target: %s", permissions) }
+
+	var sourceCount, contributionCount int
+	var discoveries int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(discovery_count),0) FROM public_group_sources WHERE group_id=$1`,targetID).Scan(&sourceCount,&discoveries); err != nil { t.Fatal(err) }
+	if sourceCount != 1 || discoveries != 5 { t.Fatalf("merged sources=%d discoveries=%d, want 1/5",sourceCount,discoveries) }
+	if err := db.QueryRowContext(ctx, `SELECT contribution_count FROM tenant_group_contributions WHERE tenant_id=$1 AND group_id=$2`,tenantID,targetID).Scan(&contributionCount); err != nil { t.Fatal(err) }
+	if contributionCount != 6 { t.Fatalf("merged contribution_count=%d, want 6",contributionCount) }
+	var linkGroupID int64
+	if err := db.QueryRowContext(ctx, `SELECT group_id FROM public_group_links WHERE public_url='https://t.me/source_link'`).Scan(&linkGroupID); err != nil { t.Fatal(err) }
+	if linkGroupID != targetID { t.Fatalf("link group_id=%d, want canonical %d",linkGroupID,targetID) }
+	var sourceExists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM public_groups WHERE id=$1)`,sourceID).Scan(&sourceExists); err != nil { t.Fatal(err) }
+	if sourceExists { t.Fatal("duplicate source group was not deleted") }
 }
