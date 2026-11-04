@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { KeywordMonitor } from "./KeywordMonitor";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Chat={account_id:string;account_name:string;chat_id:number;chat_title:string;chat_type:string;unprocessed_count:number;last_message:string;last_message_date:string;chat_username:string;member_count:number;is_verified:boolean};
@@ -28,7 +29,7 @@ export function MessagesPage({token}:{token:string}){
  const [offset,setOffset]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [settings,setSettings]=useState<Settings|null>(null),[settingsOpen,setSettingsOpen]=useState(false),[settingsBusy,setSettingsBusy]=useState(false);
  const [replyText,setReplyText]=useState<Record<string,string>>({}),[contactMessage,setContactMessage]=useState<string|null>(null);
- const [mediaPreview,setMediaPreview]=useState<{url:string;type:string;messageID:string}|null>(null);
+ const [mediaPreview,setMediaPreview]=useState<{url:string;type:string;messageID:string}|null>(null);\n const [keywordOpen,setKeywordOpen]=useState(false);
  const [contact,setContact]=useState({phone:"",first_name:"",last_name:""}),[replyJobs,setReplyJobs]=useState<Record<string,Reply>>({});
 
  const loadChats=useCallback(async()=>{
@@ -124,9 +125,9 @@ export function MessagesPage({token}:{token:string}){
  }
 
  return <div className="messages-page">
-  <div className="messages-heading"><div><div className="eyebrow">MESSAGES</div><h1>消息管理</h1><p>按账号和会话查看实时采集消息，支持处理、回复和联系人卡片。</p></div><div className="messages-heading-actions"><button className="secondary" onClick={()=>void Promise.all([loadChats(),loadMessages()])} disabled={busy}>刷新</button><button className="secondary" onClick={()=>void openSettings()} disabled={settingsBusy}>采集设置</button></div></div>
+  <div className="messages-heading"><div><div className="eyebrow">MESSAGES</div><h1>消息管理</h1><p>按账号和会话查看实时采集消息，支持处理、回复和联系人卡片。</p></div><div className="messages-heading-actions"><button className="secondary" onClick={()=>void Promise.all([loadChats(),loadMessages()])} disabled={busy}>刷新</button><button className="secondary" onClick={()=>setKeywordOpen(v=>!v)}>{keywordOpen?"返回消息":"关键词监控"}</button><button className="secondary" onClick={()=>void openSettings()} disabled={settingsBusy}>采集设置</button></div></div>
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
-  <div className="messages-layout">
+  {keywordOpen?<KeywordMonitor token={token}/>:<div className="messages-layout">
    <aside className="chat-sidebar"><div className="chat-sidebar-heading"><strong>会话列表</strong><span>{chatTotal}</span></div><input className="chat-search" value={chatQuery} onChange={e=>setChatQuery(e.target.value)} placeholder="搜索会话、账号或用户名"/>
     <div className="chat-list">{visibleChats.map(chat=><button key={chat.account_id+":"+chat.chat_id} className={selectedChat?.account_id===chat.account_id&&selectedChat.chat_id===chat.chat_id?"chat-item active":"chat-item"} onClick={()=>void selectChat(chat)}><div className="chat-avatar">{(chat.chat_title||chat.account_name||"?").slice(0,1).toUpperCase()}</div><div className="chat-item-content"><strong>{chat.chat_title||String(chat.chat_id)}</strong><small>{chat.account_name} · {chat.chat_type}</small><small className="chat-last-message">{chat.last_message||"无文本内容"}</small></div>{chat.unprocessed_count>0&&<span className="chat-unread">{chat.unprocessed_count}</span>}</button>)}{!visibleChats.length&&<div className="empty">暂无会话</div>}</div>
    </aside>
