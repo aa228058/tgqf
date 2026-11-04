@@ -468,6 +468,37 @@ func (m *Manager) SendContactReply(ctx context.Context, accountID string, chatID
 	return int64(sent.ID),nil
 }
 
+
+func (m *Manager) SendMediaReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, mediaType, fileName, mimeType, caption string, content []byte) (int64,error) {
+    if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) { return 0,errors.New("invalid Telegram reply message id") }
+    if len(content)==0 || len(content)>20<<20 { return 0,errors.New("media payload must be between 1 byte and 20 MiB") }
+    fileName=strings.TrimSpace(fileName);if fileName=="" {return 0,errors.New("media file name is required")}
+    m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
+    if client==nil || !client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
+    file:=telegram.FromBytes(content,fileName)
+    var sent *types.Message
+    var err error
+    switch strings.ToLower(strings.TrimSpace(mediaType)) {
+    case "photo":
+        sent,err=client.SendPhoto(ctx,chatID,file,caption,&params.SendPhoto{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
+    case "video":
+        sent,err=client.SendVideo(ctx,chatID,file,caption,&params.SendVideo{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
+    case "document","file":
+        sent,err=client.SendDocument(ctx,chatID,file,caption,&params.SendDocument{ReplyToMessageID:int32(replyToMessageID),FileName:fileName,MimeType:mimeType})
+    case "audio":
+        sent,err=client.SendAudio(ctx,chatID,file,caption,&params.SendAudio{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
+    case "voice":
+        sent,err=client.SendVoice(ctx,chatID,file,caption,&params.SendVoice{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
+    case "video_note":
+        sent,err=client.SendVideoNote(ctx,chatID,file,&params.SendVideoNote{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
+    default:
+        return 0,fmt.Errorf("unsupported Telegram media type %q",mediaType)
+    }
+    if err!=nil{return 0,fmt.Errorf("send Telegram %s reply: %w",mediaType,err)}
+    if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty media message")}
+    return int64(sent.ID),nil
+}
+
 func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
 	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {
 		return 0,errors.New("invalid Telegram reply message id")
