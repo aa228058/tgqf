@@ -80,6 +80,210 @@ func (s *Store) Close() error {
 	return dbErr
 }
 
+
+// splitSQLStatements separates PostgreSQL statements without splitting semicolons
+// inside quoted strings, quoted identifiers, comments, or dollar-quoted function
+// bodies. PostgreSQL migrations commonly contain PL/pgSQL functions whose bodies
+// must be sent to the server as one statement.
+func splitSQLStatements(script string) []string {
+	var statements []string
+	start := 0
+	state := byte(0) // 0=normal, 1=single quote, 2=double quote, 3=line comment, 4=block comment
+	blockDepth := 0
+	dollarTag := ""
+	for i := 0; i < len(script); {
+		if state == 1 {
+			if script[i] == '\\' && i+1 < len(script) {
+				i += 2
+				continue
+			}
+			if script[i] == '\'' {
+				if i+1 < len(script) && script[i+1] == '\'' {
+					i += 2
+					continue
+				}
+				state = 0
+			}
+			i++
+			continue
+		}
+		if state == 2 {
+			if script[i] == '"' {
+				if i+1 < len(script) && script[i+1] == '"' {
+					i += 2
+					continue
+				}
+				state = 0
+			}
+			i++
+			continue
+		}
+		if state == 3 {
+			if script[i] == '\n' { state = 0 }
+			i++
+			continue
+		}
+		if state == 4 {
+			if i+1 < len(script) && script[i:i+2] == "/*" {
+				blockDepth++
+				i += 2
+				continue
+			}
+			if i+1 < len(script) && script[i:i+2] == "*/" {
+				blockDepth--
+				i += 2
+				if blockDepth == 0 { state = 0 }
+				continue
+			}
+			i++
+			continue
+		}
+		if dollarTag != "" {
+			if strings.HasPrefix(script[i:], dollarTag) {
+				i += len(dollarTag)
+				dollarTag = ""
+			} else {
+				i++
+			}
+			continue
+		}
+		switch {
+		case i+1 < len(script) && script[i:i+2] == "--":
+			state = 3
+			i += 2
+		case i+1 < len(script) && script[i:i+2] == "/*":
+			state = 4
+			blockDepth = 1
+			i += 2
+		case script[i] == '\'':
+			state = 1
+			i++
+		case script[i] == '"':
+			state = 2
+			i++
+		case script[i] == '
+	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+		return fmt.Errorf("create migration table: %w", err)
+	}
+	entries, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	sort.Strings(entries)
+	for _, name := range entries {
+		version := strings.TrimSuffix(strings.TrimPrefix(name, "migrations/"), ".sql")
+		var exists bool
+		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
+			return fmt.Errorf("check migration %s: %w", version, err)
+		}
+		if exists {
+			continue
+		}
+		script, err := migrationFiles.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		tx, err := s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, statement := range splitSQLStatements(string(script)) {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version)
+		}
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %s: %w", version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", version, err)
+		}
+	}
+	return nil
+}
+:
+			end := i+1
+			for end < len(script) && (script[end] == '_' || script[end] >= 'a' && script[end] <= 'z' || script[end] >= 'A' && script[end] <= 'Z' || script[end] >= '0' && script[end] <= '9') {
+				end++
+			}
+			if end < len(script) && script[end] == '
+	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+		return fmt.Errorf("create migration table: %w", err)
+	}
+	entries, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	sort.Strings(entries)
+	for _, name := range entries {
+		version := strings.TrimSuffix(strings.TrimPrefix(name, "migrations/"), ".sql")
+		var exists bool
+		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
+			return fmt.Errorf("check migration %s: %w", version, err)
+		}
+		if exists {
+			continue
+		}
+		script, err := migrationFiles.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		tx, err := s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, statement := range splitSQLStatements(string(script)) {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version)
+		}
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %s: %w", version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", version, err)
+		}
+	}
+	return nil
+}
+ {
+				dollarTag = script[i:end+1]
+				i = end+1
+			} else {
+				i++
+			}
+		case script[i] == ';':
+			if statement := strings.TrimSpace(script[start:i]); statement != "" {
+				statements = append(statements, statement)
+			}
+			i++
+			start = i
+		default:
+			i++
+		}
+	}
+	if statement := strings.TrimSpace(script[start:]); statement != "" {
+		statements = append(statements, statement)
+	}
+	return statements
+}
+
 func (s *Store) Migrate(ctx context.Context) error {
 	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
 		return fmt.Errorf("create migration table: %w", err)
@@ -106,7 +310,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, statement := range strings.Split(string(script), ";") {
+		for _, statement := range splitSQLStatements(string(script)) {
 			statement = strings.TrimSpace(statement)
 			if statement == "" {
 				continue
