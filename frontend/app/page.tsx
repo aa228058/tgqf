@@ -127,8 +127,8 @@ export default function Home() {
     event.preventDefault(); if (loginLock.current) return; loginLock.current = true; setBusy(true); setError("");
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, login_type: loginMode, device_label: "tg-account-manager-web" }) });
-      const body = await readAPIJSON<{error?:string;access_token:string;user:AppUser}>(response);
-      if (!response.ok) throw new Error(body.error || "登录失败");
+      if (!response.ok) throw new Error(await apiErrorMessage(response, "登录失败，请检查账号信息后重试"));
+      const body = await readAPIJSON<{access_token:string;user:AppUser}>(response);
       window.localStorage.setItem("tgqf_access_token", body.access_token);
       setToken(body.access_token); setUser(body.user as AppUser); setSignedIn(true); setPassword("");
     } catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
