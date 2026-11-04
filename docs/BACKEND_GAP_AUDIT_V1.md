@@ -450,8 +450,8 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 
 - [x] 群链接采集继续按租户、发现账号、来源会话和消息记录归集；私密邀请码只保存 SHA-256 去重值及 AES-GCM 加密后的原始 hash。
 - [x] 公开链接和私密邀请链接均通过 MTGo 只读 messages.checkChatInvite / contacts.resolveUsername 检查；状态区分 valid、approval_required、invalid、unknown。检查路径不调用加入 API。
-- [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。
-- [x] 新消息再次发现链接时清空检查时间、下次检查时间和错误计数，重新排入检查队列。
+- [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。检查领取使用 2 分钟数据库租约和 SKIP LOCKED，多 Worker 不会同时领取同一链接；写回使用租约时间 fencing，过期 Worker 无法覆盖新检查结果。
+- [x] 新消息再次发现链接时清空检查时间、下次检查时间、错误计数和旧检查租约，重新排入检查队列。
 - [x] 新增 migration 0044：检查次数、下次检查时间、到期索引；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
 - [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
@@ -461,6 +461,6 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 审批通过通过 MTGo membership 查询同步为 joined；已知 chat ID 时可将 left/banned 状态同步为 declined。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
 - [ ] 本批提交尚未运行 Go test、vet、API/Worker build、数据库迁移或 GitHub Actions；当前只能确认代码已提交，不能声称编译和测试通过。
-- [ ] 仍需 PostgreSQL 多 Worker 集成测试，尤其验证多个 Worker 同时扫描同一链接时的重复只读检查、链接状态全局共享语义，以及不同账号/租户来源下的检查公平性。
+- [ ] 仍需 PostgreSQL 多 Worker 集成测试，验证租约过期重领、旧 Worker 延迟写回被 fencing、链接状态全局共享语义，以及不同账号/租户来源下的检查公平性。
 - [ ] 仍需真实 Telegram 测试账号验证公开加入、私密邀请加入、审批通过/拒绝、FloodWait、链接过期和账号断线恢复。真实 Telegram 端的外部加入动作无法由单元测试替代。
 - [ ] 私密邀请 hash 本身无法在所有场景中可靠区分“管理员拒绝申请”与“申请仍在等待”；只有能够查询目标 chat membership 且 Telegram 返回明确 left/banned 时才标记 declined，其余情况保持 pending/unknown，避免误报。
