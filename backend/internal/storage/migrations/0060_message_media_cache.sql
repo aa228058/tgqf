@@ -16,3 +16,12 @@ CREATE INDEX IF NOT EXISTS message_media_cache_asset_idx
 
 COMMENT ON TABLE message_media_cache IS
     'Tenant-scoped cache index from Telegram message identity to a deduplicated tenant_media_assets binary object.';
+
+ALTER TABLE message_media_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE message_media_cache FORCE ROW LEVEL SECURITY;
+CREATE POLICY message_media_cache_tenant_policy ON message_media_cache
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id',true),'')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id',true),'')::uuid);
+
+CREATE INDEX IF NOT EXISTS message_media_cache_retention_idx
+    ON message_media_cache (cached_at);
