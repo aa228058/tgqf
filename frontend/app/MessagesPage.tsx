@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeywordMonitor } from "./KeywordMonitor";
+import { MessageEventStream } from "./MessageEventStream";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Chat={account_id:string;account_name:string;chat_id:number;chat_title:string;chat_type:string;unprocessed_count:number;last_message:string;last_message_date:string;chat_username:string;member_count:number;is_verified:boolean};
@@ -69,6 +70,11 @@ export function MessagesPage({token}:{token:string}){
   return()=>{chatLoadSequence.current++;messageLoadSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)};
  },[loadChats,loadMessages]);
  const visibleChats=useMemo(()=>chats.filter(c=>!chatQuery||[c.chat_title,c.account_name,c.chat_username,String(c.chat_id)].some(v=>v.toLowerCase().includes(chatQuery.toLowerCase()))),[chats,chatQuery]);
+ const onMessageEvent=useCallback(()=>{
+  if(document.visibilityState!=="visible")return;
+  void loadChats().catch(e=>setError(e instanceof Error?e.message:"会话实时刷新失败"));
+  void loadMessages();
+ },[loadChats,loadMessages]);
 
  async function openSettings(){
   setSettingsBusy(true);setError("");
@@ -165,7 +171,7 @@ export function MessagesPage({token}:{token:string}){
   else{const id=Number(value);updateSettings(key,checked?[...settings.chat_ids,id]:settings.chat_ids.filter(x=>x!==id))}
  }
 
- return <div className="messages-page">
+ return <div className="messages-page"><MessageEventStream token={token} onEvent={onMessageEvent}/>
   <div className="messages-heading"><div><div className="eyebrow">MESSAGES</div><h1>消息管理</h1><p>按账号和会话查看实时采集消息，支持处理、回复和联系人卡片。</p></div><div className="messages-heading-actions"><button className="secondary" onClick={()=>void Promise.all([loadChats(),loadMessages()])} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button><button className="secondary" onClick={()=>setKeywordOpen(v=>!v)}>{keywordOpen?"返回消息":"关键词监控"}</button><button className="secondary" onClick={()=>void openSettings()} disabled={settingsBusy}>采集设置</button></div></div>
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
   {keywordOpen?<KeywordMonitor token={token}/>:<div className="messages-layout">
