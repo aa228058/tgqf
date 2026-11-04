@@ -13,7 +13,7 @@
 - MTGo v0.22.0 提供一对一呼叫 TL 类型、`phone.requestCall`、DH 配置 RPC 和原始更新处理能力。
 - `backend/internal/telegrammtgo/voice_call.go` 新增 `Manager.RequestVoiceCall`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性随机呼叫材料，并调用 Telegram `phone.requestCall`。
 - 监控回复规则新增 `action_type=voice_call`。该动作只允许私聊规则；目标用户取自触发消息的发送者 ID，不允许从前端任意指定用户 ID。
-- 新增迁移 `0057_keyword_voice_call_actions.sql`，为任务保存目标用户、Telegram call ID/access hash 和 ringing 状态。
+- 新增迁移 `0062_keyword_voice_call_actions.sql`，为任务保存目标用户、Telegram call ID/access hash 和 ringing 状态。
 - Worker 执行 voice_call 任务，发起 MTGo 原生呼叫，并将 Telegram 返回的 call ID 和 ringing 状态写入租户隔离任务记录。
 - 关键词动作列表 API 返回 `target_user_id`、`telegram_call_id` 和 `voice_call_state`，不伪造 outgoing chat message。
 - 新增规则校验单元测试，并扩展现有任务集成测试 fixture。
