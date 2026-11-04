@@ -89,13 +89,27 @@ func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, raw
 		var query string
 		switch action {
 		case "pause":
-			query = `UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,last_error='paused by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','processing')`
+			query = `UPDATE tenant_join_task_accounts SET
+				status=CASE WHEN status='queued' THEN 'paused' ELSE status END,
+				pause_requested=(status='processing'),last_error='paused by user',updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','processing')`
 		case "resume":
-			query = `UPDATE tenant_join_task_accounts ja SET status='queued',available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenant_join_tasks jt,tenants t,telegram_accounts a WHERE ja.tenant_id=$1 AND ja.id=$2 AND ja.status='paused' AND jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id AND jt.authorization_confirmed=TRUE AND jt.authorized_by IS NOT NULL AND jt.authorized_at IS NOT NULL AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
+			query = `UPDATE tenant_join_task_accounts ja SET
+				status=CASE WHEN ja.status='paused' THEN 'queued' ELSE ja.status END,
+				pause_requested=FALSE,available_at=CASE WHEN ja.status='paused' THEN NOW() ELSE ja.available_at END,
+				last_error='',updated_at=NOW()
+				FROM tenant_join_tasks jt,tenants t,telegram_accounts a
+				WHERE ja.tenant_id=$1 AND ja.id=$2 AND ja.status IN ('paused','processing')
+				AND jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id AND jt.authorization_confirmed=TRUE AND jt.authorized_by IS NOT NULL AND jt.authorized_at IS NOT NULL
+				AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW()
+				AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
 		case "retry":
 			query = `UPDATE tenant_join_task_accounts ja SET status='queued',attempts=0,available_at=NOW(),lease_until=NULL,last_error='',updated_at=NOW() FROM tenant_join_tasks jt,tenants t,telegram_accounts a WHERE ja.tenant_id=$1 AND ja.id=$2 AND ja.status='failed' AND jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id AND jt.authorization_confirmed=TRUE AND jt.authorized_by IS NOT NULL AND jt.authorized_at IS NOT NULL AND t.id=ja.tenant_id AND t.status='active' AND t.expires_at>NOW() AND a.tenant_id=ja.tenant_id AND a.id=ja.telegram_account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL`
 		case "cancel":
-			query = `UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','paused','processing','request_pending')`
+			query = `UPDATE tenant_join_task_accounts SET
+				status=CASE WHEN status='processing' THEN status ELSE 'cancelled' END,
+				cancel_requested=(status='processing'),last_error='cancelled by user',updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status IN ('queued','paused','processing','request_pending')`
 		default:
 			return errors.New("unsupported task action")
 		}
@@ -107,7 +121,7 @@ func (s *Service) changeJoinTaskAccountStatus(ctx context.Context, tenantID, raw
 
 // refreshJoinTaskControlStatus derives the parent state from its children.
 // Pending approval remains active; paused children do not block other queued
-// children. A stale worker is fenced because pause/cancel clears its lease.
+// children. In-flight pause/cancel is recorded as a request and keeps its lease.
 func deriveJoinTaskParentStatus(childStatuses []string) string {
 	if len(childStatuses) == 0 { return "completed" }
 	hasQueued, hasPaused, hasFailed, allCancelled := false, false, false, true
@@ -153,7 +167,7 @@ func refreshJoinTaskControlStatus(ctx context.Context, tx *sql.Tx, tenantID, tas
 	if err := rows.Close(); err != nil { return err }
 	parentStatus := deriveJoinTaskParentStatus(statuses)
 	_, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET status=$3,updated_at=NOW()
-		WHERE tenant_id=$1 AND id=$2 AND status<>'draft'`, tenantID, taskID, parentStatus)
+		WHERE tenant_id=$1 AND id=$2 AND status NOT IN ('draft','cancelled')`, tenantID, taskID, parentStatus)
 	return err
 }
 
