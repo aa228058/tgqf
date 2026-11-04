@@ -540,9 +540,9 @@ func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname
 
 
 func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
-	links,err:=service.ListPrivateInviteChecks(ctx,tenantID,accountID,50)
+	links,err:=service.ListPrivateInviteChecks(ctx,tenantID,accountID,7)
 	if err!=nil{return err}
-	publicLinks,publicErr:=service.ListPublicLinkChecks(ctx,tenantID,accountID,50)
+	publicLinks,publicErr:=service.ListPublicLinkChecks(ctx,tenantID,accountID,7)
 	if publicErr!=nil{return publicErr}
 	for _,link:=range publicLinks {
 		if ctx.Err()!=nil{return ctx.Err()}
