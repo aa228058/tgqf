@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "");
 type Account = { id: string; phone: string; display_name: string; status: string; has_session: boolean };
@@ -54,10 +54,16 @@ export function JoinTasksPage({ token }: { token: string }) {
   const [authorized,setAuthorized] = useState(false);
   const [authorizationNote,setAuthorizationNote] = useState("");
   const [busy,setBusy] = useState(false);
+  const [loading,setLoading] = useState(false);
+  const loadingRef = useRef(false);
+  const detailRequest = useRef(0);
   const [error,setError] = useState("");
   const [notice,setNotice] = useState("");
 
   const load = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
     setError("");
     try {
       const [taskResult,accountResult,groupResult,linkResult] = await Promise.all([
@@ -73,14 +79,17 @@ export function JoinTasksPage({ token }: { token: string }) {
       setLinks(linkResult.links || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "自动加群数据加载失败");
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
     }
   },[token,offset]);
 
-  useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),10000);return()=>window.clearInterval(timer)},[load]);
+  useEffect(()=>{void load();const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},10000);return()=>window.clearInterval(timer)},[load]);
   useEffect(()=>{
     if(!detail)return;
     let active=true;
-    const refreshDetail=async()=>{try{const result=await api<{task:Task}>(`/api/v1/join-tasks/${detail.id}`,token);if(active)setDetail(result.task)}catch(e){if(active)setError(e instanceof Error?e.message:"任务详情刷新失败")}};
+    const refreshDetail=async()=>{if(document.visibilityState!=="visible")return;try{const result=await api<{task:Task}>(`/api/v1/join-tasks/${detail.id}`,token);if(active)setDetail(result.task)}catch(e){if(active)setError(e instanceof Error?e.message:"任务详情刷新失败")}};
     const timer=window.setInterval(()=>void refreshDetail(),10000);
     return()=>{active=false;window.clearInterval(timer)};
   },[detail?.id,token]);
@@ -122,9 +131,10 @@ export function JoinTasksPage({ token }: { token: string }) {
     finally {setBusy(false)}
   }
   async function openDetail(task:Task) {
+    const sequence=++detailRequest.current;
     setDetail(task);
-    try {const result=await api<{task:Task}>(`/api/v1/join-tasks/${task.id}`,token);setDetail(result.task)}
-    catch(e){setError(e instanceof Error?e.message:"任务详情加载失败")}
+    try {const result=await api<{task:Task}>(`/api/v1/join-tasks/${task.id}`,token);if(sequence===detailRequest.current)setDetail(result.task)}
+    catch(e){if(sequence===detailRequest.current)setError(e instanceof Error?e.message:"任务详情加载失败")}
   }
   const targetLabel=(task:Task)=>{
     if(task.target_group_id){const g=groups.find(x=>x.id===task.target_group_id);return g?g.title:`公共群组 #${task.target_group_id}`}
@@ -132,11 +142,11 @@ export function JoinTasksPage({ token }: { token: string }) {
     return "私密邀请链接";
   };
   return <section className="join-page">
-    <header className="join-heading"><div><div className="eyebrow">GROUP JOIN AUTOMATION</div><h1>自动加群</h1><p>从全系统共享群组库或本租户发现的邀请链接创建任务；账号执行结果逐个记录。</p></div><div className="join-heading-actions"><button className="secondary" onClick={()=>void load()} disabled={busy}>刷新</button><button className="primary" onClick={openCreate}>新建加群任务</button></div></header>
+    <header className="join-heading"><div><div className="eyebrow">GROUP JOIN AUTOMATION</div><h1>自动加群</h1><p>从全系统共享群组库或本租户发现的邀请链接创建任务；账号执行结果逐个记录。</p></div><div className="join-heading-actions"><button className="secondary" onClick={()=>void load()} disabled={busy||loading}>{loading?"同步中…":"刷新"}</button><button className="primary" onClick={openCreate}>新建加群任务</button></div></header>
     {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
     <div className="join-notice"><strong>执行边界</strong><span>每个任务都必须明确确认授权。Telegram FloodWait 会按服务器要求冷却；不通过切换账号或代理绕过限制。审批请求会保持待审批并自动同步可确认的结果。</span></div>
     <section className="panel">
-      <div className="panel-heading"><div><h2>加群任务</h2><p>任务总数 {total} · 每 10 秒刷新一次</p></div></div>
+      <div className="panel-heading"><div><h2>加群任务</h2><p>任务总数 {total} · {loading?"正在同步…":"每 10 秒自动同步"}</p></div></div>
       <div className="join-task-list">{tasks.map(task=><article className="join-task-card" key={task.id}>
         <button className="join-task-main" onClick={()=>void openDetail(task)}><span className="join-task-title">{task.name}</span><span className={`status status-${task.status}`}>{statusName[task.status]||task.status}</span><span className="join-task-target">{targetLabel(task)}</span><small>{task.account_count} 个账号 · 创建于 {date(task.created_at)}</small></button>
         <div className="join-task-actions">
@@ -146,7 +156,7 @@ export function JoinTasksPage({ token }: { token: string }) {
           {task.status==="failed"&&<button disabled={busy} className="primary" onClick={()=>void action(task,"retry")}>重试失败账号</button>}
           {["draft","queued","paused"].includes(task.status)&&<button disabled={busy} className="danger-text" onClick={()=>void action(task,"cancel")}>取消</button>}
         </div>
-      </article>)}{!tasks.length&&<div className="empty">{busy?"正在加载任务…":"暂无加群任务"}</div>}</div>
+      </article>)}{!tasks.length&&<div className="empty">{loading?"正在加载任务…":error?"加载失败，请检查提示后重试":"暂无加群任务"}</div>}</div>
       <footer className="pagination"><span>共 {total} 条</span><div><button className="secondary" disabled={!offset||busy} onClick={()=>setOffset(Math.max(0,offset-50))}>上一页</button><span>第 {Math.floor(offset/50)+1} / {Math.max(1,Math.ceil(total/50))} 页</span><button className="secondary" disabled={offset+50>=total||busy} onClick={()=>setOffset(offset+50)}>下一页</button></div></footer>
     </section>
     {createOpen&&<div className="modal-backdrop"><form className="account-modal join-editor" onSubmit={createTask}>
@@ -161,6 +171,6 @@ export function JoinTasksPage({ token }: { token: string }) {
       <label className="join-authorization"><input type="checkbox" checked={authorized} onChange={e=>setAuthorized(e.target.checked)}/><span>我确认已获得加入目标群组所需的授权，并理解 Telegram 平台限制及 FloodWait 冷却要求。</span></label>
       <button className="primary" disabled={busy||!authorized||!accountIDs.length||(targetMode==="group"&&!groupID)||(targetMode==="link"&&!linkID)||(targetMode==="invite"&&!invite.trim())}>创建任务（创建后需手动启动）</button>
     </form></div>}
-    {detail&&<div className="modal-backdrop" onClick={()=>setDetail(null)}><section className="account-modal join-detail" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{detail.name}</h2><p>{targetLabel(detail)} · {statusName[detail.status]||detail.status}</p></div><button className="ghost" onClick={()=>setDetail(null)}>关闭</button></div><div className="join-detail-meta"><span>授权确认：{detail.authorization_confirmed?"已确认":"未确认"}</span><span>授权时间：{date(detail.authorized_at)}</span><span>账号数：{detail.account_count}</span></div>{detail.authorization_note&&<p className="join-auth-note">授权说明：{detail.authorization_note}</p>}<h3>账号执行结果</h3><div className="join-account-results">{(detail.accounts||[]).map(account=><article key={account.account_id}><div><strong>{account.account_name||account.account_id}</strong><small>{account.account_id}</small></div><span className={`status status-${account.status}`}>{statusName[account.status]||account.status}</span><span>{appName[account.application_status]||account.application_status}</span><span>尝试 {account.attempts}</span>{account.last_error&&<small className="join-error">{account.last_error}</small>}</article>)}{!detail.accounts?.length&&<div className="empty">暂无账号执行结果</div>}</div></section></div>}
+    {detail&&<div className="modal-backdrop" onClick={()=>{detailRequest.current++;setDetail(null)}}><section className="account-modal join-detail" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{detail.name}</h2><p>{targetLabel(detail)} · {statusName[detail.status]||detail.status}</p></div><button className="ghost" onClick={()=>{detailRequest.current++;setDetail(null)}}>关闭</button></div><div className="join-detail-meta"><span>授权确认：{detail.authorization_confirmed?"已确认":"未确认"}</span><span>授权时间：{date(detail.authorized_at)}</span><span>账号数：{detail.account_count}</span></div>{detail.authorization_note&&<p className="join-auth-note">授权说明：{detail.authorization_note}</p>}<h3>账号执行结果</h3><div className="join-account-results">{(detail.accounts||[]).map(account=><article key={account.account_id}><div><strong>{account.account_name||account.account_id}</strong><small>{account.account_id}</small></div><span className={`status status-${account.status}`}>{statusName[account.status]||account.status}</span><span>{appName[account.application_status]||account.application_status}</span><span>尝试 {account.attempts}</span>{account.last_error&&<small className="join-error">{account.last_error}</small>}</article>)}{!detail.accounts?.length&&<div className="empty">暂无账号执行结果</div>}</div></section></div>}
   </section>;
 }
