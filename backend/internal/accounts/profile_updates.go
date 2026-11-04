@@ -309,3 +309,29 @@ func NormalizeUsernameGenerationSettingsForWorker(settings UsernameGenerationSet
 	return normalizeUsernameGenerationSettings(settings)
 }
 
+
+
+// PauseQueuedProfileUpdate pauses a job that has not been claimed by a worker.
+// A processing job cannot be safely interrupted because its Telegram RPC may
+// already have produced an external side effect.
+func (s *Service) PauseQueuedProfileUpdate(ctx context.Context, tenantID, id string) error {
+	if !validAccountUUID(id) {
+		return errors.New("profile update job not found")
+	}
+	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE account_profile_update_jobs
+			SET status='paused', lease_until=NULL, last_error='paused by user before execution', updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='pending'`, tenantID, id)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("profile update job is not pending; processing jobs cannot be interrupted")
+		}
+		return nil
+	})
+}
