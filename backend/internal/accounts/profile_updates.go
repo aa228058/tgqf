@@ -158,12 +158,20 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 	if limit<1||limit>20{limit=10}
 	out:=[]ProfileUpdateJob{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		// An expired processing lease has an unknown Telegram-side outcome.
+		// Quarantine it for manual review instead of replaying a possibly applied
+		// profile change after a worker crash.
+		if _,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs
+			SET status='paused',lease_until=NULL,
+			    last_error='profile update outcome uncertain after worker lease expired; verify Telegram profile before resuming',
+			    updated_at=NOW()
+			WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()`,tenantID);err!=nil{return err}
 		rows,err:=tx.QueryContext(ctx,`WITH picked AS (
 			SELECT j.id,j.tenant_id,j.account_id
 			FROM account_profile_update_jobs j
 			JOIN telegram_accounts acc ON acc.tenant_id=j.tenant_id AND acc.id=j.account_id
 			WHERE j.tenant_id=$1 AND j.next_run_at<=NOW()
-			  AND (j.status='pending' OR (j.status='processing' AND j.lease_until<NOW()))
+			  AND j.status='pending'
 			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
 			  AND COALESCE(acc.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
 			  AND COALESCE(acc.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
@@ -293,7 +301,7 @@ func (s *Service) PauseInactiveProfileUpdateJobs(ctx context.Context) error {
  rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants`); if err!=nil{return err}
  var ids []string; for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return err};ids=append(ids,id)}
  if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
- for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND j.status IN ('pending','processing') AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
+ for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND (j.status='pending' OR (j.status='processing' AND j.lease_until<=NOW())) AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
  return nil
 }
 
