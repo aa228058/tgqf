@@ -172,7 +172,7 @@ status:="success";message:="proxy authentication and Telegram data-center TCP tu
 if checkErr!=nil{status="failed";message=checkErr.Error();if len(message)>500{message=message[:500]}}
 recordCtx,cancelRecord:=context.WithTimeout(context.WithoutCancel(ctx),2*time.Second);defer cancelRecord()
 	logErr:=withTenantTx(recordCtx,s.db,tenantID,func(tx *sql.Tx)error{
-	_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_proxy_checks(tenant_id,proxy_id,check_type,status,latency_ms,message) VALUES($1,$2,'telegram_dc_tunnel',$3,$4,$5)`,tenantID,proxyID,status,latency,message)
+	_,err:=tx.ExecContext(recordCtx,`INSERT INTO tenant_proxy_checks(tenant_id,proxy_id,check_type,status,latency_ms,message) VALUES($1,$2,'telegram_dc_tunnel',$3,$4,$5)`,tenantID,proxyID,status,latency,message)
 	return err
 })
 if logErr!=nil { if checkErr!=nil{return fmt.Errorf("%v; could not save proxy check history: %w",checkErr,logErr)};return fmt.Errorf("could not save proxy check history: %w",logErr) }
