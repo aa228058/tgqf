@@ -1201,3 +1201,23 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .settings-config-control{width:100%;justify-content:flex-start}
  .settings-config-control input[type=number]{flex:1;min-width:0}
 }
+
+/* System health dashboard */
+.monitor-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}
+.monitor-metric{position:relative;display:flex;min-width:0;flex-direction:column;gap:8px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.monitor-metric small,.monitor-metric span{color:var(--muted);font-size:12px}
+.monitor-metric strong{font-size:23px;overflow-wrap:anywhere}
+.monitor-status{font-size:11px;font-style:normal;font-weight:600}
+.monitor-status.ok{color:var(--success,var(--accent))}
+.monitor-status.warn{color:var(--warning,#b7791f)}
+.monitor-status.bad{color:var(--danger,#c53030)}
+.monitor-footnote{padding:12px;border-radius:8px;background:var(--surface-muted,var(--surface));color:var(--muted);font-size:12px;line-height:1.7}
+@media(max-width:900px){.monitor-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.monitor-grid{gap:8px}.monitor-metric{padding:12px}.monitor-metric strong{font-size:19px}}
+
+.monitor-alerts{margin-top:22px;padding-top:18px;border-top:1px solid var(--line)}
+.monitor-alert-list{display:grid;gap:0}
+.monitor-alert-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.monitor-alert-row div{display:grid;gap:5px;min-width:0}
+.monitor-alert-row small{color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+@media(max-width:480px){.monitor-alert-row{align-items:flex-start}}
