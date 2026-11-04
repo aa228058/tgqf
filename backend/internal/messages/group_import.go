@@ -66,11 +66,19 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 			err := tx.QueryRowContext(ctx, `INSERT INTO public_groups
 				(telegram_chat_id,chat_type,title,username,member_count,is_verified,first_seen_at,last_seen_at,created_at,updated_at)
 				VALUES($1,$2,$3,$4,$5,$6,NOW(),NOW(),NOW(),NOW())
-				ON CONFLICT(chat_type,telegram_chat_id) DO UPDATE
-				SET last_seen_at=GREATEST(public_groups.last_seen_at,NOW())
-				RETURNING id,(xmax=0)`,
-				item.ChatID,item.ChatType,item.Title,item.Username,item.MemberCount,item.IsVerified).Scan(&groupID,&wasInserted)
-			if err != nil { return err }
+				ON CONFLICT(chat_type,telegram_chat_id) DO NOTHING
+				RETURNING id`,
+				item.ChatID,item.ChatType,item.Title,item.Username,item.MemberCount,item.IsVerified).Scan(&groupID)
+			if err == nil {
+				wasInserted = true
+			} else if errors.Is(err, sql.ErrNoRows) {
+				// A tenant import must never update an existing shared catalogue row.
+				if lookupErr := tx.QueryRowContext(ctx, `SELECT id FROM public_groups WHERE chat_type=$1 AND telegram_chat_id=$2`, item.ChatType, item.ChatID).Scan(&groupID); lookupErr != nil {
+					return lookupErr
+				}
+			} else {
+				return err
+			}
 			if wasInserted { inserted++ } else { skipped++ }
 			// Every tenant that imports an already-known shared group must still
 			// receive its own contribution record; the global row is not tenant-owned.
