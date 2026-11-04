@@ -23,6 +23,8 @@ func (h *Handler) groupCorrectionRoutes(mux *http.ServeMux) {
     mux.Handle("GET /api/v1/admin/group-corrections",h.auth.Authenticated(http.HandlerFunc(h.listAdminGroupCorrections)))
     mux.Handle("POST /api/v1/admin/group-corrections/{id}/review",h.auth.Authenticated(http.HandlerFunc(h.reviewGroupCorrection)))
     mux.Handle("POST /api/v1/admin/groups/{id}/merge",h.auth.Authenticated(http.HandlerFunc(h.mergePublicGroups)))
+    mux.Handle("PATCH /api/v1/admin/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.updatePublicGroup)))
+    mux.Handle("DELETE /api/v1/admin/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.deletePublicGroup)))
 }
 
 func (h *Handler) listTenantGroupCorrections(w http.ResponseWriter,r *http.Request) {
@@ -92,4 +94,37 @@ func (h *Handler) mergePublicGroups(w http.ResponseWriter,r *http.Request) {
         messageJSON(w,status,map[string]string{"error":err.Error()});return
     }
     messageJSON(w,http.StatusOK,map[string]any{"status":"merged","source_group_id":sourceID,"target_group_id":request.TargetGroupID})
+}
+
+
+func (h *Handler) updatePublicGroup(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user.Role != "super_admin" { messageJSON(w,http.StatusForbidden,map[string]string{"error":"super_admin_required"}); return }
+	id, err := strconv.ParseInt(r.PathValue("id"),10,64)
+	if err != nil || id <= 0 { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid group id"}); return }
+	var request struct { Fields GroupCorrectionFields `json:"fields"` }
+	if err := decodeMessageJSON(w,r,16*1024,&request); err != nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid request body"}); return }
+	if err := h.service.UpdatePublicGroup(r.Context(),user.ID,id,request.Fields); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err,ErrInvalidGroupCorrection) { status=http.StatusBadRequest }
+		if errors.Is(err,ErrGroupCorrectionNotFound) { status=http.StatusNotFound }
+		messageJSON(w,status,map[string]string{"error":err.Error()}); return
+	}
+	messageJSON(w,http.StatusOK,map[string]string{"status":"updated"})
+}
+
+func (h *Handler) deletePublicGroup(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user.Role != "super_admin" { messageJSON(w,http.StatusForbidden,map[string]string{"error":"super_admin_required"}); return }
+	id, err := strconv.ParseInt(r.PathValue("id"),10,64)
+	if err != nil || id <= 0 { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid group id"}); return }
+	var request struct { Reason string `json:"reason"` }
+	if err := decodeMessageJSON(w,r,8*1024,&request); err != nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid request body"}); return }
+	if err := h.service.DeletePublicGroup(r.Context(),user.ID,id,request.Reason); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err,ErrGroupMergeConflict) { status=http.StatusBadRequest }
+		if errors.Is(err,ErrGroupCorrectionNotFound) { status=http.StatusNotFound }
+		messageJSON(w,status,map[string]string{"error":err.Error()}); return
+	}
+	messageJSON(w,http.StatusOK,map[string]string{"status":"deleted"})
 }

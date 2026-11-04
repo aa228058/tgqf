@@ -110,6 +110,8 @@ func xlsxCellRef(col,row int) string {
 }
 
 func buildGroupCatalogueXLSX(rows [][]string) ([]byte,error) {
+	// Excel worksheets support at most 1,048,576 rows, including the header.
+	if len(rows) > 1_048_576 { return nil, errors.New("catalogue exceeds the XLSX worksheet row limit; export CSV or TXT for the complete catalogue") }
 	var output bytes.Buffer
 	archive:=zip.NewWriter(&output)
 	entries:=map[string]string{
