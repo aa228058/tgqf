@@ -42,7 +42,9 @@ jobs:
           bash -n ../deploy/*.sh
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck -S warning ../deploy/*.sh
+          shellcheck -S warning ../deploy/*.sh ../deploy/tests/*.sh
+          bash ../deploy/tests/backup_test.sh
+          bash ../deploy/tests/restore_test.sh
       - name: Check patch whitespace
         run: git diff --check
       - run: npm run build

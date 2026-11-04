@@ -11,6 +11,8 @@ log() { echo "[restore] $*"; }
 [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || fail "Usage: bash deploy/restore.sh /path/to/backup"
 BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd -P)"
 [[ -f "$ENV_FILE" ]] || fail "Missing $ENV_FILE"
+chmod 0600 "$ENV_FILE"
+chmod go-rwx "$BACKUP_DIR/postgres.dump" "$BACKUP_DIR/redis-data.tar.gz" 2>/dev/null || true
 [[ -f "$BACKUP_DIR/postgres.dump" && -f "$BACKUP_DIR/redis-data.tar.gz" ]] || fail "Backup files are incomplete"
 
 set -a
@@ -84,9 +86,13 @@ deadline=$((SECONDS + 300))
 while (( SECONDS < deadline )); do
   api_id="$("${COMPOSE[@]}" ps -q api)"
   front_id="$("${COMPOSE[@]}" ps -q frontend)"
+  worker_id="$("${COMPOSE[@]}" ps -q worker)"
+  redis_id="$("${COMPOSE[@]}" ps -q redis)"
   api_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$api_id" 2>/dev/null || true)"
   front_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$front_id" 2>/dev/null || true)"
-  if [[ "$api_status" == "healthy" && "$front_status" == "healthy" ]]; then
+  worker_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$worker_id" 2>/dev/null || true)"
+  redis_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$redis_id" 2>/dev/null || true)"
+  if [[ "$api_status" == "healthy" && "$front_status" == "healthy" && "$worker_status" == "healthy" && "$redis_status" == "healthy" ]]; then
     restore_succeeded=1
     log "Restore completed and API/frontend are healthy."
     exit 0

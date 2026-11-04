@@ -9,6 +9,7 @@ cd "$ROOT"
 ENV_FILE="$ROOT/.env"
 COMPOSE_FILE="$ROOT/deploy/compose.yaml"
 SITE_NAME="tgqf"
+SKIP_PREDEPLOY_BACKUP_OVERRIDE="${TGQF_SKIP_PREDEPLOY_BACKUP:-}"
 
 log(){ printf '\n[TGQF] %s\n' "$*"; }
 fail(){ printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -38,6 +39,7 @@ set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
+TGQF_SKIP_PREDEPLOY_BACKUP="${SKIP_PREDEPLOY_BACKUP_OVERRIDE:-${TGQF_SKIP_PREDEPLOY_BACKUP:-0}}"
 
 set_env(){
   local key="$1" value="$2" escaped
@@ -97,6 +99,10 @@ chmod 600 "$ENV_FILE"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 log "Validating Compose configuration"
 "${COMPOSE[@]}" config --quiet
+MIN_DEPLOY_FREE_KB="${MIN_DEPLOY_FREE_KB:-1048576}"
+[[ "$MIN_DEPLOY_FREE_KB" =~ ^[0-9]+$ ]] || fail "MIN_DEPLOY_FREE_KB must be a non-negative integer."
+AVAILABLE_KB="$(df -Pk "$ROOT" | awk 'NR==2 {print $4}')"
+[[ -n "$AVAILABLE_KB" && "$AVAILABLE_KB" -ge "$MIN_DEPLOY_FREE_KB" ]] || fail "Insufficient free disk space: ${AVAILABLE_KB:-unknown}KB available; ${MIN_DEPLOY_FREE_KB}KB required."
 
 if [[ "$FIRST_INSTALL" == "0" && "${TGQF_SKIP_PREDEPLOY_BACKUP:-0}" != "1" ]]; then
   log "Creating a consistent pre-upgrade database and Redis backup"
