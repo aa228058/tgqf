@@ -364,3 +364,46 @@ func (s *Service) PauseQueuedProfileUpdate(ctx context.Context, tenantID, id str
 		return nil
 	})
 }
+
+
+// BulkProfileUpdateResult reports the outcome for each tenant-owned job.
+type BulkProfileUpdateResult struct {
+ ID string `json:"id"`
+ Status string `json:"status"`
+ Error string `json:"error,omitempty"`
+}
+
+// BulkControlProfileUpdates applies a safe state transition independently to each job.
+func (s *Service) BulkControlProfileUpdates(ctx context.Context, tenantID, action string, ids []string) ([]BulkProfileUpdateResult, error) {
+ if len(ids)<1 || len(ids)>100 { return nil, errors.New("profile update batch control requires 1-100 job IDs") }
+ switch action { case "pause","resume","retry","cancel": default: return nil, errors.New("unsupported profile update action") }
+ seen:=map[string]bool{}
+ for _,id:=range ids { if !validAccountUUID(id)||seen[id] { return nil,errors.New("invalid or duplicate profile update job ID") }; seen[id]=true }
+ results:=make([]BulkProfileUpdateResult,0,len(ids))
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx) error {
+  for _,id:=range ids {
+   var query string
+   switch action {
+   case "pause":
+    query=`UPDATE account_profile_update_jobs SET status='paused',lease_until=NULL,last_error='paused by user before execution',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='pending'`
+   case "resume":
+    query=`UPDATE account_profile_update_jobs j SET status='pending',attempts=0,next_run_at=NOW(),last_error='',updated_at=NOW() WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='paused' AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()) AND EXISTS(SELECT 1 FROM telegram_accounts a WHERE a.tenant_id=j.tenant_id AND a.id=j.account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL)`
+   case "retry":
+    query=`UPDATE account_profile_update_jobs j SET status='pending',attempts=0,next_run_at=NOW(),last_error='',updated_at=NOW() WHERE j.tenant_id=$1 AND j.id=$2 AND j.status='failed' AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND t.status='active' AND t.expires_at>NOW()) AND EXISTS(SELECT 1 FROM telegram_accounts a WHERE a.tenant_id=j.tenant_id AND a.id=j.account_id AND a.status='authorized' AND a.session_ciphertext IS NOT NULL)`
+   case "cancel":
+    query=`UPDATE account_profile_update_jobs SET status='cancelled',lease_until=NULL,last_error='cancelled by user',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('pending','paused','failed')`
+   }
+   res,e:=tx.ExecContext(ctx,query,tenantID,id); if e!=nil{return e}
+   n,e:=res.RowsAffected();if e!=nil{return e}
+   item:=BulkProfileUpdateResult{ID:id,Status:"unchanged"}
+   if n==1 { switch action {case "pause":item.Status="paused";case "resume","retry":item.Status="pending";case "cancel":item.Status="cancelled"} } else {
+    var exists bool
+    if e=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM account_profile_update_jobs WHERE tenant_id=$1 AND id=$2)`,tenantID,id).Scan(&exists);e!=nil{return e}
+    if !exists { item.Error="job not found in this tenant" } else { item.Error="job state does not allow this action; processing jobs cannot be interrupted" }
+   }
+   results=append(results,item)
+  }
+  return nil
+ })
+ return results,err
+}
