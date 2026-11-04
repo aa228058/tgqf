@@ -125,5 +125,14 @@ func (s *Service) AckIncomingUpdate(ctx context.Context, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("incoming update ID is required")
 	}
-	return s.redis.XAck(ctx, incomingUpdateStream, incomingUpdateGroup, id).Err()
+	// ACK and delete in one Redis transaction. XACK alone removes the
+	// pending-delivery reference but leaves the payload in the stream forever;
+	// this stream carries every live Telegram update, so that would grow without
+	// bound even when PostgreSQL ingestion is healthy.
+	_, err := s.redis.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.XAck(ctx, incomingUpdateStream, incomingUpdateGroup, id)
+		pipe.XDel(ctx, incomingUpdateStream, id)
+		return nil
+	})
+	return err
 }
