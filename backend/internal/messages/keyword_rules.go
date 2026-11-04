@@ -433,7 +433,41 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             if messageIDs[0]!=telegramMessageID { return errors.New("primary Telegram message id does not match result list") }
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
-            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            // Keep the conversation timeline consistent with Telegram: write
+            // every sent message (including each album item) and its realtime
+            // event in the same transaction as the action result.
+            for i,messageID:=range messageIDs {
+                mediaType:=""
+                messageText:=job.Text
+                switch job.ActionType {
+                case "contact":
+                    mediaType="contact"
+                    messageText=""
+                case "media":
+                    mediaType=job.MediaType
+                    messageText=job.MediaCaption
+                case "media_album":
+                    if i>=len(job.MediaAlbumItems){return errors.New("media album result count does not match request")}
+                    mediaType=job.MediaAlbumItems[i].MediaType
+                    messageText=job.MediaAlbumItems[i].Caption
+                }
+                _,err=tx.ExecContext(ctx,`INSERT INTO unified_messages(
+                    tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,
+                    reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date
+                )
+                SELECT $1,$2,$3,$4,
+                    COALESCE((SELECT chat_type FROM tenant_message_chats WHERE tenant_id=$1 AND telegram_account_id=$2 AND chat_id=$3 LIMIT 1),'private'),
+                    COALESCE((SELECT chat_title FROM tenant_message_chats WHERE tenant_id=$1 AND telegram_account_id=$2 AND chat_id=$3 LIMIT 1),''),
+                    0,$5,TRUE,TRUE,$6,$7,NOW()
+                ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING`,
+                    job.TenantID,job.AccountID,job.ChatID,messageID,job.ReplyToMessageID,messageText,mediaType)
+                if err!=nil{return err}
+                payload,marshalErr:=json.Marshal(MessageCreatedEvent{Type:"message.created",AccountID:job.AccountID,ChatID:job.ChatID,MessageID:messageID,CreatedAt:time.Now().UTC()})
+                if marshalErr!=nil{return marshalErr}
+                if _,err=tx.ExecContext(ctx,`INSERT INTO message_event_outbox(tenant_id,event_type,payload) VALUES($1,'message.created',$2::jsonb)`,job.TenantID,string(payload));err!=nil{return err}
+            }
+            return nil
         }
         var tenantActive bool
         if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
