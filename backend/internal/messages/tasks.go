@@ -32,6 +32,7 @@ type UnifiedTaskFilter struct {
 	Status string
 	Type string
 	AccountID string
+	Query string
 	Limit int
 	Offset int
 }
@@ -40,6 +41,8 @@ func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, er
 	filter.Status = strings.TrimSpace(strings.ToLower(filter.Status))
 	filter.Type = strings.TrimSpace(strings.ToLower(filter.Type))
 	filter.AccountID = strings.TrimSpace(filter.AccountID)
+	filter.Query = strings.TrimSpace(filter.Query)
+	if len(filter.Query) > 120 { return filter, errors.New("task search query exceeds 120 characters") }
 	switch filter.Type {
 	case "", "message_reply", "keyword_action", "profile_update", "group_join":
 	default:
@@ -120,14 +123,15 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 				OR ($2='queued' AND tasks.status IN ('pending','queued','request_pending'))
 				OR ($2='completed' AND tasks.status IN ('sent','joined','already_member','skipped','completed')))
 			  AND ($3='' OR tasks.task_type=$3)
-			  AND ($4='' OR tasks.account_id=$4)`
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)`+where, tenantID, filter.Status, filter.Type, filter.AccountID).Scan(&total); err != nil {
+			  AND ($4='' OR tasks.account_id=$4)
+			  AND ($5='' OR tasks.id ILIKE '%' || $5 || '%' OR tasks.title ILIKE '%' || $5 || '%' OR tasks.account_name ILIKE '%' || $5 || '%' OR COALESCE(tasks.last_error,'') ILIKE '%' || $5 || '%')`
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)`+where, tenantID, filter.Status, filter.Type, filter.AccountID, filter.Query).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT id,group_id,task_type,title,status,account_id,account_name,
 			attempts,scheduled_at,lease_until,last_error,created_at,updated_at`+where+
-			` ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6`,
-			tenantID, filter.Status, filter.Type, filter.AccountID, filter.Limit, filter.Offset)
+			` ORDER BY created_at DESC,id DESC LIMIT $6 OFFSET $7`,
+			tenantID, filter.Status, filter.Type, filter.AccountID, filter.Query, filter.Limit, filter.Offset)
 		if err != nil {
 			return err
 		}
