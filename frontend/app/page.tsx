@@ -52,14 +52,11 @@ export default function Home() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const requestSequence = useRef(0);
-  const loadingRef = useRef(false);
   const actionLock = useRef(false);
   const loginLock = useRef(false);
   const limit = 30;
 
   const load = useCallback(async (currentToken: string, quiet = false) => {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
     const sequence = ++requestSequence.current;
     if (!quiet) setBusy(true);
     try {
@@ -84,7 +81,6 @@ export default function Home() {
       if (sequence === requestSequence.current) setError(e instanceof Error ? e.message : "加载任务失败");
     } finally {
       if (sequence === requestSequence.current && !quiet) setBusy(false);
-      loadingRef.current = false;
     }
   }, [offset, status, type, accountID]);
 
@@ -109,7 +105,7 @@ export default function Home() {
   useEffect(() => { setSelected([]); }, [offset, status, type, accountID]);
   useEffect(() => {
     if (!signedIn || !token) return;
-    const refresh = () => { if (document.visibilityState === "visible") void load(token, true); };
+    const refresh = () => { if (document.visibilityState === "visible" && !actionLock.current) void load(token, true); };
     const timer = window.setInterval(refresh, 10000);
     document.addEventListener("visibilitychange", refresh);
     return () => {
@@ -131,7 +127,7 @@ export default function Home() {
     finally { loginLock.current = false; setBusy(false); }
   }
   function logout() {
-    requestSequence.current++; loadingRef.current = false; actionLock.current = false;
+    requestSequence.current++; actionLock.current = false;
     const currentToken = token;
     window.localStorage.removeItem("tgqf_access_token");
     setToken(""); setUser(null); setSignedIn(false); setTasks([]); setSummary(null);
