@@ -66,6 +66,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 		`CREATE TABLE tenants (id UUID PRIMARY KEY,status TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,reply_jobs_last_claimed_at TIMESTAMPTZ)`,
 		`CREATE TABLE telegram_accounts (
 			tenant_id UUID NOT NULL,id UUID NOT NULL,status TEXT NOT NULL,session_ciphertext BYTEA,
+			display_name TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',
 			join_flood_wait_until TIMESTAMPTZ,telegram_send_next_at TIMESTAMPTZ,telegram_send_cooldown_until TIMESTAMPTZ,
 			PRIMARY KEY(tenant_id,id))`,
 		`CREATE TABLE tenant_join_tasks (
