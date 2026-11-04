@@ -42,6 +42,7 @@ type Manager struct {
 	pendingQR map[string]*pendingQR
  pendingPhone map[string]*pendingPhone
  messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
+	voiceCallUpdateHandler func(accountID string, callID int64, state string)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
@@ -147,6 +148,7 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 	m.clients[accountID] = client
 	m.mu.Unlock()
 	m.registerMessageHandler(accountID, client)
+	m.registerVoiceCallHandler(accountID, client)
 
 	if err := client.Connect(m.cfg.ConnectTimeout); err != nil {
 		m.mu.Lock()
