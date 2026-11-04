@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -10,6 +10,7 @@ type Proxy={id:string;name:string;protocol:string;host:string;port:number;userna
 type ProxyInput={name:string;protocol:string;host:string;port:number;username:string;password:string;clear_password?:boolean};
 type QRState={accountId:string;url:string;expiresAt:string};
 type LoginMode="qr"|"phone"|"session";
+type ProfileJob={id:string;batch_id:string;account_id:string;first_name:string;last_name:string;about:string;generate_username:boolean;applied_username?:string;status:string;attempts:number;next_run_at:string;last_error?:string};
 
 async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  const headers:Record<string,string>={Authorization:`Bearer ${token}`};
@@ -25,7 +26,7 @@ const statusClass:Record<string,string>={authorized:"status-joined",pending:"sta
 const fmt=(value?:string)=>value?new Date(value).toLocaleString():"—";
 
 export function AccountsPage({token}:{token:string}){
- const [tab,setTab]=useState<"accounts"|"proxies">("accounts");
+ const [tab,setTab]=useState<"accounts"|"proxies"|"profile">("accounts");
  const [accounts,setAccounts]=useState<Account[]>([]),[total,setTotal]=useState(0),[proxies,setProxies]=useState<Proxy[]>([]);
  const [query,setQuery]=useState(""),[status,setStatus]=useState(""),[groupFilter,setGroupFilter]=useState("");
  const [offset,setOffset]=useState(0),[selected,setSelected]=useState<string[]>([]);
@@ -38,6 +39,9 @@ export function AccountsPage({token}:{token:string}){
  const [importFile,setImportFile]=useState<File|null>(null),[importPhone,setImportPhone]=useState(""),[importName,setImportName]=useState(""),[importGroup,setImportGroup]=useState("");
  const [profile,setProfile]=useState<{account:Account;data:unknown}|null>(null);
  const [proxyEditor,setProxyEditor]=useState<{id?:string;input:ProxyInput}|null>(null);
+ const [profileAccounts,setProfileAccounts]=useState<Account[]>([]),[profileSelected,setProfileSelected]=useState<string[]>([]);
+ const [profileForm,setProfileForm]=useState({first_name:"",last_name:"",about:"",generate_username:false});
+ const [avatarFile,setAvatarFile]=useState<File|null>(null),[profileJobs,setProfileJobs]=useState<ProfileJob[]>([]),[profileJobTotal,setProfileJobTotal]=useState(0),[profileJobStatus,setProfileJobStatus]=useState("");
 
  const loadAccounts=useCallback(async()=>{
   setBusy(true);setError("");
