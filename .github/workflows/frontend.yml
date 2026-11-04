@@ -39,10 +39,11 @@ jobs:
         run: npx tsc --noEmit
       - name: Validate deployment shell scripts
         run: |
-          bash -n ../deploy/*.sh
+          bash -n ../deploy/*.sh ../deploy/tests/*.sh
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck -S warning ../deploy/*.sh
+          shellcheck -S warning ../deploy/*.sh ../deploy/tests/*.sh
+          bash ../deploy/tests/backup_test.sh
       - name: Check patch whitespace
         run: git diff --check
       - run: npm run build
