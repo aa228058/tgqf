@@ -642,13 +642,21 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r\n\x1a\n" { fileName="profile.png" }
 				updateErr=manager.UpdateProfilePhoto(updateCtx,job.AccountID,job.PhotoData,fileName)
 			}
-			if updateErr==nil && job.GenerateUsername {
+			usernameResultUncertain := false
+			if updateErr==nil && job.GenerateUsername && job.AppliedUsername=="" {
 				var username string
 				for attempt:=0;attempt<8;attempt++ {
 					username,updateErr=generateRandomTelegramUsername(accounts.UsernameGenerationSettings{Prefix:job.UsernamePrefix,RandomLength:job.UsernameRandomLength,Charset:job.UsernameCharset})
 					if updateErr!=nil { break }
 					updateErr=manager.UpdateUsername(updateCtx,job.AccountID,username)
-					if updateErr==nil { job.AppliedUsername=username; break }
+					if updateErr==nil {
+						job.AppliedUsername=username
+						if persistErr:=accountService.RecordProfileUpdateUsername(updateCtx,job,username);persistErr!=nil {
+							usernameResultUncertain=true
+							updateErr=fmt.Errorf("Telegram username may have changed but its result could not be persisted: %w",persistErr)
+						}
+						break
+					}
 					if tgerr.IsUsernameOccupied(updateErr) { continue }
 					break
 				}
@@ -658,6 +666,13 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			}
 			cancel()
 			if updateErr!=nil {
+				if usernameResultUncertain {
+					if pauseErr:=accountService.PauseProfileUpdate(ctx,job,updateErr.Error());pauseErr!=nil {
+						logger.Error("pause profile job after uncertain username update", "job_id",job.ID,"error",pauseErr)
+					}
+					logger.Warn("profile update paused because Telegram username outcome is uncertain","job_id",job.ID,"account_id",job.AccountID,"error",updateErr)
+					continue
+				}
 				floodWait,_:=tgerr.AsFloodWait(updateErr)
 				if floodWait>0 {
 					logger.Warn("Telegram profile update FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
