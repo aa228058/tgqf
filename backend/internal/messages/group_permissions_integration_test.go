@@ -426,3 +426,35 @@ func TestConcurrentTenantImportsConvergeOnOneSharedGroup(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant_group_contributions c JOIN public_groups g ON g.id=c.group_id WHERE g.chat_type='group' AND g.telegram_chat_id=987654321`).Scan(&contributors); err != nil { t.Fatal(err) }
 	if groups != 1 || contributors != 2 { t.Fatalf("shared groups=%d tenant contributions=%d, want 1/2", groups, contributors) }
 }
+
+
+func TestGlobalCatalogueReadForSuperAdminDoesNotExposeTenantSources(t *testing.T) {
+	db, cleanup := openGroupIntegrationDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_groups(telegram_chat_id,chat_type,title) VALUES(9001,'group','Global review target')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id)
+		SELECT id,'11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',9001 FROM public_groups WHERE telegram_chat_id=9001`); err != nil {
+		t.Fatal(err)
+	}
+	const globalScope = "00000000-0000-0000-0000-000000000000"
+	items, total, err := New(db).ListGroupLibraryFiltered(ctx, globalScope, GroupLibraryFilter{Sort:"title"}, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("global catalogue rows total=%d len=%d, want 1", total, len(items))
+	}
+	if items[0].SourceCount != 0 || items[0].ContributorCount != 0 {
+		t.Fatalf("super-admin global scope leaked tenant source counts: %+v", items[0])
+	}
+	sources, err := New(db).ListGroupSources(ctx, globalScope, items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 0 {
+		t.Fatalf("super-admin global scope exposed %d tenant source rows, want 0", len(sources))
+	}
+}
