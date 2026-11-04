@@ -61,6 +61,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.getGroupLibraryItem)))
 	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
 	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
+	mux.Handle("POST /api/v1/groups/catalogue/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueCSV)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
 	mux.Handle("GET /api/v1/group-links/stats",h.auth.Authenticated(http.HandlerFunc(h.groupLinkStats)))
 	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
