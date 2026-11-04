@@ -144,7 +144,6 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
             step.Text=strings.TrimSpace(step.Text); step.ContactPhone=strings.TrimSpace(step.ContactPhone); step.ContactFirstName=strings.TrimSpace(step.ContactFirstName); step.ContactLastName=strings.TrimSpace(step.ContactLastName)
             step.MediaAssetID=strings.TrimSpace(step.MediaAssetID); step.MediaType=strings.ToLower(strings.TrimSpace(step.MediaType)); step.MediaCaption=strings.TrimSpace(step.MediaCaption)
             if len([]rune(step.Text))>4096 || len([]rune(step.MediaCaption))>1024 { return rule,fmt.Errorf("%w: action step %d payload is too long",ErrInvalidKeywordRule,i+1) }
-            if step.ActionType=="text" && step.Text=="" { return rule,fmt.Errorf("%w: text step %d requires text",ErrInvalidKeywordRule,i+1) }
             if step.ActionType=="voice_call" && (len(rule.ChatTypes)!=1 || rule.ChatTypes[0]!="private") { return rule,fmt.Errorf("%w: voice_call steps require private chat rules",ErrInvalidKeywordRule) }
         }
     }
@@ -828,7 +827,7 @@ func (s *Service) UpdateKeywordVoiceCallState(ctx context.Context, tenantID, acc
     err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
         result, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
             SET voice_call_state=$4, updated_at=NOW()
-            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND action_type='voice_call'`,
+            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND (action_type='voice_call' OR action_steps @> '[{\"action_type\":\"voice_call\"}]'::jsonb)`,
             tenantID, accountID, callID, state)
         if err != nil {
             return err
