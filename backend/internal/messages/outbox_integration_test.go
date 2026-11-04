@@ -11,7 +11,7 @@ func TestPrunePublishedMessageEventsKeepsPendingAndRecentRows(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	tenantID := "99999999-9999-4999-8999-999999999999"
-	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, tenantID); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,name,status,expires_at) VALUES($1,'integration test','active',NOW()+INTERVAL '30 days')`, tenantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO message_event_outbox(tenant_id,event_type,payload,published_at)
