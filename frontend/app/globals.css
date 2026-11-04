@@ -965,3 +965,30 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .keyword-monitor .keyword-preview{width:100%;max-height:88vh}
 }
 @media(prefers-reduced-motion:reduce){.keyword-monitor .keyword-card,.keyword-monitor .keyword-table tbody tr,.keyword-monitor .keyword-tabs button{transition:none}}
+
+
+/* Settings interaction polish */
+.settings-page .settings-tabs{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain}
+.settings-page .settings-tabs button{min-height:42px;white-space:nowrap}
+.settings-page button:focus-visible,.settings-page input:focus-visible,.settings-page select:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.settings-page .settings-panel{transition:border-color .16s ease,box-shadow .16s ease}
+.settings-page .settings-table tbody tr{transition:background-color .14s ease}
+.settings-page .settings-table tbody tr:hover{background:var(--shell-hover)}
+.settings-page .tenant-actions{display:flex;gap:6px;flex-wrap:wrap}
+.settings-page .tenant-actions button{min-height:36px;min-width:48px}
+.settings-page .issued-cards{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:14px;min-width:0}
+.settings-page .issued-cards>div{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.settings-page .issued-cards pre{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;user-select:all;padding:12px;background:var(--bg);border-radius:8px}
+.settings-page button:disabled{cursor:wait;opacity:.65}
+@media(max-width:600px){
+ .settings-page{padding-left:12px;padding-right:12px}
+ .settings-page .settings-tabs{margin-left:-2px;margin-right:-2px;padding-bottom:3px}
+ .settings-page .settings-tabs button{flex:0 0 auto;padding:10px 12px;font-size:11px}
+ .settings-page .settings-inline-form{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+ .settings-page .settings-inline-form button{grid-column:1/-1;width:100%;min-height:42px}
+ .settings-page .settings-form button{width:100%;min-height:43px}
+ .settings-page .tenant-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+ .settings-page .tenant-actions button{width:100%;padding:8px 5px;font-size:11px}
+ .settings-page .issued-cards>div button{width:100%}
+}
+@media(prefers-reduced-motion:reduce){.settings-page .settings-panel,.settings-page .settings-table tbody tr{transition:none}}
