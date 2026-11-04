@@ -8,7 +8,7 @@ import (
 )
 
 func TestConcurrentIncomingUpdateCreatesOneKeywordMatchAndAction(t *testing.T) {
-	db, cleanup := openGroupIntegrationDB(t)
+	db, cleanup := openMigratedIntegrationDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	tenantID := "12121212-1212-4212-8212-121212121212"
