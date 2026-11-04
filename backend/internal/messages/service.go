@@ -412,6 +412,8 @@ type GroupLibraryItem struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	LastCheckError string `json:"last_check_error,omitempty"`
+	CheckAttempts int `json:"check_attempts"`
+	NextCheckAt *time.Time `json:"next_check_at,omitempty"`
 }
 
 type GroupLibraryFilter struct {
@@ -581,14 +583,14 @@ func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status
 	items := []GroupLinkItem{}
 	total := 0
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		filter := "($1='' OR link_type=$1) AND ($2='' OR status=$2)"
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM public_group_links WHERE "+filter, linkType, status).Scan(&total); err != nil { return err }
-		rows, err := tx.QueryContext(ctx, "SELECT id,group_id,link_type,COALESCE(public_url,''),link_type='invite',status,(SELECT COUNT(*) FROM public_group_link_sources src WHERE src.link_id=public_group_links.id),first_seen_at,last_seen_at,last_checked_at,COALESCE(last_check_error,'') FROM public_group_links WHERE "+filter+" ORDER BY last_seen_at DESC,id DESC LIMIT $3 OFFSET $4", linkType, status, limit, offset)
+		filter := "($1='' OR l.link_type=$1) AND ($2='' OR l.status=$2) AND EXISTS (SELECT 1 FROM public_group_link_sources tenant_src WHERE tenant_src.link_id=l.id AND tenant_src.tenant_id=$3)"
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM public_group_links l WHERE "+filter, linkType, status, tenantID).Scan(&total); err != nil { return err }
+		rows, err := tx.QueryContext(ctx, "SELECT l.id,l.group_id,l.link_type,COALESCE(l.public_url,''),l.link_type='invite',l.status,(SELECT COUNT(*) FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$3),l.first_seen_at,l.last_seen_at,l.last_checked_at,COALESCE(l.last_check_error,''),l.check_attempts,l.next_check_at FROM public_group_links l WHERE "+filter+" ORDER BY l.last_seen_at DESC,l.id DESC LIMIT $4 OFFSET $5", linkType, status, tenantID, limit, offset)
 		if err != nil { return err }
 		defer rows.Close()
 		for rows.Next() {
 			var item GroupLinkItem
-			if err := rows.Scan(&item.ID,&item.GroupID,&item.Type,&item.PublicURL,&item.PrivateInvite,&item.Status,&item.SourceCount,&item.FirstSeenAt,&item.LastSeenAt,&item.LastCheckedAt,&item.LastCheckError); err != nil { return err }
+			if err := rows.Scan(&item.ID,&item.GroupID,&item.Type,&item.PublicURL,&item.PrivateInvite,&item.Status,&item.SourceCount,&item.FirstSeenAt,&item.LastSeenAt,&item.LastCheckedAt,&item.LastCheckError,&item.CheckAttempts,&item.NextCheckAt); err != nil { return err }
 			items = append(items,item)
 		}
 		return rows.Err()
