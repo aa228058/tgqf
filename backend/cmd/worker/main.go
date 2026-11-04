@@ -318,7 +318,7 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 
 
 func processKeywordActionJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-    jobs,err:=service.ClaimKeywordActionJobs(ctx,1)
+    jobs,err:=service.ClaimKeywordActionJobs(ctx,10)
     if err!=nil {logger.Error("claim keyword action jobs","error",err);return}
     for _,job:=range jobs {
         if ctx.Err()!=nil{return}
