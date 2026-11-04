@@ -46,3 +46,23 @@ DROP TRIGGER IF EXISTS keyword_action_jobs_album_assets_tenant ON keyword_action
 CREATE TRIGGER keyword_action_jobs_album_assets_tenant BEFORE INSERT OR UPDATE OF media_album_items,action_type ON keyword_action_jobs FOR EACH ROW EXECUTE FUNCTION enforce_keyword_album_assets_tenant();
 
 CREATE INDEX IF NOT EXISTS keyword_action_jobs_album_idx ON keyword_action_jobs(tenant_id) WHERE action_type='media_album';
+
+-- Protect referenced album files from deletion, including references embedded in JSONB.
+CREATE OR REPLACE FUNCTION prevent_referenced_keyword_album_asset_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM tenant_keyword_rules r
+    WHERE r.tenant_id=OLD.tenant_id AND r.action_type='media_album'
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.media_album_items) item WHERE item->>'asset_id'=OLD.id::text)
+  ) OR EXISTS (
+    SELECT 1 FROM keyword_action_jobs j
+    WHERE j.tenant_id=OLD.tenant_id AND j.action_type='media_album'
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(j.media_album_items) item WHERE item->>'asset_id'=OLD.id::text)
+  ) THEN
+    RAISE EXCEPTION 'media asset is referenced by a keyword album';
+  END IF;
+  RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS protect_keyword_album_asset_delete ON tenant_media_assets;
+CREATE TRIGGER protect_keyword_album_asset_delete BEFORE DELETE ON tenant_media_assets
+FOR EACH ROW EXECUTE FUNCTION prevent_referenced_keyword_album_asset_delete();
