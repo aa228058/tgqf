@@ -119,7 +119,9 @@ func splitSQLStatements(script string) []string {
 			continue
 		}
 		if state == 3 {
-			if script[i] == '\n' { state = 0 }
+			if script[i] == '\n' {
+				state = 0
+			}
 			i++
 			continue
 		}
@@ -132,7 +134,9 @@ func splitSQLStatements(script string) []string {
 			if i+1 < len(script) && script[i:i+2] == "*/" {
 				blockDepth--
 				i += 2
-				if blockDepth == 0 { state = 0 }
+				if blockDepth == 0 {
+					state = 0
+				}
 				continue
 			}
 			i++
@@ -161,110 +165,14 @@ func splitSQLStatements(script string) []string {
 		case script[i] == '"':
 			state = 2
 			i++
-		case script[i] == '
-	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
-		return fmt.Errorf("create migration table: %w", err)
-	}
-	entries, err := fs.Glob(migrationFiles, "migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	sort.Strings(entries)
-	for _, name := range entries {
-		version := strings.TrimSuffix(strings.TrimPrefix(name, "migrations/"), ".sql")
-		var exists bool
-		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
-			return fmt.Errorf("check migration %s: %w", version, err)
-		}
-		if exists {
-			continue
-		}
-		script, err := migrationFiles.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		tx, err := s.DB.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, statement := range splitSQLStatements(string(script)) {
-			statement = strings.TrimSpace(statement)
-			if statement == "" {
-				continue
-			}
-			if _, err = tx.ExecContext(ctx, statement); err != nil {
-				break
-			}
-		}
-		if err == nil {
-			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version)
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("apply migration %s: %w", version, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %s: %w", version, err)
-		}
-	}
-	return nil
-}
-:
-			end := i+1
+		case script[i] == '$':
+			end := i + 1
 			for end < len(script) && (script[end] == '_' || script[end] >= 'a' && script[end] <= 'z' || script[end] >= 'A' && script[end] <= 'Z' || script[end] >= '0' && script[end] <= '9') {
 				end++
 			}
-			if end < len(script) && script[end] == '
-	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
-		return fmt.Errorf("create migration table: %w", err)
-	}
-	entries, err := fs.Glob(migrationFiles, "migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	sort.Strings(entries)
-	for _, name := range entries {
-		version := strings.TrimSuffix(strings.TrimPrefix(name, "migrations/"), ".sql")
-		var exists bool
-		if err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&exists); err != nil {
-			return fmt.Errorf("check migration %s: %w", version, err)
-		}
-		if exists {
-			continue
-		}
-		script, err := migrationFiles.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		tx, err := s.DB.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		for _, statement := range splitSQLStatements(string(script)) {
-			statement = strings.TrimSpace(statement)
-			if statement == "" {
-				continue
-			}
-			if _, err = tx.ExecContext(ctx, statement); err != nil {
-				break
-			}
-		}
-		if err == nil {
-			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version)
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("apply migration %s: %w", version, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %s: %w", version, err)
-		}
-	}
-	return nil
-}
- {
-				dollarTag = script[i:end+1]
-				i = end+1
+			if end < len(script) && script[end] == '$' {
+				dollarTag = script[i : end+1]
+				i = end + 1
 			} else {
 				i++
 			}
