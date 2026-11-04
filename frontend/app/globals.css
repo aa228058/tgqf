@@ -293,3 +293,39 @@
 .runtime-note p{margin:0;color:var(--muted);font-size:11px;line-height:1.7}
 @media(max-width:900px){.runtime-page{padding:20px 14px 30px}.runtime-heading{align-items:flex-start;flex-direction:column}.runtime-refresh{width:100%;justify-content:space-between}.runtime-columns{grid-template-columns:1fr}}
 @media(max-width:520px){.runtime-stats{gap:8px}.runtime-stats article{padding:12px}.runtime-stats strong{font-size:22px}}
+
+
+.settings-page{max-width:1480px;margin:0 auto;padding:27px 32px 45px}
+.settings-heading{margin-bottom:20px}
+.settings-heading h1{font-size:27px;margin:7px 0 4px;letter-spacing:-.03em}
+.settings-heading p{margin:0;color:var(--muted);font-size:12px}
+.settings-tabs{display:flex;gap:5px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:15px}
+.settings-tabs button{white-space:nowrap;background:transparent;color:var(--muted);padding:11px 14px;border-radius:8px 8px 0 0;font-size:12px}
+.settings-tabs button.active{color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);box-shadow:inset 0 -2px var(--accent)}
+.settings-panel{margin-bottom:14px}
+.settings-panel h2{font-size:16px;margin:0 0 6px}
+.settings-panel>p,.settings-section-heading p{font-size:11px;color:var(--muted);margin:0 0 15px}
+.settings-form{display:grid;gap:13px;max-width:480px}
+.settings-form label{display:grid;gap:6px;font-size:12px;font-weight:650}
+.settings-form input,.settings-form select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.settings-form small{font-size:10px;color:var(--muted);line-height:1.6}
+.settings-form button{justify-self:start}
+.settings-inline-form{display:flex;align-items:flex-end;max-width:none;flex-wrap:wrap}
+.settings-inline-form label{min-width:150px}
+.settings-section-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+.settings-section-heading h2{margin:0 0 4px}
+.settings-section-heading p{margin:0}
+.settings-table-wrap{overflow-x:auto}
+.settings-table{min-width:760px}
+.settings-table td strong,.settings-table td small{display:block}
+.settings-table td small{font-size:10px;color:var(--muted);margin-top:4px}
+.settings-table code{font-size:10px}
+.tenant-actions{display:flex;gap:5px}
+.tenant-actions button{font-size:10px;padding:6px 8px}
+.issued-cards{margin-top:15px;padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+.issued-cards>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.issued-cards strong{font-size:12px}
+.issued-cards pre{max-height:250px;overflow:auto;margin:10px 0 0;font-size:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+:root[data-theme="dark"] .settings-form input,:root[data-theme="dark"] .settings-form select{background:#101923;color:var(--ink)}
+@media(max-width:900px){.settings-page{padding:20px 14px 30px}}
+@media(max-width:520px){.settings-inline-form{align-items:stretch;flex-direction:column}.settings-inline-form label{width:100%}.settings-section-heading{align-items:flex-start}}
