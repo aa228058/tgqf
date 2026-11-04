@@ -74,14 +74,3 @@ func (h *Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": items, "total": total, "limit": limit, "offset": offset})
 }
-
-func (h *Handler) systemHealth(w http.ResponseWriter, r *http.Request) {
-    snapshot, err := h.service.SystemHealth(r.Context())
-    if err != nil {
-        writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error":"system health collection incomplete","health":snapshot})
-        return
-    }
-    status := "healthy"
-    if snapshot.HasWarnings() { status = "warning" }
-    writeJSON(w, http.StatusOK, map[string]any{"status":status,"health":snapshot})
-}
