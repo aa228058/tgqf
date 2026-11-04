@@ -652,33 +652,36 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 
 
 func refreshGroupPermissions(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
-	items,err:=service.ListGroupPermissionRefreshes(ctx,tenantID,accountID,5)
-	if err!=nil{return err}
-	for _,item:=range items {
+	for {
 		if ctx.Err()!=nil{return ctx.Err()}
-		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-		chat,checkErr:=manager.GetChatMetadata(checkCtx,accountID,item.ChatID)
-		cancel()
-		var defaultPermissions,accountRights []byte
-		if checkErr==nil {
-			if chat.Permissions!=nil {
-				defaultPermissions,checkErr=json.Marshal(chat.Permissions)
-			}
+		items,err:=service.ListGroupPermissionRefreshes(ctx,tenantID,accountID,5)
+		if err!=nil{return err}
+		if len(items)==0{return nil}
+		for _,item:=range items {
+			if ctx.Err()!=nil{return ctx.Err()}
+			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+			chat,checkErr:=manager.GetChatMetadata(checkCtx,accountID,item.ChatID)
+			cancel()
+			var defaultPermissions,accountRights []byte
 			if checkErr==nil {
-				accountRights,checkErr=json.Marshal(map[string]any{
-					"is_admin":chat.IsAdmin,"is_creator":chat.IsCreator,
-					"admin_rights":chat.AdminRights,"banned_rights":chat.BannedRights,
-					"channel_admin_rights":chat.ChannelAdminRights,"chat_admin_rights":chat.ChatAdminRights,
-				})
+				if chat.Permissions!=nil {
+					defaultPermissions,checkErr=json.Marshal(chat.Permissions)
+				}
+				if checkErr==nil {
+					accountRights,checkErr=json.Marshal(map[string]any{
+						"is_admin":chat.IsAdmin,"is_creator":chat.IsCreator,
+						"admin_rights":chat.AdminRights,"banned_rights":chat.BannedRights,
+						"channel_admin_rights":chat.ChannelAdminRights,"chat_admin_rights":chat.ChatAdminRights,
+					})
+				}
+				item.Title=chat.FullName()
+				item.Username=chat.Username
+				item.MemberCount=chat.MembersCount
+				item.IsVerified=chat.IsVerified
 			}
-			item.Title=chat.FullName()
-			item.Username=chat.Username
-			item.MemberCount=chat.MembersCount
-			item.IsVerified=chat.IsVerified
-		}
-		if persistErr:=service.RecordGroupPermissionRefresh(ctx,tenantID,accountID,item,defaultPermissions,accountRights,checkErr);persistErr!=nil {
-			logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
+			if persistErr:=service.RecordGroupPermissionRefresh(ctx,tenantID,accountID,item,defaultPermissions,accountRights,checkErr);persistErr!=nil {
+				logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
+			}
 		}
 	}
-	return nil
 }
