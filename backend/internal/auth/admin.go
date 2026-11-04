@@ -49,6 +49,32 @@ func (s *Service) ListTenants(ctx context.Context,limit int)([]TenantInfo,error)
  if limit<1||limit>500{limit=100};rows,err:=s.db.QueryContext(ctx,`SELECT id::text,name,status,account_limit,expires_at,created_at FROM tenants ORDER BY created_at DESC LIMIT $1`,limit);if err!=nil{return nil,err};defer rows.Close()
  out:=[]TenantInfo{};for rows.Next(){var x TenantInfo;if err:=rows.Scan(&x.ID,&x.Name,&x.Status,&x.AccountLimit,&x.ExpiresAt,&x.CreatedAt);err!=nil{return nil,err};out=append(out,x)};return out,rows.Err()
 }
+// pauseInactiveTenantWork freezes work that has not started and requests a pause
+// for live Telegram RPCs without revoking their leases. The worker must be
+// allowed to persist the actual RPC result before the task becomes paused.
+func pauseInactiveTenantWork(ctx context.Context, tx *sql.Tx, tenantID string) error {
+	statements := []string{
+		`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+			 WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,
+		`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+			 WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,
+		`UPDATE account_profile_update_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+			 WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,
+		`UPDATE tenant_join_tasks SET status='paused',updated_at=NOW()
+			 WHERE tenant_id=$1 AND status='queued'`,
+		`UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,pause_requested=FALSE,last_error='tenant inactive; manual review required',updated_at=NOW()
+			 WHERE tenant_id=$1 AND (status='queued' OR (status='processing' AND lease_until<=NOW()))`,
+		`UPDATE tenant_join_task_accounts SET pause_requested=TRUE,last_error='tenant inactive; pause requested after current Telegram operation',updated_at=NOW()
+			 WHERE tenant_id=$1 AND status='processing' AND lease_until>NOW()`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement, tenantID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{
  if status!="active"&&status!="disabled"{return errors.New("status must be active or disabled")}
  tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
@@ -56,7 +82,7 @@ func (s *Service) SetTenantStatus(ctx context.Context,id,status string)error{
  res,err:=tx.ExecContext(ctx,`UPDATE tenants SET status=$2,updated_at=NOW() WHERE id=$1`,id,status);if err!=nil{return err}
  n,_:=res.RowsAffected();if n==0{return errors.New("tenant not found")}
  if status=="disabled" {
-  if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant disabled; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,id);err!=nil{return err}
+  if err=pauseInactiveTenantWork(ctx,tx,id);err!=nil{return err}
  }
  return tx.Commit()
 }
@@ -64,11 +90,11 @@ func (s *Service) SetTenantAccountLimit(ctx context.Context,id string,limit int)
 func (s *Service) SetTenantExpiry(ctx context.Context,id string,expiry time.Time)error{
  tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
  if _,err=tx.ExecContext(ctx,`SELECT set_config('app.tenant_id',$1,true)`,id);err!=nil{return err}
- if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing') AND EXISTS (SELECT 1 FROM tenants WHERE id=$1 AND (status<>'active' OR expires_at IS NULL OR expires_at<=NOW()))`,id);err!=nil{return err}
+ var wasInactive bool
+ if err=tx.QueryRowContext(ctx,`SELECT status<>'active' OR expires_at IS NULL OR expires_at<=NOW() FROM tenants WHERE id=$1 FOR UPDATE`,id).Scan(&wasInactive);err!=nil{return err}
+ if wasInactive { if err=pauseInactiveTenantWork(ctx,tx,id);err!=nil{return err} }
  res,err:=tx.ExecContext(ctx,`UPDATE tenants SET expires_at=$2,status=CASE WHEN status='disabled' THEN status ELSE 'active' END,updated_at=NOW() WHERE id=$1`,id,expiry);if err!=nil{return err}
  n,_:=res.RowsAffected();if n==0{return fmt.Errorf("tenant not found")}
- if !expiry.After(time.Now()) {
-  if _,err=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant expired; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,id);err!=nil{return err}
- }
+ if !expiry.After(time.Now()) { if err=pauseInactiveTenantWork(ctx,tx,id);err!=nil{return err} }
  return tx.Commit()
 }
