@@ -96,6 +96,8 @@ func TestKeywordRuleMediaOnly(t *testing.T) {
 	if err!=nil {t.Fatalf("media-only rule rejected: %v",err)}
 	matched,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo"})
 	if !ok || len(matched)!=1 || matched[0]!="media:photo" {t.Fatalf("media-only match = %v, %v",matched,ok)}
+	matched,ok=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo",Text:"a caption"})
+	if !ok || len(matched)!=1 || matched[0]!="media:photo" {t.Fatalf("media-only rule must also match captioned media = %v, %v",matched,ok)}
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"video"});ok {t.Fatal("wrong media type matched")}
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo",IsOutgoing:true});ok {t.Fatal("outgoing media matched")}
 }
