@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/mtgo-labs/mtgo/telegram"
 	"github.com/mtgo-labs/mtgo/tg"
 )
 
