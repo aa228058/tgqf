@@ -63,8 +63,10 @@ on_exit() {
 trap on_exit EXIT
 
 log "Stopping application writers and Redis"
-"${COMPOSE[@]}" stop worker api frontend redis
+# Arm the fail-closed recovery trap before the first stop: Compose can stop
+# some services successfully and then fail on a later service.
 restore_started=1
+"${COMPOSE[@]}" stop worker api frontend redis
 
 log "Restoring PostgreSQL"
 "${COMPOSE[@]}" exec -T postgres pg_restore --clean --if-exists --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$BACKUP_DIR/postgres.dump"
