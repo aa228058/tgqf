@@ -72,6 +72,15 @@ func TestJoinTaskControlRequestsDoNotRevokeInflightLeases(t *testing.T) {
 	if err:=service.CompleteJoinTaskAccount(ctx,parentJob,-100123,"not_required");err!=nil{t.Fatal(err)}
 	if err:=db.QueryRowContext(ctx,`SELECT status FROM tenant_join_tasks WHERE id=$1`,parentPause).Scan(&status);err!=nil{t.Fatal(err)}
 	if status!="paused"{t.Fatalf("parent task status after in-flight success and paused sibling=%s",status)}
+
+	pauseFailure:="88888888-8888-4888-8888-888888888888"
+	insertTask(pauseFailure,"queued")
+	pauseFailureID:=insertRow(pauseFailure,accountA,"processing")
+	if err:=service.PauseJoinTask(ctx,tenantID,pauseFailure);err!=nil{t.Fatal(err)}
+	pauseFailureJob:=JoinTaskJob{TenantID:tenantID,TaskID:pauseFailure,AccountRowID:pauseFailureID,AccountID:accountA,Attempts:5,LeaseUntil:lease}
+	if err:=service.FailJoinTaskAccount(ctx,pauseFailureJob,"permanent Telegram failure");err!=nil{t.Fatal(err)}
+	if err:=db.QueryRowContext(ctx,`SELECT status,pause_requested,lease_until FROM tenant_join_task_accounts WHERE id=$1`,pauseFailureID).Scan(&status,&pauseRequested,&savedLease);err!=nil{t.Fatal(err)}
+	if status!="paused"||pauseRequested||savedLease.Valid{t.Fatalf("in-flight failure ignored pause request: %s %v %v",status,pauseRequested,savedLease)}
 }
 
 
