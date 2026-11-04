@@ -13,7 +13,6 @@ func TestMessageListSupportsTenantScopedInboxFilters(t *testing.T) {
 	tenantID:="11111111-1111-4111-8111-111111111111"
 	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	if _,err:=db.ExecContext(ctx,`ALTER TABLE telegram_accounts ADD COLUMN display_name TEXT NOT NULL DEFAULT '', ADD COLUMN phone TEXT NOT NULL DEFAULT ''`);err!=nil{t.Fatal(err)}
 	if _,err:=db.ExecContext(ctx,`CREATE TABLE unified_messages (
 		id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
 		message_id BIGINT NOT NULL,chat_type TEXT NOT NULL,chat_title TEXT NOT NULL DEFAULT '',sender_id BIGINT NOT NULL DEFAULT 0,
