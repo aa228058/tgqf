@@ -22,6 +22,20 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 	ddl:=[]string{
 		`CREATE TABLE message_reply_jobs (tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE account_profile_update_jobs (tenant_id UUID,account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
+		`CREATE TABLE IF NOT EXISTS tenant_message_chats (
+			tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
+			chat_type TEXT NOT NULL DEFAULT 'private',chat_title TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(tenant_id,telegram_account_id,chat_id))`,
+		`CREATE TABLE IF NOT EXISTS unified_messages (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
+			chat_id BIGINT NOT NULL,message_id BIGINT NOT NULL,chat_type TEXT NOT NULL DEFAULT 'private',
+			chat_title TEXT NOT NULL DEFAULT '',sender_id BIGINT NOT NULL DEFAULT 0,reply_to_message_id BIGINT,
+			reply_to_own_message BOOLEAN NOT NULL DEFAULT FALSE,is_outgoing BOOLEAN NOT NULL DEFAULT FALSE,
+			message_text TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT '',message_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(telegram_account_id,chat_id,message_id))`,
+		`CREATE TABLE IF NOT EXISTS message_event_outbox (
+			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,event_type TEXT NOT NULL,payload JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),published_at TIMESTAMPTZ)`,
 		`CREATE TABLE keyword_action_jobs (
 			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
 			chat_id BIGINT NOT NULL DEFAULT 1,reply_to_message_id BIGINT NOT NULL DEFAULT 1,
@@ -46,6 +60,10 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 		var session any
 		if a.session{session=[]byte{1}}
 		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,$3,$4)`,a.tenant,a.id,a.status,session);err!=nil{t.Fatal(err)}
+	}
+	for _,chat:=range []struct{tenant,account string;id int64}{{activeTenant,accountA,101},{activeTenant,accountB,102}} {
+		if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_type,chat_title)
+			VALUES($1,$2,$3,'private','test chat')`,chat.tenant,chat.account,chat.id);err!=nil{t.Fatal(err)}
 	}
 	insertJob:=func(id,tenant,account,status string,lease time.Time){
 		t.Helper()
@@ -98,4 +116,9 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 		if err:=db.QueryRowContext(ctx,`SELECT status FROM keyword_action_jobs WHERE id=$1`,id).Scan(&status);err!=nil{t.Fatal(err)}
 		if status!=want{t.Fatalf("job %s status=%q, want %q",id,status,want)}
 	}
+	var outgoingCount,outboxCount int
+	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM unified_messages WHERE telegram_account_id=$1 AND chat_id=101 AND message_id=501 AND is_outgoing=TRUE`,accountA).Scan(&outgoingCount);err!=nil{t.Fatal(err)}
+	if outgoingCount!=1{t.Fatalf("persisted keyword action message rows=%d, want 1",outgoingCount)}
+	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`,activeTenant).Scan(&outboxCount);err!=nil{t.Fatal(err)}
+	if outboxCount!=1{t.Fatalf("keyword action realtime outbox rows=%d, want 1",outboxCount)}
 }
