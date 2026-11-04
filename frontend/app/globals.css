@@ -645,3 +645,185 @@ input,select,textarea{min-height:40px}
   .task-table tbody tr{grid-template-columns:minmax(0,1fr)}
   .task-table td[data-label="任务"],.task-table td[data-label="最近错误"],.task-table td[data-label="操作"]{grid-column:1}
 }
+
+
+/* -------------------------------------------------------------------------
+   TGQF visual system: consistent desktop + mobile finish
+   ------------------------------------------------------------------------- */
+:root{
+  --ink:#172335;
+  --muted:#68778b;
+  --line:#e4eaf2;
+  --surface:#fff;
+  --bg:#f4f7fb;
+  --accent:#4169f5;
+  --accent-strong:#3156df;
+  --danger:#c13e45;
+  --radius-card:15px;
+  --shadow-card:0 5px 20px rgba(28,45,75,.045);
+  --shadow-hover:0 12px 28px rgba(28,45,75,.09);
+}
+:root[data-theme="dark"]{
+  --ink:#e9eff8;
+  --muted:#9eacc0;
+  --line:#2b3a4e;
+  --surface:#172333;
+  --bg:#0f1926;
+  --accent:#8aa5ff;
+  --accent-strong:#a8baff;
+  --shadow-card:0 5px 20px rgba(0,0,0,.14);
+  --shadow-hover:0 12px 28px rgba(0,0,0,.24);
+}
+html{scroll-behavior:smooth;scroll-padding-top:78px}
+body{
+  background:
+    radial-gradient(ellipse at 8% 0%,rgba(65,105,245,.055),transparent 34rem),
+    var(--bg);
+  letter-spacing:.005em;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+:root[data-theme="dark"] body{
+  background:
+    radial-gradient(ellipse at 8% 0%,rgba(111,143,255,.075),transparent 34rem),
+    var(--bg);
+}
+button,input,select,textarea{transition:border-color .16s ease,background-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+button{border:1px solid transparent;border-radius:9px;min-height:36px}
+button:hover:not(:disabled){filter:brightness(.985);transform:translateY(-1px)}
+button:active:not(:disabled){transform:translateY(0)}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);
+  outline-offset:2px;
+}
+input,select,textarea{accent-color:var(--accent)}
+::selection{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+.app-frame{grid-template-columns:256px minmax(0,1fr)}
+.app-sidebar{padding:23px 15px 17px}
+.app-brand{padding-bottom:30px}
+.app-brand-mark{box-shadow:0 5px 13px color-mix(in srgb,var(--accent) 25%,transparent)}
+.sidebar-nav{gap:5px}
+.nav-item{min-height:42px;border:1px solid transparent}
+.nav-item.active{border-color:color-mix(in srgb,var(--accent) 13%,transparent)}
+.app-topbar{height:66px;padding-inline:clamp(22px,3vw,42px)}
+.app-content{padding-bottom:40px}
+@media(min-width:901px){
+  .app-content>.shell,.workbench-page,.accounts-page,.groups-page{padding-inline:clamp(26px,3vw,48px)}
+  .messages-page{padding-inline:clamp(24px,2.6vw,42px)}
+}
+.shell,.workbench-page,.accounts-page,.groups-page,.messages-page{width:100%}
+.workbench-heading,.accounts-heading,.groups-heading,.messages-heading{margin-bottom:23px}
+.workbench-heading h1,.accounts-heading h1,.groups-heading h1,.messages-heading h1,.topbar h1{
+  letter-spacing:-.035em;
+  line-height:1.18;
+}
+.summary-card,.panel,.workbench-stat,.messages-layout,.proxy-card,.account-modal,.module-placeholder{
+  border-radius:var(--radius-card);
+  box-shadow:var(--shadow-card);
+}
+.summary-card,.workbench-stat{padding:20px 22px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.summary-card:hover,.workbench-stat:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover);border-color:color-mix(in srgb,var(--accent) 24%,var(--line))}
+.summary-card strong,.workbench-stat>strong{font-variant-numeric:tabular-nums;letter-spacing:-.035em}
+.panel{padding:23px;margin-bottom:20px}
+.panel-heading{margin-bottom:20px}
+.panel-heading h2,.proxy-heading h2{letter-spacing:-.02em}
+.filters input,.filters select,.account-filters input,.account-filters select,.groups-filters input,.groups-filters select,
+.message-filters input:not([type=checkbox]),.message-filters select,.chat-search,.account-form input,.account-form select,
+.login-card input,.reply-composer textarea,.contact-composer input{
+  min-height:40px;
+  border-radius:9px;
+  box-shadow:0 1px 2px rgba(20,32,50,.025);
+}
+:root[data-theme="dark"] .filters input,:root[data-theme="dark"] .filters select,
+:root[data-theme="dark"] .groups-filters input,:root[data-theme="dark"] .groups-filters select{
+  background:var(--surface);color:var(--ink);border-color:var(--line);
+}
+.bulkbar,.account-bulkbar{border:1px solid color-mix(in srgb,var(--accent) 12%,var(--line));border-radius:11px}
+table{border-collapse:separate;border-spacing:0;min-width:1050px}
+th{position:sticky;top:0;z-index:1;background:var(--bg);letter-spacing:.035em;text-transform:uppercase}
+th:first-child{border-radius:8px 0 0 0}
+th:last-child{border-radius:0 8px 0 0}
+tbody tr{transition:background-color .14s ease}
+tbody tr:hover{background:color-mix(in srgb,var(--accent) 3.5%,var(--surface))}
+td,th{padding:13px 11px}
+.status{padding:5px 9px;border:1px solid transparent;letter-spacing:.01em}
+.row-actions button,.account-row-actions button,.message-card-actions button{border:1px solid var(--line);background:var(--surface)}
+.primary,.accounts-actions .primary,.messages-heading-actions .primary{
+  background:linear-gradient(135deg,var(--accent),var(--accent-strong));
+  box-shadow:0 4px 10px color-mix(in srgb,var(--accent) 18%,transparent);
+}
+.primary:hover:not(:disabled){box-shadow:0 6px 15px color-mix(in srgb,var(--accent) 26%,transparent)}
+.account-tabs,.groups-tabs{gap:7px}
+.account-tabs button,.groups-tabs button,.login-tabs button{min-height:42px;padding-inline:16px}
+.chat-sidebar{background:color-mix(in srgb,var(--surface) 96%,var(--bg))}
+.chat-item{min-height:68px}
+.chat-item.active{border-right:0}
+.message-pane-heading{min-height:68px}
+.message-card{border-radius:12px;box-shadow:0 2px 8px rgba(20,32,50,.025)}
+.message-card:hover{border-color:color-mix(in srgb,var(--accent) 22%,var(--line))}
+.worker-card{border-radius:11px;background:color-mix(in srgb,var(--surface) 92%,var(--bg))}
+.proxy-card{transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.proxy-card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 25%,var(--line));box-shadow:var(--shadow-card)}
+.account-modal{padding:25px}
+.modal-backdrop{padding:24px}
+.pagination button,.account-pagination button,.groups-pagination button,.message-pagination button{min-height:36px}
+.footer-note{padding:18px}
+:root[data-theme="dark"] .summary-card,:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .workbench-stat,:root[data-theme="dark"] .proxy-card,
+:root[data-theme="dark"] .message-card,:root[data-theme="dark"] .account-modal{
+  background:var(--surface);border-color:var(--line);
+}
+:root[data-theme="dark"] th{background:#1d2b3c}
+:root[data-theme="dark"] tbody tr:hover{background:color-mix(in srgb,var(--accent) 7%,var(--surface))}
+@media(min-width:901px) and (max-width:1180px){
+  .app-frame{grid-template-columns:224px minmax(0,1fr)}
+  .app-sidebar{padding-inline:11px}
+  .app-topbar{padding-inline:22px}
+  .workbench-stats{gap:10px}
+  .workbench-stat{padding:16px}
+  .messages-layout{grid-template-columns:270px minmax(0,1fr)}
+}
+@media(max-width:900px){
+  html{scroll-padding-top:64px}
+  .app-frame{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  .app-topbar{height:58px;padding-inline:17px}
+  .mobile-bottom-nav{height:calc(64px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
+  .app-content{padding-bottom:20px}
+  .shell,.workbench-page,.accounts-page,.groups-page,.messages-page{padding:20px 18px 32px}
+  .workbench-heading,.accounts-heading,.groups-heading,.messages-heading{margin-bottom:19px}
+  .summary-grid{gap:11px}
+  .summary-card,.workbench-stat{border-radius:13px}
+  .panel{padding:18px;border-radius:13px}
+  .messages-layout{border-radius:13px}
+  .message-pane{min-height:500px}
+  .chat-sidebar{max-height:270px}
+  .chat-list{max-height:195px}
+  .message-list{max-height:none}
+  .account-modal{max-height:calc(100dvh - 34px);border-radius:16px}
+  .modal-backdrop{padding:12px}
+}
+@media(max-width:520px){
+  .shell,.workbench-page,.accounts-page,.groups-page,.messages-page{padding:17px 13px 28px}
+  .app-topbar{padding-inline:13px}
+  .workbench-heading h1,.accounts-heading h1,.groups-heading h1,.messages-heading h1{font-size:23px}
+  .summary-grid,.workbench-stats{gap:9px}
+  .summary-card,.workbench-stat{padding:14px 13px;min-height:102px}
+  .summary-card strong,.workbench-stat>strong{font-size:23px}
+  .panel{padding:15px;border-radius:12px;margin-bottom:14px}
+  .panel-heading{align-items:flex-start;gap:10px}
+  .panel-heading h2{font-size:15px}
+  .top-actions,.accounts-actions,.messages-heading-actions{gap:7px}
+  .top-actions button,.accounts-actions button,.messages-heading-actions button{min-height:40px}
+  .account-tabs,.groups-tabs{overflow-x:auto;scrollbar-width:none;white-space:nowrap;padding-bottom:2px}
+  .account-tabs::-webkit-scrollbar,.groups-tabs::-webkit-scrollbar{display:none}
+  .account-tabs button,.groups-tabs button{flex:0 0 auto}
+  .account-modal{padding:17px}
+  .modal-heading{position:sticky;top:-17px;padding:3px 0 12px;background:var(--surface);z-index:2}
+  .mobile-bottom-nav{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .mobile-nav-item{min-width:0}
+  .mobile-nav-item small{font-size:10px}
+  .mobile-more-menu{bottom:calc(70px + env(safe-area-inset-bottom))}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
+}
