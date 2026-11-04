@@ -31,6 +31,10 @@ type KeywordRule struct {
     SenderUsernames []string `json:"sender_usernames"`
     SenderNames []string `json:"sender_names"`
     ReplyText string `json:"reply_text"`
+    ActionType string `json:"action_type"`
+    ContactPhone string `json:"contact_phone"`
+    ContactFirstName string `json:"contact_first_name"`
+    ContactLastName string `json:"contact_last_name"`
     ReplyTextByChatType map[string]string `json:"reply_text_by_chat_type"`
     CaseSensitive bool `json:"case_sensitive"`
     Enabled bool `json:"enabled"`
@@ -106,6 +110,16 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.SenderNames,err=normalizeFilters(rule.SenderNames);if err!=nil{return rule,err}
     seenSender:=map[int64]bool{};for _,id:=range rule.SenderIDs{if id==0||seenSender[id]{return rule,fmt.Errorf("%w: invalid or duplicate sender id",ErrInvalidKeywordRule)};seenSender[id]=true}
     rule.ReplyText=strings.TrimSpace(rule.ReplyText)
+    rule.ActionType=strings.ToLower(strings.TrimSpace(rule.ActionType))
+    if rule.ActionType=="" { rule.ActionType="text" }
+    if rule.ActionType!="text" && rule.ActionType!="contact" { return rule,fmt.Errorf("%w: action_type must be text or contact",ErrInvalidKeywordRule) }
+    rule.ContactPhone=strings.TrimSpace(rule.ContactPhone)
+    rule.ContactFirstName=strings.TrimSpace(rule.ContactFirstName)
+    rule.ContactLastName=strings.TrimSpace(rule.ContactLastName)
+    if rule.ActionType=="contact" {
+        if rule.ContactPhone=="" || rule.ContactFirstName=="" || len(rule.ContactPhone)>64 || len(rule.ContactFirstName)>128 || len(rule.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact action requires phone and first name",ErrInvalidKeywordRule) }
+        if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: contact and text actions cannot be combined",ErrInvalidKeywordRule) }
+    } else if rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" { return rule,fmt.Errorf("%w: contact fields require action_type contact",ErrInvalidKeywordRule) }
     if len([]rune(rule.ReplyText))>4096{return rule,fmt.Errorf("%w: reply text exceeds Telegram's 4096 character limit",ErrInvalidKeywordRule)}
     if rule.ReplyTextByChatType==nil {rule.ReplyTextByChatType=map[string]string{}}
     normalizedReplies:=make(map[string]string,len(rule.ReplyTextByChatType))
