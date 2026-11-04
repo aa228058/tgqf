@@ -172,7 +172,12 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if !rule.CaseSensitive {text=strings.ToLower(text)}
     if textPresent {for _,term:=range excluded {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){return nil,false}}}
     matched:=[]string{}
-    if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
+    if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {
+		// A media-only rule matches the selected media even when Telegram
+		// includes a caption in the same update.
+		if len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true}
+		return nil,false
+	}
     if !textPresent {return nil,false}
     if len(rule.KeywordGroups)>0 {
         matchedGroups:=make([][]string,0,len(rule.KeywordGroups))
@@ -341,7 +346,10 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
     if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
     for _,tenantID:=range inactiveTenants {
         if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+            // A processing lease that is still live may represent an in-flight
+            // Telegram RPC. Pause pending jobs and only reclaim expired leases.
+            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+                WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,tenantID)
             return err
         });err!=nil{return nil,err}
     }
@@ -360,6 +368,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 FROM keyword_action_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
                 WHERE j.tenant_id=$1
                 AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+                AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
                 AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
                 AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
                 AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
@@ -409,6 +418,18 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
             if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+        }
+        var tenantActive bool
+        if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
+        if !tenantActive {
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',last_error='tenant inactive; manual review required',lease_until=NULL,updated_at=NOW()
+                WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3`,job.TenantID,job.ID,job.LeaseUntil)
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            if floodWait>0 {
+                waitSeconds:=int64(floodWait/time.Second);if floodWait%time.Second!=0{waitSeconds++};waitSeconds++
+                _,err=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID)
+            }
+            return err
         }
         message:=sendErr.Error();if len(message)>500{message=message[:500]}
         delay:=keywordActionRetryDelay(job.Attempts,floodWait)
