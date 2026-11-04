@@ -14,6 +14,9 @@ func TestPrunePublishedMessageEventsKeepsPendingAndRecentRows(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, tenantID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE message_event_outbox (id BIGSERIAL PRIMARY KEY, tenant_id UUID NOT NULL, event_type TEXT NOT NULL, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), published_at TIMESTAMPTZ)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO message_event_outbox(tenant_id,event_type,payload,published_at)
 		VALUES($1,'message.created','{}'::jsonb,NOW()-INTERVAL '40 days')`, tenantID); err != nil {
 		t.Fatal(err)
