@@ -93,8 +93,8 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 2 || len(queued) != 2 {
-		t.Fatalf("queued filter returned %d rows (total %d), want pending + queued = 2", len(queued), total)
+	if total != 3 || len(queued) != 3 {
+		t.Fatalf("queued filter returned %d rows (total %d), want pending + queued + request_pending = 3", len(queued), total)
 	}
 	completed, total, err := service.ListUnifiedTasks(ctx, tenantID, UnifiedTaskFilter{Status: "completed", Limit: 50})
 	if err != nil {
