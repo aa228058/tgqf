@@ -4,6 +4,7 @@ import {SettingsPage} from "./SettingsPage";
 import {AdminModerationPage} from "./AdminModerationPage";
 import {AdminAuditPage} from "./AdminAuditPage";
 import {AdminSystemConfigPage} from "./AdminSystemConfigPage";
+import {AdminSystemHealthPage} from "./AdminSystemHealthPage";
 export function AdminConsole({token,user}:{token:string;user:{role:string}}){
  const [tab,setTab]=useState("tenants");
  return <div>
@@ -12,7 +13,8 @@ export function AdminConsole({token,user}:{token:string;user:{role:string}}){
    <button className={tab==="groups"?"active":""} onClick={()=>setTab("groups")}>公共群组审核</button>
    <button className={tab==="audit"?"active":""} onClick={()=>setTab("audit")}>审计日志</button>
    <button className={tab==="config"?"active":""} onClick={()=>setTab("config")}>系统配置</button>
+   <button className={tab==="health"?"active":""} onClick={()=>setTab("health")}>运行监控</button>
   </nav>
-  {tab==="tenants"?<SettingsPage token={token} user={user} initialTab="cards"/>:tab==="groups"?<AdminModerationPage token={token}/>:tab==="audit"?<AdminAuditPage token={token}/>:<AdminSystemConfigPage token={token}/>}
+  {tab==="tenants"?<SettingsPage token={token} user={user} initialTab="cards"/>:tab==="groups"?<AdminModerationPage token={token}/>:tab==="audit"?<AdminAuditPage token={token}/>:tab==="config"?<AdminSystemConfigPage token={token}/>:<AdminSystemHealthPage token={token}/>}
  </div>;
 }
