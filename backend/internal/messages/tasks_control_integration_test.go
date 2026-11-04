@@ -34,7 +34,7 @@ func TestUnifiedJoinTaskControlsOnlySelectedAccountRow(t *testing.T) {
 	}
 
 	service := New(db)
-	if err := service.ChangeUnifiedTaskStatus(ctx, tenantID, "group_join", formatInt64(queuedID), "cancel"); err != nil {
+	if err := service.ChangeUnifiedTaskStatus(ctx, tenantID, "group_join", strconv.FormatInt(queuedID, 10), "cancel"); err != nil {
 		t.Fatal(err)
 	}
 	var queuedStatus, processingStatus string
@@ -53,7 +53,7 @@ func TestUnifiedJoinTaskControlsOnlySelectedAccountRow(t *testing.T) {
 		t.Fatalf("unselected account row changed: status=%q pause_requested=%v", processingStatus, pauseRequested)
 	}
 
-	if err := service.ChangeUnifiedTaskStatus(ctx, tenantID, "group_join", formatInt64(processingID), "pause"); err != nil {
+	if err := service.ChangeUnifiedTaskStatus(ctx, tenantID, "group_join", strconv.FormatInt(processingID, 10), "pause"); err != nil {
 		t.Fatal(err)
 	}
 	var afterLease time.Time
@@ -68,6 +68,3 @@ func TestUnifiedJoinTaskControlsOnlySelectedAccountRow(t *testing.T) {
 	}
 }
 
-func formatInt64(value int64) string {
-	return strconv.FormatInt(value, 10)
-}
