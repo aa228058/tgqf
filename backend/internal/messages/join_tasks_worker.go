@@ -56,7 +56,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
+                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,a.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts acc SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE acc.tenant_id=c.tenant_id AND acc.id=c.telegram_account_id
