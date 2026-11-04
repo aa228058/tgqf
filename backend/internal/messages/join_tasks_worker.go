@@ -253,16 +253,20 @@ func (s *Service) DeferJoinApprovalCheck(ctx context.Context,job JoinApprovalJob
  })
 }
 
-func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,memberStatus string)error {
-	status:="request_pending";application:="request_pending"
-	switch memberStatus {
+func normalizeJoinApprovalResult(memberStatus string) (string,string,bool) {
+	switch strings.ToLower(strings.TrimSpace(memberStatus)) {
 	case "member","administrator","creator","owner":
-		status="joined";application="approved"
+		return "joined","approved",true
 	case "banned","left","invalid","expired":
-		status="failed";application="declined"
+		return "failed","declined",true
 	default:
-		return nil
+		return "request_pending","request_pending",false
 	}
+}
+
+func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,memberStatus string)error {
+	status,application,terminal:=normalizeJoinApprovalResult(memberStatus)
+	if !terminal { return nil }
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
 		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,approval_check_lease_until=NULL,last_error='',updated_at=NOW()
