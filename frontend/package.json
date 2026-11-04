@@ -11,7 +11,8 @@
   "dependencies": {
     "next": "^15.4.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -19,6 +20,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.4.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "@types/qrcode": "^1.5.5"
   }
 }
