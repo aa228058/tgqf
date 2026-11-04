@@ -225,3 +225,18 @@ func TestNormalizeKeywordRuleMediaAction(t *testing.T) {
     invalid=valid;invalid.MediaCaption=strings.Repeat("x",1025);if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("oversized caption accepted")}
     invalid=valid;invalid.ChatTypes=[]string{"private","channel"};if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("channel media action accepted")}
 }
+
+
+func TestNormalizeKeywordMediaAlbum(t *testing.T) {
+    valid:=KeywordRule{Name:"catalog album",MatchMode:"any",Keywords:[]string{"catalog"},ChatTypes:[]string{"private","group"},ActionType:"media_album",MediaAlbumItems:[]KeywordMediaAlbumItem{
+        {AssetID:"11111111-1111-4111-8111-111111111111",MediaType:"photo",Caption:"Cover"},
+        {AssetID:"22222222-2222-4222-8222-222222222222",MediaType:"video",Caption:"Demo"},
+    }}
+    got,err:=normalizeKeywordRule(valid);if err!=nil{t.Fatalf("valid album rejected: %v",err)}
+    if len(got.MediaAlbumItems)!=2||got.MediaAlbumItems[1].MediaType!="video"{t.Fatalf("album order/payload changed: %#v",got.MediaAlbumItems)}
+    invalid:=valid;invalid.MediaAlbumItems=invalid.MediaAlbumItems[:1];if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("one-item album accepted")}
+    invalid=valid;invalid.MediaAlbumItems[1].AssetID=invalid.MediaAlbumItems[0].AssetID;if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("duplicate album asset accepted")}
+    invalid=valid;invalid.MediaAlbumItems[1].MediaType="audio";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("unsupported album media type accepted")}
+    invalid=valid;invalid.MediaAlbumItems[1].MediaType="document";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed document/photo album accepted")}
+    invalid=valid;invalid.ReplyText="extra text";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed text/album action accepted")}
+}
