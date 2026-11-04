@@ -169,6 +169,11 @@ func TestTenantDisableFreezesQueuedWorkAndPreservesLiveLeases(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFrozenLifecycleQueues(t, db, lifecycleTenantID)
+	if err := New(db).SetTenantStatus(ctx, lifecycleTenantID, "active"); err != nil {
+		t.Fatal(err)
+	}
+	// Re-enabling a tenant must not silently resume work frozen at disable time.
+	assertFrozenLifecycleQueues(t, db, lifecycleTenantID)
 }
 
 func TestTenantExpiryFreezesQueuedWorkAndPreservesLiveLeases(t *testing.T) {
