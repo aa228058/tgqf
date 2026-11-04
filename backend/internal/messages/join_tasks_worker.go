@@ -135,8 +135,12 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='failed',lease_until=NULL,last_error=$1,updated_at=NOW()
-            WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='processing' AND lease_until=$5`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
+				status=CASE WHEN t.status='cancelled' THEN 'cancelled' ELSE 'failed' END,
+				lease_until=NULL,last_error=$1,updated_at=NOW()
+			FROM tenant_join_tasks t
+			WHERE a.tenant_id=$2 AND a.task_id=$3 AND a.id=$4 AND a.status='processing' AND a.lease_until=$5
+			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
     })
