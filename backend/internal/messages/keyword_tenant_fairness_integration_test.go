@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"strconv"
 	"testing"
 )
 
@@ -37,7 +38,9 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		for _, tenant := range []struct{ id, account string }{{tenantA, accountA}, {tenantB, accountB}} {
-			jobID := "10000000-0000-4000-8000-00000000000" + string(rune('1'+i))
+			suffix := 1 + i*2
+			if tenant.id == tenantB { suffix++ }
+			jobID := "10000000-0000-4000-8000-00000000000" + strconv.Itoa(suffix)
 			if _, err := db.ExecContext(ctx, `INSERT INTO keyword_action_jobs(id,tenant_id,telegram_account_id) VALUES($1,$2,$3)`, jobID, tenant.id, tenant.account); err != nil { t.Fatal(err) }
 		}
 	}
