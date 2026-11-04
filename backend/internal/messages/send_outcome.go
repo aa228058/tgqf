@@ -25,6 +25,7 @@ func isAmbiguousTelegramSendError(err error) bool {
 	}
 	upper := strings.ToUpper(err.Error())
 	for _, marker := range []string{
+		"SEND OUTCOME UNCERTAIN",
 		"UNEXPECTED EOF",
 		"CONNECTION RESET",
 		"CONNECTION ABORTED",
