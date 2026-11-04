@@ -296,7 +296,7 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 		if link.Type=="public" {
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
 				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
-				ON CONFLICT(link_type,public_url) DO UPDATE SET
+				ON CONFLICT (lower(public_url)) WHERE link_type='public' DO UPDATE SET
 				 last_seen_at=NOW(),
 				 status=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.status ELSE 'pending' END,
 				 last_checked_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_checked_at ELSE NULL END,
