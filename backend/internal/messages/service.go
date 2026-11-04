@@ -960,15 +960,12 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 			return err
 		});err!=nil{return nil,err}
 	}
-	rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()`)
-	if err!=nil{return nil,err}
-	var tenants []string
-	for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
-	if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close()
 	jobs:=make([]ReplyJob,0,maxJobs)
-	for _,tenantID:=range tenants {
-		if len(jobs)>=maxJobs {break}
-		err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+	for len(jobs)<maxJobs {
+		tenantID,err:=s.nextReplyTenant(ctx)
+		if err!=nil{return nil,err}
+		if tenantID==""{break}
+		err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 			remaining:=maxJobs-len(jobs)
 			if remaining>2 { remaining=2 }
 			rows,err:=tx.QueryContext(ctx,`WITH picked AS (
@@ -1002,6 +999,45 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 		if err!=nil{return nil,err}
 	}
 	return jobs,nil
+}
+
+// nextReplyTenant atomically rotates the next eligible tenant. The row lock
+// prevents multiple Worker instances from repeatedly selecting the same tenant.
+func (s *Service) nextReplyTenant(ctx context.Context) (string,error) {
+	tx,err:=s.db.BeginTx(ctx,nil)
+	if err!=nil{return "",err}
+	defer tx.Rollback()
+	var tenantID string
+	err=tx.QueryRowContext(ctx,`WITH candidate AS (
+		SELECT t.id
+		FROM tenants t
+		WHERE t.status='active' AND t.expires_at>NOW()
+		AND EXISTS (
+			SELECT 1 FROM message_reply_jobs j
+			JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
+			WHERE j.tenant_id=t.id
+			AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+			AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
+			AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
+			AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
+			AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM message_reply_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
+				AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+		)
+		ORDER BY t.reply_jobs_last_claimed_at NULLS FIRST,t.id
+		FOR UPDATE OF t SKIP LOCKED
+		LIMIT 1
+	)
+	UPDATE tenants t SET reply_jobs_last_claimed_at=clock_timestamp()
+	FROM candidate c WHERE t.id=c.id
+	RETURNING t.id::text`).Scan(&tenantID)
+	if errors.Is(err,sql.ErrNoRows){return "",nil}
+	if err!=nil{return "",err}
+	if err:=tx.Commit();err!=nil{return "",err}
+	return tenantID,nil
 }
 
 func (s *Service) TenantCanOperate(ctx context.Context, tenantID string) bool {
