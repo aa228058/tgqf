@@ -62,6 +62,7 @@ export function AccountsPage({token}:{token:string}){
  const loadProfileAccounts=useCallback(async()=>{try{const r=await api<AccountPage>("/api/v1/accounts?limit=100&offset=0&status=authorized",token);setProfileAccounts(r.accounts||[])}catch(e){setError(e instanceof Error?e.message:"授权账号加载失败")}},[token]);
  const loadProfileJobs=useCallback(async()=>{try{const p=new URLSearchParams({limit:"50",offset:"0"});if(profileJobStatus)p.set("status",profileJobStatus);const r=await api<{jobs:ProfileJob[];total:number}>(`/api/v1/accounts/profile-updates?${p}`,token);setProfileJobs(r.jobs||[]);setProfileJobTotal(r.total||0)}catch(e){setError(e instanceof Error?e.message:"资料更新任务加载失败")}},[token,profileJobStatus]);
  useEffect(()=>{if(tab==="accounts")void Promise.all([loadAccounts(),loadProxies()]);else if(tab==="proxies")void loadProxies();else void Promise.all([loadProfileAccounts(),loadProfileJobs()])},[tab,loadAccounts,loadProxies,loadProfileAccounts,loadProfileJobs]);
+ useEffect(()=>{if(tab!=="profile")return;const timer=window.setInterval(()=>void loadProfileJobs(),10000);return()=>window.clearInterval(timer)},[tab,loadProfileJobs]);
  useEffect(()=>{
   if(!qr)return;
   let active=true;
