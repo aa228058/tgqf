@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorMessage, readAPIJSON } from "./api-response";
+
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -25,9 +27,9 @@ async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";
  Object.assign(headers,init?.headers||{});
  const response=await fetch(`${API_BASE}${path}`,{...init,headers,cache:"no-store"});
- if(!response.ok){let message=`请求失败（${response.status}）`;try{message=(await response.json()).error||message}catch{}throw new Error(message)}
+ if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message)throw new Error(message)}
  if(response.status===204)return undefined as T;
- return response.json() as Promise<T>;
+ return readAPIJSON<T>(response);
 }
 const date=(v:string)=>new Date(v).toLocaleString();
 const splitList=(v:string)=>v.split(/[,，\n]/).map(x=>x.trim()).filter(Boolean);
