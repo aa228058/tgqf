@@ -110,6 +110,8 @@ func main() {
 	ticker := time.NewTicker(30*time.Second)
 	defer ticker.Stop()
 	lastProxySweep:=time.Time{}
+	lastPrivateInviteSweep:=time.Time{}
+	lastGroupPermissionSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
 	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
