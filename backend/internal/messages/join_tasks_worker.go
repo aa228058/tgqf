@@ -62,7 +62,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 FROM claimed c WHERE acc.tenant_id=c.tenant_id AND acc.id=c.telegram_account_id
                 RETURNING acc.id
             )
-            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.target_url,c.private_invite_hash_ciphertext,c.lease_until
+            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.attempts,c.target_url,c.private_invite_hash_ciphertext,c.lease_until
             FROM claimed c JOIN scheduled s ON TRUE
         `,tenantID,limit)
         if err!=nil{return err};defer rows.Close()
