@@ -86,7 +86,7 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 	}
 	var savedLease time.Time
 	if err:=db.QueryRowContext(ctx,`SELECT lease_until FROM keyword_action_jobs WHERE id=$1`,jobInactiveLive).Scan(&savedLease);err!=nil{t.Fatal(err)}
-	if !savedLease.Equal(liveLease){t.Fatalf("inactive tenant sweep changed live lease: %s != %s",savedLease,liveLease)}
+	if delta:=savedLease.Sub(liveLease); delta < -time.Microsecond || delta > time.Microsecond {t.Fatalf("inactive tenant sweep changed live lease beyond database timestamp precision: %s != %s (delta %s)",savedLease,liveLease,delta)}
 
 	// Subscription expiry after Telegram has accepted the send must not erase
 	// the successful result, while an in-flight failure is paused, not retried.
