@@ -143,9 +143,11 @@ func main() {
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
 		if time.Since(lastProxySweep)>=10*time.Minute {
-			sweepCtx,cancelSweep:=context.WithTimeout(ctx,3*time.Minute)
-			if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
-			cancelSweep();lastProxySweep=time.Now()
+			lastProxySweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,3*time.Minute);defer cancelSweep()
+				if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
+			}()
 		}
 		select {
 		case <-ctx.Done(): return
