@@ -39,7 +39,7 @@
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
 | 账号列表/分组/标签 | accounts GET/POST/DELETE、搜索/筛选/分页、CSV/Session 文件导入导出、分组/标签、批量分组/代理绑定/断开重连 | 后端功能已实现，待 CI 与真实账号验收 | 标签本轮新增 PostgreSQL TEXT[]、单账号/批量替换 API 和 CSV 导出；登录挑战进程重启恢复仍未实现 |
-| 代理管理 | proxies CRUD、账号单/批量绑定、默认代理、协议认证检测、Telegram DC TCP 隧道检测、检测历史 | 后端功能已实现，待 CI/集成验收 | SOCKS4/5、HTTP/HTTPS 均执行协议协商/认证并尝试建立 Telegram DC TCP 隧道；检测结果及耗时持久化，列表返回最近结果，支持历史查询；这不等于某个 MTGo 账号已完成 Telegram 授权连接 |
+| 代理管理 | proxies CRUD、账号单/批量绑定、默认代理、协议认证检测、Telegram DC TCP 隧道检测、检测历史 | 后端功能已实现，待 CI/集成验收 | SOCKS4/5、HTTP/HTTPS 均执行协议协商/认证并尝试建立 Telegram DC TCP 隧道；检测结果及耗时持久化，Worker 每 10 分钟自动巡检并通过 PostgreSQL advisory lock 避免多 Worker 重复巡检；每代理保留最近 100 条结果，列表返回最近状态，支持历史查询；这不等于某个 MTGo 账号已完成 Telegram 授权连接 |
 | 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile/UpdateProfilePhoto/UpdateUsername、资料任务 API 与 Worker | 后端功能已实现，待 CI/真实账号验收 | 支持姓名/简介/头像/随机用户名，逐账号结果、冲突重试、暂停/恢复/重试/取消；用户名规则前端仍待后续前端阶段 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为可断点续传的 SSE + Redis Streams；仍未实现 WebSocket，且需 Redis 集成测试覆盖断线重连、游标续传和保留窗口 |
@@ -105,7 +105,7 @@
 - `GET /api/v1/proxies/{id}/checks`（读取最近代理检测历史，最多 100 条；代理列表同时返回最近检测状态、耗时和时间）
 - `PUT /api/v1/proxies/{id}` 支持 `clear_password: true` 显式清除已保存的代理密码；不传密码仍保持原密码。
 - 数据库迁移 `0040_account_tags.sql`：`telegram_accounts.tags TEXT[]`，并建立 GIN 索引。
-- 数据库迁移 `0041_proxy_check_history.sql`：新增租户隔离的代理检测历史表；每次手动检测记录协议认证/Telegram DC TCP 隧道结果、耗时和脱敏错误信息。
+- 数据库迁移 `0041_proxy_check_history.sql`：新增租户隔离的代理检测历史表；手动及 Worker 每 10 分钟自动检测均记录协议认证/Telegram DC TCP 隧道结果、耗时和脱敏错误信息；每代理最多保留最近 100 条。
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`、`POST /api/v1/accounts/profile-updates/{id}/cancel`（失败重试、暂停恢复；仅 pending/paused 可取消，正在执行的任务必须等待当前 Telegram RPC 结束）
 - `PATCH /api/v1/accounts/{id}/group`
