@@ -25,6 +25,10 @@ This document records the automated release gates added for Phase 3. CI success 
 - Restore safety tests verify that user cancellation and checksum failure occur before any service stop.
 - CI validates Compose configuration and builds the API, Worker, and frontend release images.
 
+## Merge gate
+
+Merge only after both Go backend and Frontend CI pass on the final pull-request head commit. A formatter automation commit does not count as a validated release candidate until those checks have run against its resulting tree.
+
 ## Boundaries carried into later phases
 
 These tests do not claim that a production backup has been restored on an isolated server, that host-level disk/resource alerts work, or that real Telegram accounts have passed end-to-end checks. Those remain explicit deployment/operations and live-acceptance items. A CI green result must not be reported as production recovery or Telegram acceptance.
