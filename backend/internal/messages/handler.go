@@ -146,7 +146,7 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 	taskType, id, action := r.PathValue("type"), r.PathValue("id"), r.PathValue("action")
 	if err := h.service.ChangeUnifiedTaskStatus(r.Context(), user.TenantID, taskType, id, action); err != nil {
 		status := http.StatusConflict
-		if err.Error() == "invalid task type" || err.Error() == "unsupported task action" || err.Error() == "invalid task" {
+		if err.Error() == "invalid task type" || err.Error() == "unsupported task action" || err.Error() == "invalid task" || err.Error() == "invalid task id" || err.Error() == "invalid group join task id" {
 			status = http.StatusBadRequest
 		}
 		messageJSON(w, status, map[string]string{"error": err.Error()})
