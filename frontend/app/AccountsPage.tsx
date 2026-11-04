@@ -30,7 +30,7 @@ export function AccountsPage({token}:{token:string}){
  const [tab,setTab]=useState<"accounts"|"proxies"|"profile">("accounts");
  const [accounts,setAccounts]=useState<Account[]>([]),[total,setTotal]=useState(0),[proxies,setProxies]=useState<Proxy[]>([]);
  const [query,setQuery]=useState(""),[debouncedQuery,setDebouncedQuery]=useState(""),[status,setStatus]=useState(""),[groupFilter,setGroupFilter]=useState("");
- const accountLoadSequence=useRef(0);
+ const accountLoadSequence=useRef(0),proxyLoadSequence=useRef(0),profileAccountSequence=useRef(0),profileJobSequence=useRef(0),qrPollLock=useRef(false),authActionLock=useRef(false),bulkActionLock=useRef(false);
  useEffect(()=>{const timer=window.setTimeout(()=>setDebouncedQuery(query),280);return()=>window.clearTimeout(timer)},[query]);
  const [offset,setOffset]=useState(0),[selected,setSelected]=useState<string[]>([]);
  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
@@ -61,13 +61,14 @@ export function AccountsPage({token}:{token:string}){
   finally{if(sequence===accountLoadSequence.current)setBusy(false)}
  },[token,offset,debouncedQuery,status,groupFilter]);
  const loadProxies=useCallback(async()=>{
-  try{const result=await api<{proxies:Proxy[]}>("/api/v1/proxies",token);setProxies(result.proxies||[])}
-  catch(e){setError(e instanceof Error?e.message:"代理列表加载失败")}
+  const sequence=++proxyLoadSequence.current;
+  try{const result=await api<{proxies:Proxy[]}>("/api/v1/proxies",token);if(sequence===proxyLoadSequence.current)setProxies(result.proxies||[])}
+  catch(e){if(sequence===proxyLoadSequence.current)setError(e instanceof Error?e.message:"代理列表加载失败")}
  },[token]);
- const loadProfileAccounts=useCallback(async()=>{try{const r=await api<AccountPage>("/api/v1/accounts?limit=100&offset=0&status=authorized",token);setProfileAccounts(r.accounts||[])}catch(e){setError(e instanceof Error?e.message:"授权账号加载失败")}},[token]);
- const loadProfileJobs=useCallback(async()=>{try{const p=new URLSearchParams({limit:"50",offset:"0"});if(profileJobStatus)p.set("status",profileJobStatus);const r=await api<{jobs:ProfileJob[];total:number}>(`/api/v1/accounts/profile-updates?${p}`,token);setProfileJobs(r.jobs||[]);setProfileJobTotal(r.total||0)}catch(e){setError(e instanceof Error?e.message:"资料更新任务加载失败")}},[token,profileJobStatus]);
+ const loadProfileAccounts=useCallback(async()=>{const sequence=++profileAccountSequence.current;try{const r=await api<AccountPage>("/api/v1/accounts?limit=100&offset=0&status=authorized",token);if(sequence===profileAccountSequence.current)setProfileAccounts(r.accounts||[])}catch(e){if(sequence===profileAccountSequence.current)setError(e instanceof Error?e.message:"授权账号加载失败")}},[token]);
+ const loadProfileJobs=useCallback(async()=>{const sequence=++profileJobSequence.current;try{const p=new URLSearchParams({limit:"50",offset:"0"});if(profileJobStatus)p.set("status",profileJobStatus);const r=await api<{jobs:ProfileJob[];total:number}>(`/api/v1/accounts/profile-updates?${p}`,token);if(sequence===profileJobSequence.current){setProfileJobs(r.jobs||[]);setProfileJobTotal(r.total||0)}}catch(e){if(sequence===profileJobSequence.current)setError(e instanceof Error?e.message:"资料更新任务加载失败")}},[token,profileJobStatus]);
  useEffect(()=>{if(tab==="accounts")void Promise.all([loadAccounts(),loadProxies()]);else if(tab==="proxies")void loadProxies();else void Promise.all([loadProfileAccounts(),loadProfileJobs()])},[tab,loadAccounts,loadProxies,loadProfileAccounts,loadProfileJobs]);
- useEffect(()=>{if(tab!=="profile")return;const timer=window.setInterval(()=>void loadProfileJobs(),10000);return()=>window.clearInterval(timer)},[tab,loadProfileJobs]);
+ useEffect(()=>{if(tab!=="profile")return;const refresh=()=>{if(document.visibilityState==="visible")void loadProfileJobs()};const timer=window.setInterval(refresh,10000);document.addEventListener("visibilitychange",refresh);return()=>{profileJobSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)}},[tab,loadProfileJobs]);
  useEffect(()=>{
   if(!qr)return;
   let active=true;
@@ -76,14 +77,19 @@ export function AccountsPage({token}:{token:string}){
  },[qr?.url]);
  useEffect(()=>{
   if(!qr)return;
+  let active=true;
   const timer=window.setInterval(async()=>{
+   if(!active||document.visibilityState!=="visible"||qrPollLock.current)return;
+   qrPollLock.current=true;
    try{
     const result=await api<{status:string;qr?:{url:string;expires_at:string};telegram_user?:unknown}>(`/api/v1/accounts/${qr.accountId}/qr/status`,token);
+    if(!active)return;
     if(result.status==="authorized"){setQR(null);setQRImage("");setNotice("Telegram 账号授权成功");await loadAccounts()}
     else if(result.qr)setQR({accountId:qr.accountId,url:result.qr.url,expiresAt:result.qr.expires_at});
-   }catch(e){setError(e instanceof Error?e.message:"二维码状态检查失败")}
+   }catch(e){if(active)setError(e instanceof Error?e.message:"二维码状态检查失败")}
+   finally{qrPollLock.current=false}
   },3000);
-  return()=>window.clearInterval(timer);
+  return()=>{active=false;window.clearInterval(timer)};
  },[qr?.accountId,token,loadAccounts]);
 
  const refresh=async()=>{if(tab==="accounts")await Promise.all([loadAccounts(),loadProxies()]);else if(tab==="proxies")await loadProxies();else await Promise.all([loadProfileAccounts(),loadProfileJobs()])};
@@ -117,36 +123,36 @@ export function AccountsPage({token}:{token:string}){
   finally{setBusy(false)}
  }
  async function startQR(event:FormEvent){
-  event.preventDefault();setBusy(true);setError("");setNotice("");
+  event.preventDefault();if(authActionLock.current)return;authActionLock.current=true;setBusy(true);setError("");setNotice("");
   try{
    const result=await api<{account:Account;status?:string;qr?:{url:string;expires_at:string}}>("/api/v1/accounts/qr/start",token,{method:"POST",body:JSON.stringify({group_name:loginGroup})});
    if(result.qr){setQR({accountId:result.account.id,url:result.qr.url,expiresAt:result.qr.expires_at});setLoginAccountID(result.account.id)}
    else{setNotice("Telegram 账号授权成功");setLoginOpen(false);await loadAccounts()}
   }catch(e){setError(e instanceof Error?e.message:"二维码登录启动失败")}
-  finally{setBusy(false)}
+  finally{authActionLock.current=false;setBusy(false)}
  }
  async function startPhone(event:FormEvent){
-  event.preventDefault();setBusy(true);setError("");
+  event.preventDefault();if(authActionLock.current)return;authActionLock.current=true;setBusy(true);setError("");
   try{
    const result=await api<{account:Account;status:string;delivery_type:string;resend_after_seconds:number}>("/api/v1/accounts/phone/start",token,{method:"POST",body:JSON.stringify({phone,group_name:loginGroup})});
    setLoginAccountID(result.account.id);setDelivery(result.delivery_type);setResendAfter(result.resend_after_seconds);setPhoneCode("");setTwoFactor(false);await loadAccounts();
   }catch(e){setError(e instanceof Error?e.message:"手机号登录启动失败")}
-  finally{setBusy(false)}
+  finally{authActionLock.current=false;setBusy(false)}
  }
  async function verifyPhone(event:FormEvent){
-  event.preventDefault();setBusy(true);setError("");
+  event.preventDefault();if(authActionLock.current)return;authActionLock.current=true;setBusy(true);setError("");
   try{
    const result=await api<{status:string}>(`/api/v1/accounts/${loginAccountID}/phone/verify`,token,{method:"POST",body:JSON.stringify({code:phoneCode})});
    if(result.status==="two_factor_required"){setTwoFactor(true);return}
    setNotice("Telegram 账号授权成功");setLoginOpen(false);setLoginAccountID("");await loadAccounts();
   }catch(e){setError(e instanceof Error?e.message:"验证码验证失败")}
-  finally{setBusy(false)}
+  finally{authActionLock.current=false;setBusy(false)}
  }
  async function verifyPassword(event:FormEvent){
-  event.preventDefault();setBusy(true);setError("");
+  event.preventDefault();if(authActionLock.current)return;authActionLock.current=true;setBusy(true);setError("");
   try{await api(`/api/v1/accounts/${loginAccountID}/phone/2fa`,token,{method:"POST",body:JSON.stringify({password:phonePassword})});setNotice("Telegram 账号授权成功");setLoginOpen(false);setLoginAccountID("");setPhonePassword("");await loadAccounts()}
   catch(e){setError(e instanceof Error?e.message:"两步验证失败")}
-  finally{setBusy(false)}
+  finally{authActionLock.current=false;setBusy(false)}
  }
  async function cancelPending(){
   if(!loginAccountID)return;
@@ -167,15 +173,15 @@ export function AccountsPage({token}:{token:string}){
   finally{setBusy(false)}
  }
  async function bulkAction(action:"disconnect"|"reconnect"|"delete"){
-  if(!selected.length)return;
+  if(!selected.length||bulkActionLock.current)return;
   if(!window.confirm(action==="delete"?`确定删除选中的 ${selected.length} 个账号吗？`:action==="disconnect"?"确定断开选中账号吗？":"确定重连选中账号吗？"))return;
-  setBusy(true);setError("");setNotice("");
+  bulkActionLock.current=true;setBusy(true);setError("");setNotice("");
   try{
    if(action==="delete")await api("/api/v1/accounts/bulk",token,{method:"DELETE",body:JSON.stringify({account_ids:selected})});
    else await api("/api/v1/accounts/bulk-action",token,{method:"POST",body:JSON.stringify({account_ids:selected,action})});
    setNotice(action==="delete"?"所选账号已删除":"账号运行操作已提交");await loadAccounts();
   }catch(e){setError(e instanceof Error?e.message:"批量操作失败")}
-  finally{setBusy(false)}
+  finally{bulkActionLock.current=false;setBusy(false)}
  }
  async function assignGroup(){
   if(!selected.length)return;
@@ -254,7 +260,7 @@ export function AccountsPage({token}:{token:string}){
  }
 
  return <div className="accounts-page">
-  <div className="accounts-heading"><div><div className="eyebrow">ACCOUNT MANAGEMENT</div><h1>账号管理</h1><p>账号登录、分组、代理和资料管理</p></div><div className="accounts-actions"><button className="secondary" onClick={()=>void refresh()} disabled={busy}>刷新</button><button className="primary" onClick={()=>{setLoginOpen(true);setLoginMode("qr");setError("")}}>添加账号 / 登录</button></div></div>
+  <div className="accounts-heading"><div><div className="eyebrow">ACCOUNT MANAGEMENT</div><h1>账号管理</h1><p>账号登录、分组、代理和资料管理</p></div><div className="accounts-actions"><button className="secondary" onClick={()=>void refresh()} disabled={busy}>{busy?"处理中…":"↻ 刷新"}</button><button className="primary" onClick={()=>{setLoginOpen(true);setLoginMode("qr");setError("")}}>添加账号 / 登录</button></div></div>
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
   <div className="account-tabs"><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>账号列表</button><button className={tab==="proxies"?"active":""} onClick={()=>setTab("proxies")}>代理管理</button><button className={tab==="profile"?"active":""} onClick={()=>setTab("profile")}>资料修改 / 头像</button></div>
   {tab==="profile"?<section className="profile-workspace"><div className="panel profile-targets"><div className="panel-heading"><div><h2>选择授权账号</h2><p>资料修改和头像上传均通过队列执行，每批最多 20 个账号。</p></div><span className="muted">已选 {profileSelected.length} / 20</span></div><div className="profile-account-list">{profileAccounts.map(a=><label key={a.id}><input type="checkbox" checked={profileSelected.includes(a.id)} disabled={!profileSelected.includes(a.id)&&profileSelected.length>=20} onChange={e=>setProfileSelected(v=>e.target.checked?[...v,a.id]:v.filter(x=>x!==a.id))}/><span><strong>{a.display_name||a.phone}</strong><small>{a.phone} · {a.group_name||"未分组"}</small></span></label>)}{!profileAccounts.length&&<div className="empty">暂无已授权账号</div>}</div></div><div className="profile-forms"><section className="panel"><h2>修改账号资料</h2><p>可批量更新名字、姓氏、简介，或使用已保存的用户名生成规则。</p><form className="account-form" onSubmit={createProfileBatch}><label>名字<input value={profileForm.first_name} onChange={e=>setProfileForm(v=>({...v,first_name:e.target.value}))} maxLength={64}/></label><label>姓氏<input value={profileForm.last_name} onChange={e=>setProfileForm(v=>({...v,last_name:e.target.value}))} maxLength={64}/></label><label>个人简介<textarea value={profileForm.about} onChange={e=>setProfileForm(v=>({...v,about:e.target.value}))} maxLength={70} rows={3}/></label><label className="profile-checkbox"><input type="checkbox" checked={profileForm.generate_username} onChange={e=>setProfileForm(v=>({...v,generate_username:e.target.checked}))}/>自动生成用户名</label><small>名字/姓氏最多 64 字符，简介最多 70 字符。任务由 Worker 异步执行。</small><button className="primary" disabled={busy||profileSelected.length===0}>创建资料更新任务</button></form></section><section className="panel"><h2>上传账号头像</h2><p>支持 JPEG / PNG，最大 5 MiB、4096×4096、16MP。一个文件可应用到所选账号。</p><form className="account-form" onSubmit={createAvatarBatch}><label>头像图片<input key={avatarFile?.name||"avatar-empty"} type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" onChange={e=>setAvatarFile(e.target.files?.[0]||null)} required/></label>{avatarFile&&<small>{avatarFile.name} · {(avatarFile.size/1024/1024).toFixed(2)} MiB</small>}<button className="primary" disabled={busy||!avatarFile||profileSelected.length===0}>创建头像上传任务</button></form></section></div><section className="panel profile-jobs"><div className="panel-heading"><div><h2>资料更新任务</h2><p>显示当前租户的异步执行结果与错误信息</p></div><div className="profile-job-filters"><select value={profileJobStatus} onChange={e=>setProfileJobStatus(e.target.value)}><option value="">全部状态</option>{["pending","processing","paused","completed","failed","cancelled"].map(s=><option key={s} value={s}>{s}</option>)}</select><button className="secondary" onClick={()=>void loadProfileJobs()} disabled={busy}>刷新</button></div></div><div className="profile-job-list">{profileJobs.map(job=><article key={job.id}><div className="profile-job-title"><div><strong>{profileAccounts.find(a=>a.id===job.account_id)?.display_name||profileAccounts.find(a=>a.id===job.account_id)?.phone||job.account_id}</strong><small>{job.first_name} {job.last_name} {job.about?`· ${job.about}`:""} {job.generate_username?"· 自动生成用户名":""}</small></div><span className={`status ${job.status==="completed"?"status-joined":job.status==="failed"?"status-failed":job.status==="cancelled"?"status-paused":"status-pending"}`}>{job.status}</span></div><small>任务 {job.id} · 批次 {job.batch_id} · 尝试 {job.attempts} 次 · 下次执行 {fmt(job.next_run_at)}</small>{job.applied_username&&<small>已应用用户名：@{job.applied_username}</small>}{job.last_error&&<small className="account-last-error">{job.last_error}</small>}<div className="profile-job-actions">{job.status==="failed"&&<button onClick={()=>void controlProfileJob(job,"retry")} disabled={busy}>重试</button>}{job.status==="paused"&&<button onClick={()=>void controlProfileJob(job,"resume")} disabled={busy}>恢复</button>}{["pending","paused","failed"].includes(job.status)&&<button className="danger-text" onClick={()=>void controlProfileJob(job,"cancel")} disabled={busy}>取消</button>}</div></article>)}{!profileJobs.length&&<div className="empty">暂无资料更新任务</div>}</div><div className="profile-job-total">共 {profileJobTotal} 条任务</div></section></section>:tab==="accounts"?<>
