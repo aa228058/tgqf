@@ -15,6 +15,7 @@ import (
 func TestMigrateAppliesAllEmbeddedMigrationsToEmptySchema(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
+		if os.Getenv("CI") == "true" { t.Fatal("TEST_DATABASE_URL is required in CI; refusing to skip migration integration test") }
 		t.Skip("TEST_DATABASE_URL is not configured")
 	}
 

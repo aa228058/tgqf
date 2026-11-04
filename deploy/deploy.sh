@@ -154,7 +154,7 @@ if [[ "$FIRST_INSTALL" == "1" ]]; then
 fi
 
 log "Running HTTPS smoke checks"
-for attempt in {1..30}; do
+for _attempt in {1..30}; do
   if curl -fsS "https://$DOMAIN/health/ready" >/dev/null && curl -fsS "https://$DOMAIN/" >/dev/null; then break; fi
   sleep 5
 done
