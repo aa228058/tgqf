@@ -2,7 +2,6 @@ package auth
 
 import (
     "context"
-    "database/sql"
     "fmt"
     "runtime"
     "syscall"
@@ -87,4 +86,3 @@ func (h SystemHealth) HasWarnings() bool {
     return h.Database.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85
 }
 
-var _ *sql.DB
