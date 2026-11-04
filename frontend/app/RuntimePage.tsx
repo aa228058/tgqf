@@ -16,8 +16,8 @@ export function RuntimePage({token,user}:{token:string;user:{role:string}}){
  const [workers,setWorkers]=useState<Worker[]>([]),[tenants,setTenants]=useState<Tenant[]>([]);
  const [accounts,setAccounts]=useState<Account[]>([]),[proxies,setProxies]=useState<Proxy[]>([]);
  const [checks,setChecks]=useState<Check[]>([]),[selectedProxy,setSelectedProxy]=useState("");
- const [summary,setSummary]=useState<Summary|null>(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(""),[updated,setUpdated]=useState("");
- const loadSequence=useRef(0),checkSequence=useRef(0),operationLock=useRef(false);
+ const [summary,setSummary]=useState<Summary|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(""),[updated,setUpdated]=useState("");
+ const loadSequence=useRef(0),checkSequence=useRef(0);
  const load=useCallback(async()=>{
   const sequence=++loadSequence.current;
   setLoading(true);setError("");
@@ -43,7 +43,7 @@ export function RuntimePage({token,user}:{token:string;user:{role:string}}){
   if(sequence!==loadSequence.current)return;
   setError(failures.join("；"));setUpdated(new Date().toLocaleTimeString());setLoading(false);
  },[token,admin]);
- useEffect(()=>{void load();const refresh=()=>{if(document.visibilityState==="visible"&&!operationLock.current)void load()};const timer=window.setInterval(refresh,20000);document.addEventListener("visibilitychange",refresh);return()=>{loadSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)}},[load]);
+ useEffect(()=>{void load();const refresh=()=>{if(document.visibilityState==="visible")void load()};const timer=window.setInterval(refresh,20000);document.addEventListener("visibilitychange",refresh);return()=>{loadSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)}},[load]);
  useEffect(()=>{
   if(admin||!selectedProxy){setChecks([]);return}
   let active=true;const sequence=++checkSequence.current;setChecks([]);
