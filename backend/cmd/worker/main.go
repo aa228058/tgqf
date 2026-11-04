@@ -404,6 +404,7 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
         var telegramMessageID int64
         var telegramMessageIDs []int64
         var sendErr error
+        var voiceCallResult telegrammtgo.VoiceCallRequestResult
         switch job.ActionType {
         case "", "text":
             telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
@@ -413,6 +414,8 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             var asset messages.MediaAssetContent
             asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,job.MediaAssetID)
             if sendErr==nil { telegramMessageID,sendErr=manager.SendMediaReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.MediaType,asset.FileName,asset.MIMEType,job.MediaCaption,asset.Content) }
+        case "voice_call":
+            voiceCallResult,sendErr=manager.RequestVoiceCall(sendCtx,job.AccountID,job.TargetUserID)
         case "media_album":
             album:=make([]telegrammtgo.MediaAlbumItem,0,len(job.MediaAlbumItems))
             for _,item:=range job.MediaAlbumItems {
@@ -430,8 +433,24 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
         }
         cancel()
-        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
         floodWait,_:=tgerr.AsFloodWait(sendErr)
+        if job.ActionType=="voice_call" {
+            if sendErr==nil {
+                if err:=service.FinishKeywordVoiceCall(ctx,job,voiceCallResult);err!=nil {
+                    logger.Error("persist Telegram voice call ringing result","job_id",job.ID,"error",err)
+                    continue
+                }
+                logger.Info("Telegram native voice call is ringing","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"call_id",voiceCallResult.CallID)
+            } else {
+                if err:=service.FinishKeywordAction(ctx,job,0,sendErr,floodWait);err!=nil {
+                    logger.Error("persist Telegram voice call failure","job_id",job.ID,"error",err)
+                    continue
+                }
+                logger.Warn("Telegram voice call request failed","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"error",sendErr)
+            }
+            continue
+        }
+        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
         if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait,telegramMessageIDs);err!=nil {
             logger.Error("persist keyword action result","job_id",job.ID,"error",err)
             continue
