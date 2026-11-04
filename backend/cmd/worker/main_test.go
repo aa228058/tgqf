@@ -52,6 +52,29 @@ func TestScheduleReconnect(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigChanged(t *testing.T) {
+	tests := []struct {
+		name string
+		currentSession string
+		currentProxy string
+		desiredSession string
+		desiredProxy string
+		want bool
+	}{
+		{name: "unchanged config", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-a", desiredProxy: "proxy-a", want: false},
+		{name: "session changed", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-b", desiredProxy: "proxy-a", want: true},
+		{name: "proxy changed", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-a", desiredProxy: "proxy-b", want: true},
+		{name: "proxy removed", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-a", desiredProxy: "", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runtimeConfigChanged(tt.currentSession, tt.currentProxy, tt.desiredSession, tt.desiredProxy); got != tt.want {
+				t.Fatalf("runtimeConfigChanged() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateRandomTelegramUsername(t *testing.T) {
 	tests:=[]struct{name string;settings accounts.UsernameGenerationSettings;prefix string;length int}{
 		{name:"tenant prefix alphanumeric",settings:accounts.UsernameGenerationSettings{Prefix:"brand_",RandomLength:12,Charset:"alphanumeric"},prefix:"brand_",length:18},
