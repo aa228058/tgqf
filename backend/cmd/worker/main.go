@@ -324,6 +324,10 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
         case "contact":
             telegramMessageID,sendErr=manager.SendContactReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.ContactPhone,job.ContactFirstName,job.ContactLastName)
+        case "media":
+            var asset messages.MediaAssetContent
+            asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,job.MediaAssetID)
+            if sendErr==nil { telegramMessageID,sendErr=manager.SendMediaReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.MediaType,asset.FileName,asset.MIMEType,job.MediaCaption,asset.Content) }
         default:
             sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
         }
