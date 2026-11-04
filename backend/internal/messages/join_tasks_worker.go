@@ -26,12 +26,12 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
         rows,err:=tx.QueryContext(ctx,`
             WITH picked AS (
                 SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,a.attempts,
-                    COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) AS target_url,
-                    t.private_invite_hash_ciphertext
+                    CASE WHEN l.link_type='public' THEN l.public_url WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END AS target_url,
+                    COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) AS private_invite_hash_ciphertext
                 FROM tenant_join_task_accounts a
                 JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
                 JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
-                LEFT JOIN public_group_links l ON l.id=t.target_link_id AND l.link_type='public' AND l.status<>'invalid'
+                LEFT JOIN public_group_links l ON l.id=t.target_link_id AND l.status<>'invalid'
                 LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
                 WHERE a.tenant_id=$1 AND t.status='queued' AND (a.status='queued' OR (a.status='processing' AND a.lease_until<NOW()))
                     AND a.available_at<=NOW() AND t.available_at<=NOW()
@@ -43,7 +43,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                     AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=a.tenant_id AND x.telegram_account_id=a.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                     AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=a.tenant_id AND x.account_id=a.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                     AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=a.tenant_id AND x.telegram_account_id=a.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
-                    AND (COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
+                    AND (CASE WHEN l.link_type='public' THEN l.public_url WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END IS NOT NULL OR COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) IS NOT NULL)
                     AND (t.target_link_id IS NULL OR EXISTS(
                         SELECT 1 FROM public_group_link_sources src
                         WHERE src.tenant_id=a.tenant_id AND src.link_id=t.target_link_id
