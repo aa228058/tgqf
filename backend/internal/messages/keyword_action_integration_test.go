@@ -71,7 +71,7 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 	service:=New(db)
 	jobs,err:=service.ClaimKeywordActionJobs(ctx,10)
 	if err!=nil{t.Fatal(err)}
-	if len(jobs)!=2{t.Fatalf("claimed %d jobs, want only the 2 authorized active-tenant accounts",len(jobs))}
+	if len(jobs)!=2{details:=make([]string,0,len(jobs));for _,job:=range jobs{details=append(details,job.ID+"/"+job.TenantID+"/"+job.AccountID)};var tenantRows string;_ = db.QueryRowContext(ctx,`SELECT string_agg(id::text||':'||status||':'||expires_at::text,',') FROM tenants`).Scan(&tenantRows);t.Fatalf("claimed %d jobs (%v), tenants=%s, want only the 2 authorized active-tenant accounts",len(jobs))}
 	claimed:=map[string]KeywordActionJob{}
 	for _,job:=range jobs{claimed[job.ID]=job}
 	if _,ok:=claimed[jobA];!ok{t.Fatal("authorized account A job was not claimed")}
