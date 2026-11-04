@@ -698,6 +698,7 @@ func (m *Manager) StartPhoneLogin(ctx context.Context, accountID, phone, proxyJS
 	if _,ok:=m.pendingQR[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account QR login is already pending")}
 	if _,ok:=m.pendingPhone[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account phone login is already pending")}
 	m.pendingPhone[accountID]=entry;m.mu.Unlock()
+	go m.expirePhoneLogin(accountID, entry)
 	delivery:="telegram"
 	if sent.Type!=nil { delivery=fmt.Sprintf("%T",sent.Type) }
 	return PhoneCodeResult{Timeout:sent.Timeout,DeliveryType:delivery},nil
@@ -737,6 +738,35 @@ func (m *Manager) finishPhoneLogin(accountID string, entry *pendingPhone, user *
 	delete(m.pendingPhone,accountID);m.clients[accountID]=entry.client
 	m.mu.Unlock()
 	return PhoneAuthResult{UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone,SessionString:session},false,nil
+}
+
+
+
+// expirePhoneLogin releases the temporary MTGo connection even when a user
+// abandons the OTP/2FA screen. The identity check prevents an old timer from
+// disconnecting a later login that reused the same account ID.
+func (m *Manager) expirePhoneLogin(accountID string, entry *pendingPhone) {
+	delay := time.Until(entry.expiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+
+	m.mu.Lock()
+	if m.pendingPhone[accountID] != entry {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.pendingPhone, accountID)
+	m.mu.Unlock()
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.client != nil {
+		_ = entry.client.Disconnect()
+	}
 }
 
 func (m *Manager) CancelPhoneLogin(accountID string) error {
