@@ -138,3 +138,21 @@ func sampleCPUPercent() float64 {
     if totalDelta==0 { return 0 }
     return 100*float64(totalDelta-idleDelta)/float64(totalDelta)
 }
+
+func (s *Service) aggregateTenantHealth(ctx context.Context, result *SystemHealth) error {
+    tx,err:=s.db.BeginTx(ctx,nil)
+    if err!=nil{return err}
+    defer tx.Rollback()
+    rows,err:=tx.QueryContext(ctx,"SELECT id::text FROM tenants ORDER BY id")
+    if err!=nil{return err}
+    tenantIDs:=make([]string,0)
+    for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return err};tenantIDs=append(tenantIDs,id)}
+    if err:=rows.Err();err!=nil{rows.Close();return err}
+    rows.Close()
+    for _,tenantID:=range tenantIDs {
+        if _,err:=tx.ExecContext(ctx,"SELECT set_config('app.tenant_id',$1,true)",tenantID);err!=nil{return err}
+        if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*),COUNT(*) FILTER(WHERE status='authorized'),COUNT(*) FILTER(WHERE status='disconnected'),COUNT(*) FILTER(WHERE status='error'),COUNT(*) FILTER(WHERE status='pending') FROM telegram_accounts WHERE tenant_id=$1",tenantID).Scan(&result.Accounts.Total,&result.Accounts.Authorized,&result.Accounts.Disconnected,&result.Accounts.Error,&result.Accounts.Pending);err!=nil{return fmt.Errorf("account health for tenant: %w",err)}
+        if err:=tx.QueryRowContext(ctx,"SELECT (SELECT COUNT(*) FROM tenant_proxies WHERE tenant_id=$1),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes')",tenantID).Scan(&result.Proxies.Total,&result.Proxies.FailedChecks15m,&result.Proxies.SuccessfulChecks15m);err!=nil{return fmt.Errorf("proxy health for tenant: %w",err)}
+    }
+    return tx.Commit()
+}
