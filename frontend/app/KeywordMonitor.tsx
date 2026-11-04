@@ -159,11 +159,6 @@ export function KeywordMonitor({token}:{token:string}){
   {error&&<div className="alert error">{error}</div>}{notice&&<div className="alert success">{notice}</div>}
   <div className="keyword-tabs" role="tablist" aria-label="监控回复模块"><button className={tab==="rules"?"active":""} role="tab" aria-selected={tab==="rules"} onClick={()=>setTab("rules")}>规则配置（{rules.length}）</button><button className={tab==="matches"?"active":""} role="tab" aria-selected={tab==="matches"} onClick={()=>setTab("matches")}>命中记录（{matches.length}）</button><button className={tab==="actions"?"active":""} role="tab" aria-selected={tab==="actions"} onClick={()=>setTab("actions")}>动作任务（{actions.length}）</button></div>
   <div className="sr-only" role="status" aria-live="polite">{loading?"正在同步监控数据":busy?"正在处理操作":""}</div>
-  {false&&<div className="keyword-tabs">
-   <button className={tab==="rules"?"active":""} onClick={()=>setTab("rules")}>规则配置（{rules.length}）</button>
-   <button className={tab==="matches"?"active":""} onClick={()=>setTab("matches")}>命中记录（{matches.length}）</button>
-   <button className={tab==="actions"?"active":""} onClick={()=>setTab("actions")}>动作任务（{actions.length}）</button>
-  </div>
   {tab==="rules"&&<>
    <div className="keyword-toolbar"><strong>监控规则</strong><button className="primary" onClick={()=>edit()}>新建规则</button></div>
    <div className="keyword-rule-list">{rules.map(rule=><article className="keyword-card" key={rule.id}>
