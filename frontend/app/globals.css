@@ -934,3 +934,34 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  button,.workbench-stat,.workbench-row{transition:none}
  .button-spinner,.workbench-update i.is-refreshing{animation:none}
 }
+
+
+/* Monitor/reply interaction polish */
+.keyword-monitor .keyword-toolbar{align-items:center}
+.keyword-monitor .keyword-tabs button{min-height:42px;transition:background-color .16s ease,color .16s ease,box-shadow .16s ease}
+.keyword-monitor .keyword-tabs button:focus-visible,.keyword-monitor button:focus-visible,.keyword-monitor input:focus-visible,.keyword-monitor select:focus-visible,.keyword-monitor textarea:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.keyword-monitor .keyword-card{transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.keyword-monitor .keyword-card:hover{border-color:color-mix(in srgb,var(--accent) 32%,var(--line));box-shadow:0 7px 20px rgba(25,45,75,.055)}
+.keyword-monitor .keyword-actions button,.keyword-monitor .keyword-toolbar button{min-height:38px}
+.keyword-monitor .keyword-assets label{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.keyword-monitor .keyword-assets label:focus-within{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.keyword-monitor .keyword-asset-list>span{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.keyword-monitor .keyword-preview img,.keyword-monitor .keyword-preview video,.keyword-monitor .keyword-preview iframe{display:block;max-width:100%;max-height:65vh;margin:0 auto;object-fit:contain}
+.keyword-monitor .keyword-preview audio{width:100%}
+.keyword-monitor .keyword-table-wrap{overscroll-behavior-x:contain}
+.keyword-monitor .keyword-table tbody tr{transition:background-color .14s ease}
+.keyword-monitor .keyword-table tbody tr:hover{background:var(--shell-hover)}
+.keyword-monitor .keyword-rule-list>.empty{min-height:120px;display:grid;place-items:center}
+@media(max-width:600px){
+ .keyword-monitor .keyword-toolbar{align-items:stretch;gap:10px}
+ .keyword-monitor .keyword-toolbar>button{width:100%}
+ .keyword-monitor .keyword-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;overflow:visible}
+ .keyword-monitor .keyword-tabs button{padding:9px 5px;font-size:11px;white-space:normal}
+ .keyword-monitor .keyword-card{gap:12px}
+ .keyword-monitor .keyword-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+ .keyword-monitor .keyword-actions button{width:100%;min-height:42px}
+ .keyword-monitor .keyword-assets label{width:100%}
+ .keyword-monitor .keyword-asset-list>span{align-items:flex-start}
+ .keyword-monitor .keyword-preview{width:100%;max-height:88vh}
+}
+@media(prefers-reduced-motion:reduce){.keyword-monitor .keyword-card,.keyword-monitor .keyword-table tbody tr,.keyword-monitor .keyword-tabs button{transition:none}}
