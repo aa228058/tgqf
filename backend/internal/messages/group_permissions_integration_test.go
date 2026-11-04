@@ -105,6 +105,17 @@ func TestGroupCatalogueImportAndPermissionRefreshIntegration(t *testing.T) {
 	if err:=db.QueryRowContext(ctx,`SELECT title FROM public_groups WHERE telegram_chat_id=100 AND chat_type='group'`).Scan(&title);err!=nil{t.Fatal(err)}
 	if title!="Original"{t.Fatalf("existing shared record was overwritten: %q",title)}
 
+	// Importing an already-known shared group must still attribute the
+	// discovery to the importing tenant without overwriting global metadata.
+	insertedB, skippedB, err := service.ImportGroupCatalogue(ctx,tenantB,[]GroupCatalogueImportRecord{
+		{ChatID:100,ChatType:"group",Title:"Tenant B stale title"},
+	})
+	if err!=nil{t.Fatal(err)}
+	if insertedB!=0||skippedB!=1{t.Fatalf("tenant B import inserted=%d skipped=%d, want 0/1",insertedB,skippedB)}
+	var contributors int
+	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM tenant_group_contributions WHERE group_id=(SELECT id FROM public_groups WHERE telegram_chat_id=100 AND chat_type='group')`).Scan(&contributors);err!=nil{t.Fatal(err)}
+	if contributors!=2{t.Fatalf("shared group contributors=%d, want 2",contributors)}
+
 	var groupID int64
 	if err:=db.QueryRowContext(ctx,`SELECT id FROM public_groups WHERE telegram_chat_id=100 AND chat_type='group'`).Scan(&groupID);err!=nil{t.Fatal(err)}
 	for _,source:=range []struct{tenant,account string}{{tenantA,accountA},{tenantB,accountB}} {
