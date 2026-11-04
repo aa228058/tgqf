@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -29,7 +29,9 @@ const fmt=(value?:string)=>value?new Date(value).toLocaleString():"—";
 export function AccountsPage({token}:{token:string}){
  const [tab,setTab]=useState<"accounts"|"proxies"|"profile">("accounts");
  const [accounts,setAccounts]=useState<Account[]>([]),[total,setTotal]=useState(0),[proxies,setProxies]=useState<Proxy[]>([]);
- const [query,setQuery]=useState(""),[status,setStatus]=useState(""),[groupFilter,setGroupFilter]=useState("");
+ const [query,setQuery]=useState(""),[debouncedQuery,setDebouncedQuery]=useState(""),[status,setStatus]=useState(""),[groupFilter,setGroupFilter]=useState("");
+ const accountLoadSequence=useRef(0);
+ useEffect(()=>{const timer=window.setTimeout(()=>setDebouncedQuery(query),280);return()=>window.clearTimeout(timer)},[query]);
  const [offset,setOffset]=useState(0),[selected,setSelected]=useState<string[]>([]);
  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [loginOpen,setLoginOpen]=useState(false),[loginMode,setLoginMode]=useState<LoginMode>("qr");
@@ -46,17 +48,18 @@ export function AccountsPage({token}:{token:string}){
  const [avatarFile,setAvatarFile]=useState<File|null>(null),[profileJobs,setProfileJobs]=useState<ProfileJob[]>([]),[profileJobTotal,setProfileJobTotal]=useState(0),[profileJobStatus,setProfileJobStatus]=useState("");
 
  const loadAccounts=useCallback(async()=>{
+  const sequence=++accountLoadSequence.current;
   setBusy(true);setError("");
   try{
    const params=new URLSearchParams({limit:"30",offset:String(offset)});
-   if(query.trim())params.set("q",query.trim());
+   if(debouncedQuery.trim())params.set("q",debouncedQuery.trim());
    if(status)params.set("status",status);
    if(groupFilter.trim())params.set("group",groupFilter.trim());
    const result=await api<AccountPage>(`/api/v1/accounts?${params}`,token);
-   setAccounts(result.accounts||[]);setTotal(result.total||0);setSelected([]);
-  }catch(e){setError(e instanceof Error?e.message:"账号列表加载失败")}
-  finally{setBusy(false)}
- },[token,offset,query,status,groupFilter]);
+   if(sequence===accountLoadSequence.current){setAccounts(result.accounts||[]);setTotal(result.total||0);setSelected([])}
+  }catch(e){if(sequence===accountLoadSequence.current)setError(e instanceof Error?e.message:"账号列表加载失败")}
+  finally{if(sequence===accountLoadSequence.current)setBusy(false)}
+ },[token,offset,debouncedQuery,status,groupFilter]);
  const loadProxies=useCallback(async()=>{
   try{const result=await api<{proxies:Proxy[]}>("/api/v1/proxies",token);setProxies(result.proxies||[])}
   catch(e){setError(e instanceof Error?e.message:"代理列表加载失败")}
