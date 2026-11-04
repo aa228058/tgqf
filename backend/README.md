@@ -106,7 +106,11 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 用户名最终可用性由 Telegram 服务端裁定；客户端格式校验不能代替服务端唯一性检查。Telegram FloodWait、用户名占用及其他 MTProto 错误由任务执行结果记录，按任务策略重试；不要高频重复提交。当前实时资料读取使用 MTGo 的已授权 self User 对象；Telegram 的完整隐私/简介字段不在该接口的承诺范围内。
 
 
-### 私密邀请加入与审批自动同步
+### 采集器与自动加群联动
+- Worker 接收 MTGo 在线账号的新消息事件后，只处理非本人发送且来自租户开启的私聊/群组/频道来源；按租户设置决定是否从私聊、群组和频道采集链接，不回扫历史消息。
+- 自动提取公开 t.me 用户名链接和私密邀请链接；公开链接规范化存储，私密邀请仅保存 SHA-256 查重值与 AES-256-GCM 密文，不保存明文邀请码。相同链接重复出现只更新最后发现时间和来源计数，不重置已完成的有效性状态、退避时间或其他 Worker 的检查租约。
+- 链接库 GET /api/v1/group-links、GET /api/v1/group-links/stats、GET/PUT /api/v1/group-links/settings 按租户来源过滤；状态包括 pending、valid、approval_required、invalid、unknown。链接检查由 Worker 每 15 分钟扫描，单条链接检查后至少 6 小时才再次检查；只使用发现该链接的租户账号执行检查，使用数据库租约和 SKIP LOCKED 防止多 Worker 重复检查。
+- 自动加群不是采集后立即加入。用户必须从当前租户已发现的公开/私密链接中选择目标、选择 1-20 个已授权账号，并明确确认有权加入后创建并启动任务；支持暂停、恢复、取消、失败重试和审批状态同步。私密链接可直接用 target_link_id 选择，不需要再次粘贴邀请明文。
 - 加群任务可选择公开群目标或私密邀请链接，私密邀请哈希加密保存；只允许显式确认拥有加入授权的租户任务执行。
 - MTGo 加群遇到 Telegram `INVITE_REQUEST_SENT` 时，任务进入 `request_pending`，不会把“已提交申请”误记为“已加入”。
 - 审批同步优先使用已解析的 Telegram chat ID 查询当前账号成员状态；私密邀请未返回 chat ID 时，改用任务保存的邀请哈希调用 `messages.checkChatInvite`。Telegram 返回 `ChatInviteAlready` 后将任务同步为 `joined/approved`，仍需审批则保持待处理。
