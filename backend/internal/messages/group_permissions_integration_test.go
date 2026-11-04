@@ -51,11 +51,11 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			first_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			contribution_count BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(tenant_id,group_id))`,
 		`CREATE TABLE public_group_links (
-			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT UNIQUE,
+			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT,
 			invite_hash BYTEA UNIQUE, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
 			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
-			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID)`,
+			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID, UNIQUE(link_type,public_url))`,
 		`CREATE TABLE public_group_link_sources (
 			link_id BIGINT NOT NULL, tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
 			source_chat_id BIGINT NOT NULL, source_message_id BIGINT NOT NULL,
@@ -273,7 +273,7 @@ func TestJoinTaskPauseCancelAndRetryPreserveInflightRPCResults(t *testing.T) {
 	insertRow:=func(task,account,status string)(int64,error){
 		var id int64
 		err:=db.QueryRowContext(ctx,`INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status,lease_until)
-			VALUES($1,$2,$3,$4,CASE WHEN $4='processing' THEN $5 ELSE NULL END) RETURNING id`,tenantID,task,account,status,lease).Scan(&id)
+			VALUES($1,$2,$3,$4,CASE WHEN $4='processing' THEN $5::timestamptz ELSE NULL END) RETURNING id`,tenantID,task,account,status,lease).Scan(&id)
 		return id,err
 	}
 	var err error
