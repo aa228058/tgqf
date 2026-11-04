@@ -173,3 +173,17 @@ func TestNormalizeKeywordRuleRejectsInvalidChatSpecificReplies(t *testing.T) {
 	_,err=normalizeKeywordRule(KeywordRule{Name:"too long",MatchMode:"any",Keywords:[]string{"x"},ReplyTextByChatType:map[string]string{"private":strings.Repeat("x",4097)}})
 	if err==nil {t.Fatal("oversized chat-specific reply accepted")}
 }
+
+func TestKeywordActionRetryDelay(t *testing.T) {
+    tests:=[]struct{name string;attempt int;flood time.Duration;want time.Duration}{
+        {"first retry",1,0,30*time.Second},
+        {"second retry",2,0,60*time.Second},
+        {"bounded retry",100,0,15*time.Minute},
+        {"flood wait exact plus safety",1,90*time.Second,91*time.Second},
+        {"long flood wait is not capped",2,2*time.Hour,2*time.Hour+time.Second},
+        {"zero attempt minimum",0,0,30*time.Second},
+    }
+    for _,tt:=range tests { t.Run(tt.name,func(t *testing.T){
+        if got:=keywordActionRetryDelay(tt.attempt,tt.flood);got!=tt.want {t.Fatalf("delay=%s want %s",got,tt.want)}
+    }) }
+}
