@@ -20,12 +20,21 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	inactiveLiveAccount:="ffffffff-ffff-4fff-8fff-ffffffffffff"
 	ddl:=[]string{
 		`CREATE TABLE message_reply_jobs (
-			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
+			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,unified_message_id UUID,telegram_account_id UUID NOT NULL,
 			chat_id BIGINT NOT NULL DEFAULT 1,reply_to_message_id BIGINT NOT NULL DEFAULT 1,message_text TEXT NOT NULL DEFAULT 'hello',
 			message_type TEXT NOT NULL DEFAULT 'text',contact_phone TEXT NOT NULL DEFAULT '',contact_first_name TEXT NOT NULL DEFAULT '',
 			contact_last_name TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',
 			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),lease_until TIMESTAMPTZ,telegram_message_id BIGINT,
 			last_error TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		`CREATE TABLE IF NOT EXISTS unified_messages (
+			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
+			message_id BIGINT NOT NULL,chat_type TEXT NOT NULL DEFAULT 'private',chat_title TEXT NOT NULL DEFAULT '',
+			sender_id BIGINT NOT NULL DEFAULT 0,reply_to_message_id BIGINT,reply_to_own_message BOOLEAN NOT NULL DEFAULT FALSE,
+			is_outgoing BOOLEAN NOT NULL DEFAULT FALSE,message_text TEXT NOT NULL DEFAULT '',media_type TEXT NOT NULL DEFAULT '',
+			message_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(telegram_account_id,chat_id,message_id))`,
+		`CREATE TABLE IF NOT EXISTS message_event_outbox (
+			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,event_type TEXT NOT NULL,payload JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),published_at TIMESTAMPTZ)`,
 		`CREATE TABLE keyword_action_jobs (tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE account_profile_update_jobs (tenant_id UUID,account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 	}
@@ -57,6 +66,14 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	jobInactiveLive:="20000000-0000-4000-8000-000000000003"
 	insertJob(jobA,activeTenant,accountA,"pending",time.Time{})
 	insertJob(jobB,activeTenant,accountB,"pending",time.Time{})
+	sourceA:="30000000-0000-4000-8000-000000000001"
+	sourceB:="30000000-0000-4000-8000-000000000002"
+	for _,source:=range []struct{id,tenant,account string;chat int64;msg int64}{{sourceA,activeTenant,accountA,101,11},{sourceB,activeTenant,accountB,102,12}} {
+		if _,err:=db.ExecContext(ctx,`INSERT INTO unified_messages(id,tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,message_text)
+			VALUES($1,$2,$3,$4,$5,'private','test chat','source message')`,source.id,source.tenant,source.account,source.chat,source.msg);err!=nil{t.Fatal(err)}
+		if _,err:=db.ExecContext(ctx,`UPDATE message_reply_jobs SET unified_message_id=$2,chat_id=$3,reply_to_message_id=$4 WHERE id=$1`,
+			map[bool]string{true:jobA,false:jobB}[source.account==accountA],source.id,source.chat,source.msg);err!=nil{t.Fatal(err)}
+	}
 	insertJob(jobRevoked,activeTenant,accountRevoked,"pending",time.Time{})
 	insertJob(jobInactivePending,inactiveTenant,inactivePendingAccount,"pending",time.Time{})
 	insertJob(jobInactiveExpired,inactiveTenant,inactiveExpiredAccount,"processing",time.Now().Add(-time.Minute))
