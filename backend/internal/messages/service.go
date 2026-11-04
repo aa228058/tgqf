@@ -650,7 +650,7 @@ func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID 
     LIMIT $3 FOR UPDATE OF l SKIP LOCKED
    ), claimed AS (
     UPDATE public_group_links l
-    SET check_lease_until=NOW()+INTERVAL '2 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
+    SET check_lease_until=NOW()+INTERVAL '6 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
     FROM due WHERE l.id=due.id
     RETURNING l.id,l.public_url,l.check_lease_until
    )
@@ -714,7 +714,7 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
     LIMIT $3 FOR UPDATE OF l SKIP LOCKED
    ), claimed AS (
     UPDATE public_group_links l
-    SET check_lease_until=NOW()+INTERVAL '2 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
+    SET check_lease_until=NOW()+INTERVAL '6 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
     FROM due WHERE l.id=due.id
     RETURNING l.id,l.invite_ciphertext,l.check_lease_until
    )
