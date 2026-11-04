@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeywordMonitor } from "./KeywordMonitor";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -26,7 +26,9 @@ const fmt=(v:string)=>new Date(v).toLocaleString();
 export function MessagesPage({token}:{token:string}){
  const [chats,setChats]=useState<Chat[]>([]),[chatTotal,setChatTotal]=useState(0),[accounts,setAccounts]=useState<Account[]>([]);
  const [selectedChat,setSelectedChat]=useState<Chat|null>(null),[messages,setMessages]=useState<Message[]>([]),[messageTotal,setMessageTotal]=useState(0);
- const [query,setQuery]=useState(""),[chatQuery,setChatQuery]=useState(""),[mediaType,setMediaType]=useState(""),[includeProcessed,setIncludeProcessed]=useState(false);
+ const [query,setQuery]=useState(""),[debouncedQuery,setDebouncedQuery]=useState(""),[chatQuery,setChatQuery]=useState(""),[mediaType,setMediaType]=useState(""),[includeProcessed,setIncludeProcessed]=useState(false);
+ const messageLoadSequence=useRef(0);
+ useEffect(()=>{const timer=window.setTimeout(()=>setDebouncedQuery(query),260);return()=>window.clearTimeout(timer)},[query]);
  const [offset,setOffset]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [settings,setSettings]=useState<Settings|null>(null),[settingsOpen,setSettingsOpen]=useState(false),[settingsBusy,setSettingsBusy]=useState(false);
  const [replyText,setReplyText]=useState<Record<string,string>>({}),[contactMessage,setContactMessage]=useState<string|null>(null);
@@ -43,21 +45,22 @@ export function MessagesPage({token}:{token:string}){
   const result=await request<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0",token);setAccounts(result.accounts||[]);
  },[token]);
  const loadMessages=useCallback(async()=>{
+  const sequence=++messageLoadSequence.current;
   if(!selectedChat){setMessages([]);setMessageTotal(0);return}
   setBusy(true);setError("");
   try{
    const params=new URLSearchParams({limit:"50",offset:String(offset),account_id:selectedChat.account_id,chat_id:String(selectedChat.chat_id),chat_type:selectedChat.chat_type,include_processed:String(includeProcessed)});
-   if(query.trim())params.set("q",query.trim());
+   if(debouncedQuery.trim())params.set("q",debouncedQuery.trim());
    if(mediaType)params.set("media_type",mediaType);
    const result=await request<Page<Message>>(`/api/v1/messages?${params}`,token);
-   setMessages(result.messages||[]);setMessageTotal(result.total||0);
-  }catch(e){setError(e instanceof Error?e.message:"消息加载失败")}
-  finally{setBusy(false)}
- },[token,selectedChat,offset,includeProcessed,query,mediaType]);
+   if(sequence===messageLoadSequence.current){setMessages(result.messages||[]);setMessageTotal(result.total||0)}
+  }catch(e){if(sequence===messageLoadSequence.current)setError(e instanceof Error?e.message:"消息加载失败")}
+  finally{if(sequence===messageLoadSequence.current)setBusy(false)}
+ },[token,selectedChat,offset,includeProcessed,debouncedQuery,mediaType]);
  useEffect(()=>{void Promise.all([loadChats(),loadAccounts()]).catch(e=>setError(e instanceof Error?e.message:"消息初始化失败"))},[loadChats,loadAccounts]);
  useEffect(()=>{void loadMessages()},[loadMessages]);
  useEffect(()=>{
-  const timer=window.setInterval(()=>{void loadChats();void loadMessages()},15000);
+  const timer=window.setInterval(()=>{if(document.visibilityState==="visible"){void loadChats();void loadMessages()}},15000);
   return()=>window.clearInterval(timer);
  },[loadChats,loadMessages]);
  const visibleChats=useMemo(()=>chats.filter(c=>!chatQuery||[c.chat_title,c.account_name,c.chat_username,String(c.chat_id)].some(v=>v.toLowerCase().includes(chatQuery.toLowerCase()))),[chats,chatQuery]);
