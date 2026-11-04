@@ -40,7 +40,7 @@ export function Workbench({token,user}:{token:string;user:AppUser}){
    get<{summary:Summary}>("/api/v1/tasks/summary",token),
    get<TaskPage>("/api/v1/tasks?limit=5&offset=0",token),
    user.role==="super_admin"?get<Workers>("/api/v1/admin/workers",token):Promise.resolve(null),
-  ]);
+  ] as const);
   const labels=["账号列表","已授权账号统计","异常账号统计","断开账号统计","待处理消息","任务统计","最近任务","Worker 状态"];
   const failures=requests.map((r,i)=>r.status==="rejected"?`${labels[i]}：${r.reason instanceof Error?r.reason.message:"加载失败"}`: "").filter(Boolean);
   if(requests[0].status==="fulfilled"){setRecentAccounts(requests[0].value.accounts||[]);setTotal(requests[0].value.total||0)}
