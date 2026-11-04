@@ -341,6 +341,19 @@ func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]M
 	return out,total,err
 }
 
+
+// MediaIdentity is resolved only from a message row visible to the current tenant.
+type MediaIdentity struct { AccountID string; ChatID int64; MessageID int64; MediaType string }
+func (s *Service) GetMediaIdentity(ctx context.Context,tenantID,messageID string)(MediaIdentity,error){
+ if !validUUID(messageID){return MediaIdentity{},errors.New("message not found")}
+ var out MediaIdentity
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  return tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id,media_type FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&out.AccountID,&out.ChatID,&out.MessageID,&out.MediaType)
+ })
+ if errors.Is(err,sql.ErrNoRows){return MediaIdentity{},errors.New("message not found")}
+ return out,err
+}
+
 func (s *Service) MarkProcessed(ctx context.Context,tenantID,messageID string)error{
 	if !validUUID(messageID){return errors.New("message not found")}
 	return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
