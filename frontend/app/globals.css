@@ -1046,3 +1046,57 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .runtime-page .runtime-proxy-select{width:100%}
  .runtime-page .runtime-note{overflow-wrap:anywhere}
 }
+
+
+/* Account management mobile cards and reliable touch feedback */
+.accounts-page button:focus-visible,.accounts-page input:focus-visible,.accounts-page select:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.accounts-page .account-tabs button,.accounts-page .accounts-actions button,.accounts-page .proxy-actions button{min-height:40px}
+.accounts-page .account-row-actions button{min-height:34px}
+.accounts-page .proxy-card{transition:border-color .16s ease,box-shadow .16s ease}
+.accounts-page .proxy-card:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));box-shadow:0 6px 18px rgba(20,35,55,.05)}
+.accounts-page .account-table tbody tr{transition:background-color .14s ease}
+.accounts-page .account-table tbody tr:hover{background:var(--shell-hover)}
+.accounts-page .account-table-meta{gap:10px;flex-wrap:wrap}
+.accounts-page .account-modal{overscroll-behavior:contain}
+.accounts-page .account-modal button:disabled{opacity:.6;cursor:wait}
+@media(max-width:650px){
+ .accounts-page{padding:17px 12px 28px}
+ .accounts-page .accounts-heading{gap:12px}
+ .accounts-page .accounts-heading h1{font-size:23px}
+ .accounts-page .accounts-actions{display:grid;grid-template-columns:1fr 1.5fr;gap:8px}
+ .accounts-page .accounts-actions button{min-width:0;padding:10px 7px;font-size:12px}
+ .accounts-page .account-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;overflow:visible}
+ .accounts-page .account-tabs button{padding:10px 4px;font-size:11px;white-space:normal}
+ .accounts-page .account-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+ .accounts-page .account-filters input:first-child{grid-column:1/-1;width:100%}
+ .accounts-page .account-filters>*{min-width:0;width:100%}
+ .accounts-page .account-bulkbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .accounts-page .account-bulkbar input{grid-column:1/-1;min-width:0;width:100%}
+ .accounts-page .account-bulkbar button{min-height:40px}
+ .accounts-page .account-table-wrap{overflow:visible}
+ .accounts-page .account-table{display:block;min-width:0;width:100%}
+ .accounts-page .account-table thead{display:none}
+ .accounts-page .account-table tbody{display:grid;gap:10px}
+ .accounts-page .account-table tbody tr{display:block;padding:10px;border:1px solid var(--line);border-radius:11px;background:var(--surface)}
+ .accounts-page .account-table tbody td{display:grid;grid-template-columns:88px minmax(0,1fr);gap:9px;align-items:center;padding:8px 3px;border:0;text-align:left;overflow-wrap:anywhere}
+ .accounts-page .account-table tbody td:before{content:attr(data-label);font-size:10px;font-weight:700;color:var(--muted)}
+ .accounts-page .account-table tbody td:first-child{display:flex;justify-content:flex-end;padding:0 3px}
+ .accounts-page .account-table tbody td:first-child:before{content:""}
+ .accounts-page .account-table td small{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+ .accounts-page .account-table td select{width:100%;max-width:none;min-height:36px}
+ .accounts-page .account-row-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));min-width:0;gap:6px}
+ .accounts-page .account-row-actions button{min-height:39px;padding:8px 5px}
+ .accounts-page .account-pagination{gap:10px}
+ .accounts-page .account-pagination>div{width:100%;display:grid;grid-template-columns:1fr 1fr}
+ .accounts-page .account-pagination button{min-height:40px}
+ .accounts-page .proxy-heading{align-items:flex-start;gap:10px}
+ .accounts-page .proxy-heading button{min-height:40px;white-space:nowrap}
+ .accounts-page .proxy-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .accounts-page .proxy-actions button{min-height:40px}
+ .accounts-page .account-modal{width:100%;max-height:calc(100dvh - 24px);padding:15px}
+ .accounts-page .login-tabs{overflow-x:auto}
+ .accounts-page .login-tabs button{flex:1 0 auto}
+ .accounts-page .account-form button{width:100%;min-height:43px}
+ .accounts-page .qr-login img{width:min(220px,65vw);height:auto;aspect-ratio:1}
+}
+@media(prefers-reduced-motion:reduce){.accounts-page .proxy-card,.accounts-page .account-table tbody tr{transition:none}}
