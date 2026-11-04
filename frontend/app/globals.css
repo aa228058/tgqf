@@ -1027,3 +1027,22 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .shell .pagination button{min-height:40px}
 }
 @media(prefers-reduced-motion:reduce){.shell .task-table tbody tr{transition:none}}
+
+
+/* Runtime status refresh and mobile readability */
+.runtime-page button:focus-visible,.runtime-page select:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:2px}
+.runtime-page .runtime-list>article{min-width:0;overflow-wrap:anywhere}
+.runtime-page .runtime-refresh button{min-height:40px}
+.runtime-page .runtime-proxy-select{max-width:100%;min-height:42px}
+.runtime-page .runtime-error{overflow-wrap:anywhere;white-space:normal}
+@media(max-width:600px){
+ .runtime-page{padding-left:12px;padding-right:12px}
+ .runtime-page .runtime-heading{align-items:flex-start;gap:12px;flex-direction:column}
+ .runtime-page .runtime-refresh{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px}
+ .runtime-page .runtime-refresh button{min-width:112px}
+ .runtime-page .runtime-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .runtime-page .runtime-columns{grid-template-columns:minmax(0,1fr);gap:12px}
+ .runtime-page .runtime-list>article{padding:12px}
+ .runtime-page .runtime-proxy-select{width:100%}
+ .runtime-page .runtime-note{overflow-wrap:anywhere}
+}
