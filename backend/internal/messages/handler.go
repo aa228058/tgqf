@@ -161,21 +161,30 @@ func (h *Handler) messageMedia(w http.ResponseWriter,r *http.Request){
  identity,err:=h.service.GetMediaIdentity(r.Context(),user.TenantID,r.PathValue("id"))
  if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message media not found"});return}
  if strings.TrimSpace(identity.MediaType)==""{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message has no media"});return}
- if h.telegram==nil{messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Telegram runtime is not configured"});return}
- data,err:=h.telegram.DownloadMessageMedia(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
- if err!=nil{messageJSON(w,http.StatusBadGateway,map[string]string{"error":"Telegram media could not be retrieved"});return}
- contentType:=http.DetectContentType(data)
- // Only well-known raster formats are rendered inline. Every other attachment,
- // including SVG/HTML and unknown document types, is forced to download.
- disposition:="attachment"
+
+ // Serve a tenant-scoped cached copy first. Cache misses fall through to MTGo.
+ cached,cacheErr:=h.service.GetCachedMessageMedia(r.Context(),user.TenantID,identity.AccountID,identity.ChatID,identity.MessageID)
+ var data []byte
+ contentType:=""
  filename:="telegram-media"
- switch contentType {
- case "image/jpeg","image/png","image/gif","image/webp":
-  disposition="inline"
+ if cacheErr==nil {
+  data=cached.Content
+  contentType=cached.MIMEType
+  filename=cached.FileName
+ } else {
+  if h.telegram==nil{messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Telegram runtime is not configured"});return}
+  data,err=h.telegram.DownloadMessageMedia(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
+  if err!=nil{messageJSON(w,http.StatusBadGateway,map[string]string{"error":"Telegram media could not be retrieved"});return}
+  contentType=http.DetectContentType(data)
+  if extensions,extErr:=mime.ExtensionsByType(contentType);extErr==nil&&len(extensions)>0{filename+=extensions[0]}
+  // Cache failures must not make a successful Telegram download unavailable.
+  // The asset store enforces a per-object size limit and tenant-scoped dedup.
+  _,_=h.service.CacheMessageMedia(r.Context(),user.TenantID,identity.AccountID,identity.ChatID,identity.MessageID,filename,contentType,data)
  }
- if extensions,extErr:=mime.ExtensionsByType(contentType);extErr==nil&&len(extensions)>0 {
-  filename+=extensions[0]
- }
+ // Only well-known raster formats are rendered inline. Other formats are
+ // downloads, including SVG/HTML and unknown documents.
+ disposition:="attachment"
+ switch contentType {case "image/jpeg","image/png","image/gif","image/webp":disposition="inline"}
  w.Header().Set("Content-Type",contentType)
  w.Header().Set("Content-Length",strconv.Itoa(len(data)))
  w.Header().Set("Content-Disposition",mime.FormatMediaType(disposition,map[string]string{"filename":filename}))
