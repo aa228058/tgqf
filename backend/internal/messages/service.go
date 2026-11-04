@@ -270,10 +270,18 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		if insertErr!=nil { return insertErr }
 		inserted,_:=result.RowsAffected()
 		collected=inserted>0
+		if collected {
+			payload,marshalErr:=json.Marshal(MessageCreatedEvent{
+				Type:"message.created",AccountID:in.AccountID,ChatID:in.ChatID,
+				MessageID:in.MessageID,CreatedAt:time.Now().UTC(),
+			})
+			if marshalErr!=nil{return marshalErr}
+			if _,outboxErr:=tx.ExecContext(ctx,`INSERT INTO message_event_outbox(tenant_id,event_type,payload)
+				VALUES($1,'message.created',$2::jsonb)`,tenantID,string(payload));outboxErr!=nil{return outboxErr}
+		}
 		return nil
 	})
 	if err!=nil{return false,err}
-	if collected { s.publishCreated(ctx,tenantID,in) }
 	return collected,nil
 }
 
