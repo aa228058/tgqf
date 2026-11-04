@@ -1,17 +1,18 @@
 # Telegram 原生语音来电弹出功能
 
-状态：后端首轮实现已接入监控回复动作链路；仍待 CI、真实 Telegram 双账号弹窗验收及来电状态同步。
+状态：按“只发起 Telegram 原生呼叫并触发对方来电提示”的范围实现；仍待 CI 与真实 Telegram 双账号来电弹窗验收。
 
 ## 用户需求范围
 
 监控回复规则命中后，由指定的普通 Telegram 用户账号向发来私聊消息的用户发起 Telegram 原生语音呼叫，让目标设备出现 Telegram 原生来电界面。
 
-本阶段不开发独立通话产品、语音聊天室或自动接听功能。系统只报告“已向 Telegram 发起呼叫/正在响铃”，不把它伪报为对方已接听或音频通话已建立。
+本阶段只负责拨出呼叫并触发对方 Telegram 原生来电提示。不开发独立通话产品、语音聊天室、自动接听、接听后的 DH 确认或音频媒体传输。系统只报告“Telegram 已接受呼叫请求/正在响铃”，不把它伪报为对方已接听或音频通话已建立。
 
 ## 已提交的后端实现
 
 - MTGo v0.22.0 提供一对一呼叫 TL 类型、`phone.requestCall`、DH 配置 RPC 和原始更新处理能力。
-- `backend/internal/telegrammtgo/voice_call.go` 新增 `Manager.RequestVoiceCall`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性随机呼叫材料，并调用 Telegram `phone.requestCall`。
+- `backend/internal/telegrammtgo/voice_call.go` 新增 `Manager.RequestVoiceCall`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性 DH 公钥，并按 Telegram 要求计算 `SHA-256(g_a)` 后调用 `phone.requestCall`。
+- 呼叫请求只走拨出/响铃流程；不会自动接听，也不会协商或传输音频。
 - 监控回复规则新增 `action_type=voice_call`。该动作只允许私聊规则；目标用户取自触发消息的发送者 ID，不允许从前端任意指定用户 ID。
 - 新增迁移 `0062_keyword_voice_call_actions.sql`，为任务保存目标用户、Telegram call ID/access hash 和 ringing 状态。
 - Worker 执行 voice_call 任务，发起 MTGo 原生呼叫，并将 Telegram 返回的 call ID 和 ringing 状态写入租户隔离任务记录。
