@@ -187,6 +187,7 @@ type JoinApprovalJob struct {
  AccountRowID int64
  AccountID string
  ChatID int64
+ InviteHash string
  LeaseUntil time.Time
 }
 
@@ -196,7 +197,8 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
  err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
   rows,err:=tx.QueryContext(ctx,`WITH due AS (
     SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
-           COALESCE(a.telegram_chat_id,g.telegram_chat_id) AS chat_id
+           COALESCE(a.telegram_chat_id,g.telegram_chat_id,0) AS chat_id,
+           t.private_invite_hash_ciphertext
     FROM tenant_join_task_accounts a
     JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
@@ -204,7 +206,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
     WHERE a.tenant_id=$1 AND a.status='request_pending'
       AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
-      AND COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL
+      AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
       AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
       AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
     ORDER BY a.updated_at,a.id
@@ -213,22 +215,27 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     UPDATE tenant_join_task_accounts a
     SET approval_check_lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
     FROM due p WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-    RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.chat_id,a.approval_check_lease_until
+    RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.chat_id,p.private_invite_hash_ciphertext,a.approval_check_lease_until
    )
-   SELECT tenant_id::text,task_id::text,id,telegram_account_id::text,chat_id,approval_check_lease_until
+   SELECT tenant_id::text,task_id::text,id,telegram_account_id::text,chat_id,private_invite_hash_ciphertext,approval_check_lease_until
    FROM claimed ORDER BY id`,tenantID,limit)
   if err!=nil{return err}
   defer rows.Close()
   for rows.Next(){
    var job JoinApprovalJob
-   if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&job.LeaseUntil);err!=nil{return err}
+   var ciphertext []byte
+   if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&ciphertext,&job.LeaseUntil);err!=nil{return err}
+   if len(ciphertext)>0 {
+    hash,err:=decryptJoinInviteHash(ciphertext)
+    if err!=nil{return err}
+    job.InviteHash=hash
+   }
    out=append(out,job)
   }
   return rows.Err()
  })
  return out,err
 }
-
 
 func (s *Service) DeferJoinApprovalCheck(ctx context.Context,job JoinApprovalJob,wait time.Duration) error {
  seconds:=joinTaskCooldownSeconds(wait)
@@ -251,7 +258,7 @@ func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,membe
 	switch memberStatus {
 	case "member","administrator","creator","owner":
 		status="joined";application="approved"
-	case "banned","left":
+	case "banned","left","invalid","expired":
 		status="failed";application="declined"
 	default:
 		return nil
