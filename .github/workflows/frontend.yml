@@ -36,3 +36,10 @@ jobs:
       - name: Check patch whitespace
         run: git diff --check
       - run: npm run build
+      - name: Validate production Compose and build release images
+        working-directory: .
+        run: |
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          docker compose --env-file .env -f deploy/compose.yaml config --quiet
+          docker compose --env-file .env -f deploy/compose.yaml build
