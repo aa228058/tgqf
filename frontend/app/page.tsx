@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AppShell, AppUser } from "./AppShell";
 
 type Task = {
   id: string; group_id?: string; type: string; title: string; status: string;
@@ -30,6 +31,7 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signedIn, setSignedIn] = useState(false);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [total, setTotal] = useState(0);
@@ -62,7 +64,20 @@ export default function Home() {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tgqf_access_token");
-    if (saved) { setToken(saved); setSignedIn(true); }
+    if (!saved) return;
+    setToken(saved);
+    setSignedIn(true);
+    void fetch(`${API_BASE}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${saved}` }, cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("会话已失效");
+        setUser(await response.json() as AppUser);
+      })
+      .catch(() => {
+        window.localStorage.removeItem("tgqf_access_token");
+        setToken("");
+        setSignedIn(false);
+        setUser(null);
+      });
   }, []);
   useEffect(() => { if (signedIn && token) void load(token); }, [signedIn, token, load]);
   useEffect(() => {
@@ -78,11 +93,16 @@ export default function Home() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "登录失败");
       window.localStorage.setItem("tgqf_access_token", body.access_token);
-      setToken(body.access_token); setSignedIn(true); setPassword("");
+      setToken(body.access_token); setUser(body.user as AppUser); setSignedIn(true); setPassword("");
     } catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
     finally { setBusy(false); }
   }
-  function logout() { window.localStorage.removeItem("tgqf_access_token"); setToken(""); setSignedIn(false); setTasks([]); setSummary(null); }
+  function logout() {
+    const currentToken = token;
+    window.localStorage.removeItem("tgqf_access_token");
+    setToken(""); setUser(null); setSignedIn(false); setTasks([]); setSummary(null);
+    if (currentToken) void fetch(`${API_BASE}/api/v1/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${currentToken}` } }).catch(() => undefined);
+  }
 
   async function act(task: Task, action: "pause" | "resume" | "retry" | "cancel") {
     if (action === "cancel" && !window.confirm("确定取消这条任务吗？")) return;
@@ -106,9 +126,10 @@ export default function Home() {
   }
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(v => v !== id) : [...current, id]);
 
-  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>任务中心登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
+  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>管理控制台登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
+  if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
-  return <main className="shell">
+  return <AppShell user={user} onLogout={logout}><main className="shell">
     <header className="topbar"><div><div className="eyebrow">TG MANAGER</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot">实时刷新 · 10 秒</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>刷新</button><button className="ghost" onClick={logout}>退出</button></div></header>
     {error && <div className="alert error">{error}</div>}{notice && <div className="alert success">{notice}</div>}
     <section className="summary-grid">
@@ -134,5 +155,5 @@ export default function Home() {
     </section>
     <section className="panel counts-panel"><div className="panel-heading"><div><h2>任务状态分布</h2><p>按真实队列类型和状态汇总</p></div></div><div className="count-list">{(summary?.counts || []).map(item => <div className="count-item" key={item.type+item.status}><span>{typeNames[item.type] || item.type}</span><span className="muted">{statusNames[item.status] || item.status}</span><strong>{item.count}</strong></div>)}{!summary?.counts?.length && <p className="empty">暂无任务统计</p>}</div></section>
     <div className="footer-note">任务控制遵循各队列当前状态和租户授权；Telegram FloodWait 等平台冷却不会因任务重试而绕过。</div>
-  </main>;
+  </main></AppShell>;
 }
