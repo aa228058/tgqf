@@ -1,5 +1,5 @@
 "use client";
-import {useCallback,useEffect,useState} from "react";
+import {useCallback,useEffect,useRef,useState} from "react";
 
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 type Alert={id:number;key:string;severity:string;status:string;title:string;opened_at:string;last_seen_at:string};
@@ -9,11 +9,28 @@ const bytes=(n:number)=>n>=1024**3?(n/1024**3).toFixed(1)+" GB":n>=1024**2?(n/10
 function Metric({label,value,detail,status}:{label:string;value:string|number;detail?:string;status?:"ok"|"warn"|"bad"}){return <article className="monitor-metric"><small>{label}</small><strong>{value}</strong>{detail&&<span>{detail}</span>}{status&&<i className={"monitor-status "+status}>{status==="ok"?"正常":status==="warn"?"关注":"异常"}</i>}</article>}
 export function AdminSystemHealthPage({token}:{token:string}){
  const [health,setHealth]=useState<Health|null>(null),[alerts,setAlerts]=useState<Alert[]>([]),[status,setStatus]=useState("loading"),[error,setError]=useState(""),[updated,setUpdated]=useState("");
+ const requestSequence=useRef(0);
  const load=useCallback(async()=>{
-  try{const response=await fetch(API+"/api/v1/admin/system-health",{headers:{Authorization:"Bearer "+token},cache:"no-store"});const result=await response.json();if(!response.ok)throw new Error(result.error||"监控数据获取失败");setHealth(result.health);setStatus(result.status);setUpdated(new Date().toLocaleTimeString());const alertResponse=await fetch(API+"/api/v1/admin/system-alerts",{headers:{Authorization:"Bearer "+token},cache:"no-store"});if(alertResponse.ok){const alertResult=await alertResponse.json();setAlerts(alertResult.alerts||[])}setError("")}
-  catch(e){setError(e instanceof Error?e.message:"监控数据获取失败")}
+  const sequence=++requestSequence.current;
+  try{
+   const response=await fetch(API+"/api/v1/admin/system-health",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
+   const result=await response.json();
+   if(!response.ok)throw new Error(result.error||"监控数据获取失败");
+   if(sequence!==requestSequence.current)return;
+   setHealth(result.health);setStatus(result.status);setUpdated(new Date().toLocaleTimeString());setError("");
+   const alertResponse=await fetch(API+"/api/v1/admin/system-alerts",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
+   if(sequence!==requestSequence.current)return;
+   if(alertResponse.ok){const alertResult=await alertResponse.json();if(sequence===requestSequence.current)setAlerts(alertResult.alerts||[])}
+   else setError("运行指标已更新，但告警列表暂时不可用");
+  }catch(e){if(sequence===requestSequence.current)setError(e instanceof Error?e.message:"监控数据获取失败")}
  },[token]);
- useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),15000);return()=>window.clearInterval(timer)},[load]);
+ useEffect(()=>{
+  void load();
+  const refresh=()=>{if(document.visibilityState==="visible")void load()};
+  const timer=window.setInterval(refresh,15000);
+  document.addEventListener("visibilitychange",refresh);
+  return()=>{requestSequence.current++;window.clearInterval(timer);document.removeEventListener("visibilitychange",refresh)};
+ },[load]);
  if(!health)return <section className="panel"><h2>系统运行监控</h2>{error?<p className="alert error">{error}</p>:<p>正在读取运行指标…</p>}<button className="secondary" onClick={()=>void load()}>立即刷新</button></section>;
  return <section className="panel monitor-panel">
   <div className="settings-section-heading"><div><h2>系统运行监控</h2><p>每 15 秒自动刷新 · 最近更新 {updated}</p></div><button className="secondary" onClick={()=>void load()}>立即刷新</button></div>
