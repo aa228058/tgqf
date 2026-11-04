@@ -48,12 +48,14 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	service := New(db)
 	first, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if len(first) != 1 { t.Fatalf("first claim batch size=%d, want 1", len(first)) }
 	// Simulate the worker completing the claimed job. A single Telegram
 	// account must not have multiple in-flight keyword actions at once.
 	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, first[0].ID); err != nil { t.Fatal(err) }
 	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	second, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if len(second) != 1 { t.Fatalf("second claim batch size=%d, want 1", len(second)) }
 	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, second[0].ID); err != nil { t.Fatal(err) }
 	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	third, err := service.ClaimKeywordActionJobs(ctx, 1)
