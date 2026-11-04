@@ -216,7 +216,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
   rows,err:=tx.QueryContext(ctx,`WITH due AS (
     SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
            COALESCE(a.telegram_chat_id,g.telegram_chat_id,0) AS chat_id,
-           COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext)
+           COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) AS private_invite_hash_ciphertext
     FROM tenant_join_task_accounts a
     JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
