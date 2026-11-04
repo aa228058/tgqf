@@ -444,6 +444,17 @@ func (m *Manager) UpdateUsername(ctx context.Context, accountID, username string
 	return nil
 }
 
+// AccountProfile returns the identity currently authenticated by this managed MTGo client.
+// It intentionally exposes only Telegram's public self fields, never session material.
+type AccountProfile struct { ID int64; Username string; FirstName string; LastName string; Phone string }
+
+func (m *Manager) AccountProfile(accountID string) (AccountProfile, error) {
+ m.mu.RLock(); client:=m.clients[accountID]; m.mu.RUnlock()
+ if client==nil || !client.IsConnected() { return AccountProfile{}, errors.New("Telegram account is not connected") }
+ me:=client.Me(); if me==nil { return AccountProfile{}, errors.New("Telegram account identity is unavailable") }
+ return AccountProfile{ID:me.ID,Username:me.Username,FirstName:me.FirstName,LastName:me.LastName,Phone:me.Phone},nil
+}
+
 // UpdateProfile applies an explicitly queued first/last name and bio update.
 func (m *Manager) UpdateProfile(ctx context.Context, accountID, firstName, lastName, about string) error {
 	m.mu.RLock()
