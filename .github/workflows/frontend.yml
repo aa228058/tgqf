@@ -8,6 +8,7 @@ on:
       - "deploy/**"
       - ".env.example"
       - ".github/workflows/frontend.yml"
+      - "docs/PHASE3_QUALITY_GATES.md"
   push:
     branches:
       - main
