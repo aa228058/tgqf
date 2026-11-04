@@ -58,6 +58,20 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 		($1,$2,$3,'queued'),($1,$2,$3,'joined'),($1,$2,$3,'already_member'),($1,$2,$3,'skipped')`, tenantID, joinTaskID, accountID); err != nil {
 		t.Fatal(err)
 	}
+	// A second tenant has its own pending task; it must never leak into this
+	// tenant's unified list or pagination total.
+	otherTenant := "22222222-2222-4222-8222-222222222222"
+	otherAccount := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, otherTenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',$3)`, otherTenant, otherAccount, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO message_reply_jobs(id,tenant_id,telegram_account_id,status) VALUES
+		('66666666-6666-4666-8666-666666666661',$1,$2,'pending')`, otherTenant, otherAccount); err != nil {
+		t.Fatal(err)
+	}
 
 	service := New(db)
 	queued, total, err := service.ListUnifiedTasks(ctx, tenantID, UnifiedTaskFilter{Status: "queued", Limit: 50})
