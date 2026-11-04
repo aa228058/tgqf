@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"mime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/auth"
+	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 )
 
 func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
