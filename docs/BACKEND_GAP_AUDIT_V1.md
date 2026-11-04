@@ -453,10 +453,10 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。检查领取使用 6 分钟数据库租约和 SKIP LOCKED，多 Worker 不会同时领取同一链接；写回使用租约时间 fencing，过期 Worker 无法覆盖新检查结果。
 - [x] 新消息再次发现链接时清空检查时间、下次检查时间、错误计数和旧检查租约，重新排入检查队列。
 - [x] 新增 migration 0044/0045：检查次数、下次检查时间、到期索引、带 fencing 的多 Worker 检查租约；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
-- [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布。
+- [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布；列表同时返回检查次数和下次检查时间，支持按 type/status 筛选与分页。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
 - [x] 自动加群仅由明确创建并确认授权的 tenant_join_tasks 执行；支持公共 username/link 与私密邀请链接。MTGo Client.JoinChat 对私密邀请内部调用 messages.importChatInvite，该调用只在实际加群任务执行路径发生。
-- [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次执行尝试后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。
+- [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次执行尝试后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。`INVITE_REQUEST_SENT` 进入 request_pending，`USER_ALREADY_PARTICIPANT` 记为 already_member，不误记失败；可能临时的 USER_RESTRICTED 保留重试。
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
 - [x] 审批通过通过 MTGo membership 查询同步为 joined；已知 chat ID 时可将 left/banned 状态同步为 declined。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
