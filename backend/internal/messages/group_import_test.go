@@ -35,3 +35,22 @@ func TestNormalizeGroupCatalogueImportRecord(t *testing.T) {
 	if err!=nil{t.Fatal(err)}
 	if got.ChatType!="channel"||got.Title!="News"||got.Username!="news_room"{t.Fatalf("not normalized: %#v",got)}
 }
+
+
+func TestParseGroupCatalogueTXTUsesTabDelimitedColumns(t *testing.T) {
+	input := "telegram_chat_id\tchat_type\ttitle\tusername\tmember_count\tis_verified\n-1001234567890\tgroup\tOps Group\tops_group\t42\tfalse\n"
+	records, err := parseGroupCatalogueTXT(strings.NewReader(input))
+	if err != nil { t.Fatal(err) }
+	if len(records) != 1 { t.Fatalf("records=%d, want 1",len(records)) }
+	got := records[0]
+	if got.ChatID != -1001234567890 || got.ChatType != "group" || got.Title != "Ops Group" || got.Username != "ops_group" || got.MemberCount != 42 || got.IsVerified {
+		t.Fatalf("unexpected TXT import record: %#v",got)
+	}
+}
+
+func TestParseGroupCatalogueTXTRejectsCommaSeparatedInput(t *testing.T) {
+	input := "telegram_chat_id,chat_type,title\n123,group,Name\n"
+	if _, err := parseGroupCatalogueTXT(strings.NewReader(input)); err == nil {
+		t.Fatal("TXT importer must require tab-delimited columns")
+	}
+}
