@@ -44,7 +44,8 @@ export function AccountsPage({token}:{token:string}){
  const [delivery,setDelivery]=useState(""),[resendAfter,setResendAfter]=useState(0);
  const [qr,setQR]=useState<QRState|null>(null),[qrImage,setQRImage]=useState("");
  const [importFile,setImportFile]=useState<File|null>(null),[importPhone,setImportPhone]=useState(""),[importName,setImportName]=useState(""),[importGroup,setImportGroup]=useState("");
- const [profile,setProfile]=useState<{account:Account;data:unknown}|null>(null);\n const [accountGroups,setAccountGroups]=useState<{account:Account;groups:AccountGroup[];sync:AccountGroupSync}|null>(null),[groupSyncBusy,setGroupSyncBusy]=useState(false),[showLeftGroups,setShowLeftGroups]=useState(false);
+ const [profile,setProfile]=useState<{account:Account;data:unknown}|null>(null);
+ const [accountGroups,setAccountGroups]=useState<{account:Account;groups:AccountGroup[];sync:AccountGroupSync}|null>(null),[groupSyncBusy,setGroupSyncBusy]=useState(false),[showLeftGroups,setShowLeftGroups]=useState(false);
  const [deviceProfile,setDeviceProfile]=useState<{account:Account;data:DeviceProfile}|null>(null);
  const [proxyEditor,setProxyEditor]=useState<{id?:string;input:ProxyInput}|null>(null);
  const [proxyHistory,setProxyHistory]=useState<{proxy:Proxy;checks:ProxyCheck[]}|null>(null);
