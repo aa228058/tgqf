@@ -469,3 +469,8 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 ## Keyword media actions
 
 关键词规则已支持绑定租户媒体素材，并由 Worker 通过 MTGo 发送 photo/video/document/audio/voice/video_note 单素材回复。素材删除受规则/队列外键保护；混合相册和动作失败停止策略仍待实现。
+
+
+## MTGo media album sender foundation
+
+已新增 `Manager.SendMediaAlbumReply`：通过 MTGo 上传每个素材后调用原生 `SendMediaGroup` 一次提交相册；支持 2–10 个图片/视频混合项或纯文件项，保留素材顺序和逐项说明。上传任一项失败时不会提交相册；图片/视频与文件不混组。此方法尚未接入关键词规则和 Worker 队列，队列级相册动作及失败/重试状态记录仍待完成。
