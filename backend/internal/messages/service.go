@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -95,6 +96,8 @@ type Incoming struct {
 	SenderName string
 	ChatMemberCount int
 	ChatVerified bool
+	DefaultPermissionsJSON []byte
+	AccountRightsJSON []byte
 	SenderID int64
 	ReplyToMessageID int64
 	ReplyToOwnMessage bool
@@ -210,23 +213,27 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		if err!=nil{return err}
 		if in.ChatType=="group" || in.ChatType=="channel" {
 			var groupID int64
-			err=tx.QueryRowContext(ctx,`INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,first_seen_at,last_seen_at,updated_at)
-				VALUES($1,$2,$3,$4,GREATEST($5,0),$6,NOW(),NOW(),NOW())
+			err=tx.QueryRowContext(ctx,`INSERT INTO public_groups(telegram_chat_id,chat_type,title,username,member_count,is_verified,default_permissions,permissions_observed_at,first_seen_at,last_seen_at,updated_at)
+				VALUES($1,$2,$3,$4,GREATEST($5,0),$6,$7,CASE WHEN $7::jsonb IS NULL THEN NULL ELSE NOW() END,NOW(),NOW(),NOW())
 				ON CONFLICT(chat_type,telegram_chat_id) DO UPDATE SET
 				 title=COALESCE(NULLIF(EXCLUDED.title,''),public_groups.title),
 				 username=COALESCE(NULLIF(EXCLUDED.username,''),public_groups.username),
 				 member_count=GREATEST(public_groups.member_count,EXCLUDED.member_count),
 				 is_verified=public_groups.is_verified OR EXCLUDED.is_verified,
+				 default_permissions=COALESCE(EXCLUDED.default_permissions,public_groups.default_permissions),
+				 permissions_observed_at=CASE WHEN EXCLUDED.default_permissions IS NULL THEN public_groups.permissions_observed_at ELSE NOW() END,
 				 last_seen_at=NOW(),updated_at=NOW()
-				RETURNING id`,in.ChatID,in.ChatType,strings.TrimSpace(in.ChatTitle),strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified).Scan(&groupID)
+				RETURNING id`,in.ChatID,in.ChatType,strings.TrimSpace(in.ChatTitle),strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@"),in.ChatMemberCount,in.ChatVerified,nullJSON(in.DefaultPermissionsJSON)).Scan(&groupID)
 			if err!=nil{return err}
 			if username:=strings.TrimPrefix(strings.TrimSpace(in.ChatUsername),"@");username!="" {
 				if _,err=tx.ExecContext(ctx,`UPDATE public_group_links SET group_id=$1,last_seen_at=NOW() WHERE link_type='public' AND group_id IS NULL AND lower(public_url)=lower($2)`,groupID,"https://t.me/"+username);err!=nil{return err}
 			}
-			_,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,first_seen_at,last_seen_at,discovery_count)
-				VALUES($1,$2,$3,$4,NOW(),NOW(),1)
-				ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET last_seen_at=NOW(),discovery_count=public_group_sources.discovery_count+1`,
-				groupID,tenantID,in.AccountID,in.ChatID)
+			_,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,account_rights_snapshot,account_rights_observed_at,first_seen_at,last_seen_at,discovery_count)
+				VALUES($1,$2,$3,$4,$5,CASE WHEN $5::jsonb IS NULL THEN NULL ELSE NOW() END,NOW(),NOW(),1)
+				ON CONFLICT(group_id,tenant_id,telegram_account_id) DO UPDATE SET last_seen_at=NOW(),discovery_count=public_group_sources.discovery_count+1,
+				 account_rights_snapshot=COALESCE(EXCLUDED.account_rights_snapshot,public_group_sources.account_rights_snapshot),
+				 account_rights_observed_at=CASE WHEN EXCLUDED.account_rights_snapshot IS NULL THEN public_group_sources.account_rights_observed_at ELSE NOW() END`,
+				groupID,tenantID,in.AccountID,in.ChatID,nullJSON(in.AccountRightsJSON))
 			if err!=nil{return err}
 			_,err=tx.ExecContext(ctx,`INSERT INTO tenant_group_contributions(tenant_id,group_id,first_contributed_at,last_contributed_at,contribution_count)
 				VALUES($1,$2,NOW(),NOW(),1)
@@ -389,6 +396,8 @@ func (s *Service) ListChats(ctx context.Context,tenantID string,limit,offset int
 var ErrInvalidGroupLibraryQuery = errors.New("invalid group library query")
 
 type GroupLibraryItem struct {
+	DefaultPermissions json.RawMessage `json:"default_permissions,omitempty"`
+	PermissionsObservedAt *time.Time `json:"permissions_observed_at,omitempty"`
 	ID int64 `json:"id"`
 	ChatID int64 `json:"chat_id"`
 	Title string `json:"title"`
@@ -454,12 +463,12 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 		where:=strings.Join(clauses," AND ")
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+where,args...).Scan(&total);err!=nil{return err}
 		args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
-		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
+		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,g.default_permissions,g.permissions_observed_at,
 			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id),
 			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
 			FROM public_groups g WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
 		rows,err:=tx.QueryContext(ctx,querySQL,args...);if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
+		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
 	})
 	return items,total,err
@@ -472,6 +481,8 @@ type GroupSource struct {
 	FirstSeenAt time.Time `json:"first_seen_at"`
 	LastSeenAt time.Time `json:"last_seen_at"`
 	DiscoveryCount int64 `json:"discovery_count"`
+	AccountRights json.RawMessage `json:"account_rights,omitempty"`
+	AccountRightsObservedAt *time.Time `json:"account_rights_observed_at,omitempty"`
 }
 
 func (s *Service) ListGroupSources(ctx context.Context, tenantID string, groupID int64) ([]GroupSource,error) {
@@ -480,13 +491,13 @@ func (s *Service) ListGroupSources(ctx context.Context, tenantID string, groupID
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		rows,err:=tx.QueryContext(ctx,`SELECT src.telegram_account_id::text,
 			COALESCE(NULLIF(a.display_name,''),a.phone,''),src.source_chat_id,
-			src.first_seen_at,src.last_seen_at,src.discovery_count
+			src.first_seen_at,src.last_seen_at,src.discovery_count,src.account_rights_snapshot,src.account_rights_observed_at
 			FROM public_group_sources src
 			JOIN telegram_accounts a ON a.tenant_id=src.tenant_id AND a.id=src.telegram_account_id
 			WHERE src.tenant_id=$1 AND src.group_id=$2
 			ORDER BY src.last_seen_at DESC,src.telegram_account_id`,tenantID,groupID)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var item GroupSource;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.FirstSeenAt,&item.LastSeenAt,&item.DiscoveryCount);err!=nil{return err};items=append(items,item)}
+		for rows.Next(){var item GroupSource;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.ChatID,&item.FirstSeenAt,&item.LastSeenAt,&item.DiscoveryCount,&item.AccountRights,&item.AccountRightsObservedAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
 	})
 	return items,err
