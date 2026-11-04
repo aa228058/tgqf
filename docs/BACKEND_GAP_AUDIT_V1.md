@@ -105,6 +105,7 @@
 - `GET /api/v1/proxies/{id}/checks`（读取最近代理检测历史，最多 100 条；代理列表同时返回最近检测状态、耗时和时间）
 - `PUT /api/v1/proxies/{id}` 支持 `clear_password: true` 显式清除已保存的代理密码；不传密码仍保持原密码。
 - 数据库迁移 `0040_account_tags.sql`：`telegram_accounts.tags TEXT[]`，并建立 GIN 索引。
+- 数据库迁移 `0041_proxy_check_history.sql`：新增租户隔离的代理检测历史表；每次手动检测记录协议认证/Telegram DC TCP 隧道结果、耗时和脱敏错误信息。
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`、`POST /api/v1/accounts/profile-updates/{id}/cancel`（失败重试、暂停恢复；仅 pending/paused 可取消，正在执行的任务必须等待当前 Telegram RPC 结束）
 - `PATCH /api/v1/accounts/{id}/group`
