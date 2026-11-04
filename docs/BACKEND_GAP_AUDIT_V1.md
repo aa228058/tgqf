@@ -452,7 +452,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 群链接采集继续按租户、发现账号、来源会话和消息记录归集；私密邀请码只保存 SHA-256 去重值及 AES-GCM 加密后的原始 hash。
 - [x] 公开链接和私密邀请链接均通过 MTGo 只读 messages.checkChatInvite / contacts.resolveUsername 检查；状态区分 valid、approval_required、invalid、unknown。检查路径不调用加入 API。
 - [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。检查领取使用 6 分钟数据库租约和 SKIP LOCKED，多 Worker 不会同时领取同一链接；写回使用租约时间 fencing，过期 Worker 无法覆盖新检查结果。
-- [x] 新消息再次发现链接时清空检查时间、下次检查时间、错误计数和旧检查租约，重新排入检查队列。
+- [x] 新消息再次发现链接时：若旧检查租约仍有效，只更新来源最近发现时间，不打断正在执行的检查、不清空重试状态；若租约不存在或已过期，则清空旧检查状态并重新排队。公开链接和私密邀请链接均遵守该规则。
 - [x] 新增 migration 0044/0045/0046：链接检查次数、下次检查时间、到期索引、带 fencing 的多 Worker 链接检查租约，以及加群审批状态轮询租约；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
 - [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布；列表同时返回检查次数和下次检查时间，支持按 type/status 筛选与分页。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
@@ -461,6 +461,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
 - [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined；明确 left/banned 状态同步为 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。私密邀请审批不伪装成可自动查询：checkChatInvite 不提供足够信息判定申请已被管理员批准或拒绝，因此保留 request_pending，待后续接入可靠的成员状态事件/映射后再同步。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
+- [x] 新增 PostgreSQL 集成覆盖：公开/私密链接在有效检查租约期间被重复发现时保留租约与重试状态；租约过期后重新发现才清空旧状态并重新排队。
 - [x] GitHub Actions 已通过：Go test ./...、vet、API/Worker build；PostgreSQL 服务集成测试覆盖共享群组 insert-only 导入、租户来源权限快照刷新、公开/私密链接租约与旧 Worker fencing。
 - [ ] 仍需 PostgreSQL 多 Worker 集成测试覆盖加群审批状态轮询租约的过期重领和旧 Worker fencing；群链接检查租约及跨租户来源公平性已覆盖。
 - [ ] 仍需真实 Telegram 测试账号验证公开加入、私密邀请加入、审批通过/拒绝、FloodWait、链接过期和账号断线恢复。真实 Telegram 端的外部加入动作无法由单元测试替代。
