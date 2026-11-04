@@ -394,7 +394,7 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
             ), scheduled AS (
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
-            ) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
+            ) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
             if err!=nil{return err};defer picked.Close()
             for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.Attempts,&job.LeaseUntil);err!=nil{return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{return err};jobs=append(jobs,job)}
             return picked.Err()
