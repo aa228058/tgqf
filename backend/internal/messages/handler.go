@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,6 +54,8 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
+	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
+	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
 	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
 	mux.Handle("PUT /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.updateLinkSettings)))
@@ -312,6 +315,58 @@ func (h *Handler) listGroupSources(w http.ResponseWriter,r *http.Request) {
 	items,err:=h.service.ListGroupSources(r.Context(),user.TenantID,id)
 	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load group sources"});return }
 	messageJSON(w,http.StatusOK,map[string]any{"sources":items})
+}
+
+
+func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	filter:=GroupLibraryFilter{ChatType:r.URL.Query().Get("chat_type"),Query:r.URL.Query().Get("q"),Sort:r.URL.Query().Get("sort")}
+	if raw:=strings.TrimSpace(r.URL.Query().Get("verified"));raw!=""{v,err:=strconv.ParseBool(raw);if err!=nil{http.Error(w,"invalid verified filter",http.StatusBadRequest);return};filter.Verified=&v}
+	parse:=func(key string)(int,error){raw:=strings.TrimSpace(r.URL.Query().Get(key));if raw==""{return 0,nil};return strconv.Atoi(raw)}
+	var err error
+	if filter.MinMembers,err=parse("min_members");err!=nil{http.Error(w,"invalid min_members",http.StatusBadRequest);return}
+	if filter.MaxMembers,err=parse("max_members");err!=nil{http.Error(w,"invalid max_members",http.StatusBadRequest);return}
+	if filter.MinSources,err=parse("min_sources");err!=nil{http.Error(w,"invalid min_sources",http.StatusBadRequest);return}
+	if filter.MinContributors,err=parse("min_contributors");err!=nil{http.Error(w,"invalid min_contributors",http.StatusBadRequest);return}
+	maxRows:=10000
+	if raw:=r.URL.Query().Get("max_rows");raw!=""{v,e:=strconv.Atoi(raw);if e!=nil||v<1||v>10000{http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest);return};maxRows=v}
+	w.Header().Set("Content-Type","text/csv; charset=utf-8");w.Header().Set("Content-Disposition",`attachment; filename="public-groups.csv"`)
+	writer:=csv.NewWriter(w);_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","source_count","contributor_count","last_seen_at"})
+	for offset:=0;offset<maxRows;offset+=100 {
+		limit:=100;if offset+limit>maxRows{limit=maxRows-offset}
+		items,_,err:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+		if err!=nil{writer.Flush();return}
+		for _,item:=range items{_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})}
+		if len(items)<limit{break}
+	}
+	writer.Flush()
+}
+
+func (h *Handler) importGroupCorrectionsCSV(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	if user.Role!="tenant_admin"{messageJSON(w,http.StatusForbidden,map[string]string{"error":"tenant_admin_required"});return}
+	r.Body=http.MaxBytesReader(w,r.Body,2<<20)
+	reader:=csv.NewReader(r.Body);reader.FieldsPerRecord=-1;reader.TrimLeadingSpace=true
+	header,err:=reader.Read();if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"CSV header is required"});return}
+	columns:=map[string]int{};for i,name:=range header{key:=strings.ToLower(strings.TrimSpace(name));if _,exists:=columns[key];exists{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"duplicate CSV column: "+key});return};columns[key]=i}
+	if _,ok:=columns["group_id"];!ok{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"CSV requires group_id column"});return}
+	results:=[]map[string]any{};created:=0;failed:=0
+	for rowNo:=2;rowNo<=1001;rowNo++{
+		row,readErr:=reader.Read();if readErr==io.EOF{break};if readErr!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid CSV data"});return}
+		if len(row)!=len(header){results=append(results,map[string]any{"row":rowNo,"success":false,"error":"column count mismatch"});failed++;continue}
+		get:=func(name string)string{idx,ok:=columns[name];if !ok{return ""};return strings.TrimSpace(row[idx])}
+		groupID,parseErr:=strconv.ParseInt(get("group_id"),10,64);if parseErr!=nil||groupID<=0{results=append(results,map[string]any{"row":rowNo,"success":false,"error":"invalid group_id"});failed++;continue}
+		fields:=GroupCorrectionFields{}
+		if v:=get("title");v!=""{fields.Title=&v}
+		if v:=get("username");v!=""{fields.Username=&v}
+		if v:=get("member_count");v!=""{n,e:=strconv.Atoi(v);if e!=nil{results=append(results,map[string]any{"row":rowNo,"success":false,"error":"invalid member_count"});failed++;continue};fields.MemberCount=&n}
+		if v:=get("is_verified");v!=""{b,e:=strconv.ParseBool(v);if e!=nil{results=append(results,map[string]any{"row":rowNo,"success":false,"error":"invalid is_verified"});failed++;continue};fields.IsVerified=&b}
+		item,submitErr:=h.service.SubmitGroupCorrection(r.Context(),user.TenantID,user.ID,groupID,fields)
+		if submitErr!=nil{results=append(results,map[string]any{"row":rowNo,"group_id":groupID,"success":false,"error":submitErr.Error()});failed++;continue}
+		created++;results=append(results,map[string]any{"row":rowNo,"group_id":groupID,"success":true,"correction_id":item.ID,"status":item.Status})
+	}
+	if len(results)==1000{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"CSV exceeds 1000 data rows"});return}
+	messageJSON(w,http.StatusOK,map[string]any{"total":len(results),"submitted":created,"failed":failed,"results":results})
 }
 
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
