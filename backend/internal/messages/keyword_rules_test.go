@@ -323,3 +323,33 @@ func TestNormalizeKeywordVoiceCallActionRequiresPrivateChat(t *testing.T) {
         t.Fatal("expected voice-call rules targeting group messages to be rejected")
     }
 }
+
+
+func TestNormalizeKeywordActionSequence(t *testing.T) {
+    rule,err:=normalizeKeywordRule(KeywordRule{
+        Name:"sequence",MatchMode:"any",Keywords:[]string{"hello"},
+        ChatTypes:[]string{"private","group"},
+        ActionSteps:[]KeywordActionStep{
+            {ActionType:"text",Text:"hello",ReplyTextByChatType:map[string]string{"PRIVATE":"private hello","group":"group hello"}},
+            {ActionType:"contact",ContactPhone:"+15551234567",ContactFirstName:"Support"},
+            {ActionType:"media",MediaAssetID:"11111111-1111-4111-8111-111111111111",MediaType:"photo"},
+        },
+    })
+    if err!=nil { t.Fatalf("valid action sequence rejected: %v",err) }
+    if len(rule.ActionSteps)!=3 || rule.ActionSteps[0].ReplyTextByChatType["private"]!="private hello" { t.Fatalf("sequence not normalized: %#v",rule.ActionSteps) }
+    if _,err:=normalizeKeywordRule(KeywordRule{Name:"too many",MatchMode:"any",Keywords:[]string{"x"},ActionSteps:make([]KeywordActionStep,11)});err==nil { t.Fatal("more than 10 steps accepted") }
+    if _,err:=normalizeKeywordRule(KeywordRule{Name:"invalid later step",MatchMode:"any",Keywords:[]string{"x"},ActionSteps:[]KeywordActionStep{{ActionType:"text",Text:"ok"},{ActionType:"media",MediaType:"photo"}}});err==nil { t.Fatal("invalid second step accepted") }
+    if _,err:=normalizeKeywordRule(KeywordRule{Name:"empty text",MatchMode:"any",Keywords:[]string{"x"},ActionSteps:[]KeywordActionStep{{ActionType:"text",ReplyTextByChatType:map[string]string{"private":""}}}});err==nil { t.Fatal("empty text step accepted") }
+}
+
+func TestAppendKeywordActionStepResultIsMonotonic(t *testing.T) {
+    steps:=[]KeywordActionStep{{ActionType:"text",Text:"first"},{ActionType:"contact",ContactPhone:"+15551234567",ContactFirstName:"Support"}}
+    job:=KeywordActionJob{ActionSteps:steps,CurrentStepIndex:0}
+    results,encoded,err:=appendKeywordActionStepResult(nil,job,[]int64{101},0)
+    if err!=nil { t.Fatal(err) }
+    if len(results)!=1 || len(encoded)==0 || results[0].StepIndex!=0 || results[0].TelegramMessageIDs[0]!=101 { t.Fatalf("unexpected step result: %#v",results) }
+    job.CurrentStepIndex=1
+    results,_,err=appendKeywordActionStepResult(results,job,[]int64{102},0)
+    if err!=nil || len(results)!=2 || results[1].StepIndex!=1 { t.Fatalf("second step result failed: %#v %v",results,err) }
+    if _,_,err=appendKeywordActionStepResult(results,job,[]int64{102},0);err==nil { t.Fatal("duplicate step result accepted") }
+}
