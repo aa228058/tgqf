@@ -453,3 +453,9 @@
  .join-account-list,.keyword-account-picker{grid-template-columns:1fr}
  .join-notice{flex-direction:column;gap:4px}
 }
+
+.keyword-asset-list{display:grid;gap:7px;margin-top:10px}
+.keyword-asset-list>span{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px}
+.keyword-preview{max-width:min(900px,95vw)}
+.keyword-preview>img,.keyword-preview>video,.keyword-preview>iframe{display:block;max-width:100%;max-height:68vh;margin:0 auto;border-radius:8px}
+.keyword-preview>audio{display:block;width:100%;margin:25px 0}
