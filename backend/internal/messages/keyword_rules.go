@@ -117,6 +117,9 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
         if rule.ContactPhone=="" || rule.ContactFirstName=="" || len(rule.ContactPhone)>64 || len(rule.ContactFirstName)>128 || len(rule.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact action requires phone and first name",ErrInvalidKeywordRule) }
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: contact action cannot include text replies",ErrInvalidKeywordRule) }
     } else if rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" { return rule,fmt.Errorf("%w: contact fields require contact action",ErrInvalidKeywordRule) }
+    if rule.ActionType=="contact" {
+        for _,chatType:=range rule.ChatTypes { if chatType=="channel" { return rule,fmt.Errorf("%w: contact actions support private and group chats only",ErrInvalidKeywordRule) } }
+    }
     if len([]rune(rule.ReplyText))>4096{return rule,fmt.Errorf("%w: reply text exceeds Telegram's 4096 character limit",ErrInvalidKeywordRule)}
     if rule.ReplyTextByChatType==nil {rule.ReplyTextByChatType=map[string]string{}}
     normalizedReplies:=make(map[string]string,len(rule.ReplyTextByChatType))
