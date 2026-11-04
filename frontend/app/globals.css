@@ -464,3 +464,8 @@
 .keyword-album-captions label{display:grid;grid-template-columns:minmax(100px,1fr) minmax(160px,2fr);align-items:center;gap:8px;font-size:12px;color:var(--muted)}
 .keyword-album-captions input{width:100%;min-width:0}
 @media(max-width:520px){.keyword-album-captions label{grid-template-columns:1fr}}
+
+.media-preview-content{display:grid;place-items:center;min-height:180px;max-height:70vh;overflow:auto}
+.media-preview-content img,.media-preview-content video,.media-preview-content iframe{display:block;max-width:100%;max-height:65vh;border-radius:8px}
+.media-preview-content audio{width:min(100%,560px)}
+.media-preview-navigation{display:flex;justify-content:center;gap:10px;margin-top:12px}
