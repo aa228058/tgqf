@@ -363,6 +363,25 @@ func (m *Manager) ManagedAccountIDs() []string {
      return chat.ID,nil
  }
 
+// CheckPublicUsername resolves a public Telegram username without joining the chat.
+func (m *Manager) CheckPublicUsername(ctx context.Context, accountID, username string) (bool, error) {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() { return false, errors.New("Telegram account is not connected") }
+	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
+	if username == "" { return false, errors.New("public Telegram username is empty") }
+	resolved, err := client.Raw().ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: username})
+	if err != nil { return false, fmt.Errorf("resolve public Telegram username: %w", err) }
+	if resolved == nil { return false, errors.New("Telegram returned an empty username resolution") }
+	switch resolved.Peer.(type) {
+	case *tg.PeerChannel, *tg.PeerChat:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 // CheckPrivateInviteApproval checks whether a private invite request has become an actual membership.
 func (m *Manager) CheckPrivateInviteApproval(ctx context.Context,accountID,inviteHash string)(string,error) {
 	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
