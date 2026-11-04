@@ -209,7 +209,10 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
         switch step.ActionType {
         case "text":
             hasReply:=false;for _,reply:=range step.ReplyTextByChatType { if strings.TrimSpace(reply)!="" { hasReply=true;break } }
-            if step.Text=="" && !hasReply { return rule,fmt.Errorf("%w: text step %d requires text",ErrInvalidKeywordRule,i+1) }
+            if step.Text=="" {
+                if !hasReply { return rule,fmt.Errorf("%w: text step %d requires text",ErrInvalidKeywordRule,i+1) }
+                for _,chatType:=range rule.ChatTypes { key:=chatType;if key=="supergroup"{key="group"};if key=="channel"||strings.TrimSpace(step.ReplyTextByChatType[key])=="" { return rule,fmt.Errorf("%w: text step %d needs a default reply for every selected chat type",ErrInvalidKeywordRule,i+1) } }
+            }
             if len([]rune(step.Text))>4096 { return rule,fmt.Errorf("%w: text step %d exceeds Telegram's limit",ErrInvalidKeywordRule,i+1) }
             for chatType,reply:=range step.ReplyTextByChatType {
                 key:=strings.ToLower(strings.TrimSpace(chatType))
