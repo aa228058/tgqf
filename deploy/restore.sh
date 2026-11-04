@@ -49,7 +49,8 @@ restore_succeeded=0
 on_exit() {
   status=$?
   if [[ "$restore_started" == "1" && "$restore_succeeded" != "1" ]]; then
-    echo "[restore] Restore did not complete. Application services are intentionally left stopped to prevent serving a partially restored database. Inspect the error, then rerun the restore or recover from a verified backup." >&2
+    "${COMPOSE[@]}" stop worker api frontend redis >/dev/null 2>&1 || true
+    echo "[restore] Restore did not complete. Application services and Redis have been stopped to prevent serving a partially restored database. Inspect the error, then rerun the restore or recover from a verified backup." >&2
   fi
   exit "$status"
 }
