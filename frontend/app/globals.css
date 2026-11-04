@@ -1153,3 +1153,32 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
  .messages-page .media-preview-navigation button{min-height:42px}
 }
 @media(prefers-reduced-motion:reduce){.messages-page .chat-item{transition:none}}
+
+
+/* Global shell accessibility, safe-area and touch polish */
+.app-frame button:focus-visible,.app-frame a:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 52%,transparent);outline-offset:3px}
+.app-sidebar .nav-item,.sidebar-logout,.theme-toggle,.topbar-logout,.mobile-nav-item,.mobile-more-menu button{min-height:40px}
+.mobile-more-menu{max-height:min(70dvh,520px);overflow-y:auto;overscroll-behavior:contain}
+.mobile-more-menu button{min-height:44px;border-radius:8px}
+.mobile-more-menu button[aria-current="page"]{background:color-mix(in srgb,var(--accent) 11%,transparent);color:var(--accent)}
+.app-topbar{padding-top:env(safe-area-inset-top,0px)}
+@media(max-width:900px){
+ .app-frame{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+ .mobile-bottom-nav{height:calc(64px + env(safe-area-inset-bottom,0px));padding:4px 4px env(safe-area-inset-bottom,0px)}
+ .mobile-nav-item{min-width:0;min-height:44px}
+ .mobile-nav-item small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .mobile-more-menu{bottom:calc(70px + env(safe-area-inset-bottom,0px));right:5px}
+}
+@media(max-width:380px){
+ .app-topbar{gap:8px}
+ .breadcrumb{gap:6px;font-size:10px}
+ .breadcrumb strong{font-size:11px}
+ .theme-toggle,.topbar-logout{padding:6px;font-size:10px}
+ .mobile-nav-item small{font-size:9px}
+}
+@media(prefers-reduced-motion:no-preference){
+ .app-sidebar .nav-item,.mobile-nav-item,.theme-toggle{transition:background-color .14s ease,color .14s ease}
+}
+@media(prefers-reduced-motion:reduce){
+ *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
