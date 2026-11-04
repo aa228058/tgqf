@@ -8,6 +8,7 @@ type Account={id:string;phone:string;display_name:string;group_name:string;tags:
 type AccountPage={accounts:Account[];total:number;limit:number;offset:number};
 type Proxy={id:string;name:string;protocol:string;host:string;port:number;username:string;has_password:boolean;is_default:boolean;last_check_status?:string;last_check_latency_ms?:number;last_check_at?:string};
 type ProxyInput={name:string;protocol:string;host:string;port:number;username:string;password:string;clear_password?:boolean};
+type ProxyCheck={id:string;check_type:string;status:string;latency_ms:number;message:string;checked_at:string};
 type QRState={accountId:string;url:string;expiresAt:string};
 type LoginMode="qr"|"phone"|"session";
 type ProfileJob={id:string;batch_id:string;account_id:string;first_name:string;last_name:string;about:string;generate_username:boolean;has_photo:boolean;applied_username?:string;status:string;attempts:number;next_run_at:string;last_error?:string};
@@ -44,6 +45,7 @@ export function AccountsPage({token}:{token:string}){
  const [profile,setProfile]=useState<{account:Account;data:unknown}|null>(null);
  const [deviceProfile,setDeviceProfile]=useState<{account:Account;data:DeviceProfile}|null>(null);
  const [proxyEditor,setProxyEditor]=useState<{id?:string;input:ProxyInput}|null>(null);
+ const [proxyHistory,setProxyHistory]=useState<{proxy:Proxy;checks:ProxyCheck[]}|null>(null);
  const [profileAccounts,setProfileAccounts]=useState<Account[]>([]),[profileSelected,setProfileSelected]=useState<string[]>([]);
  const [profileForm,setProfileForm]=useState({first_name:"",last_name:"",about:"",generate_username:false});
  const [usernameSettings,setUsernameSettings]=useState<UsernameSettings>({prefix:"tg",random_length:10,charset:"alphanumeric"}),[usernameSettingsBusy,setUsernameSettingsBusy]=useState(false);
@@ -248,6 +250,12 @@ export function AccountsPage({token}:{token:string}){
   }catch(e){setError(e instanceof Error?e.message:"代理保存失败")}
   finally{setBusy(false)}
  }
+ async function showProxyHistory(proxy:Proxy){
+  setBusy(true);setError("");
+  try{const r=await api<{checks:ProxyCheck[]}>(`/api/v1/proxies/${proxy.id}/checks?limit=50`,token);setProxyHistory({proxy,checks:r.checks||[]})}
+  catch(e){setError(e instanceof Error?e.message:"代理检测历史加载失败")}
+  finally{setBusy(false)}
+ }
  async function checkProxy(proxy:Proxy){
   setBusy(true);setError("");
   try{const result=await api<{reachable:boolean;message?:string}>(`/api/v1/proxies/${proxy.id}/check`,token,{method:"POST"});setNotice(result.reachable?"代理检测成功":"代理检测失败");await loadProxies()}
@@ -284,8 +292,9 @@ export function AccountsPage({token}:{token:string}){
     <div className="account-pagination"><span>第 {Math.floor(offset/30)+1} / {Math.max(1,Math.ceil(total/30))} 页</span><div><button className="secondary" disabled={offset===0||busy} onClick={()=>setOffset(Math.max(0,offset-30))}>上一页</button><button className="secondary" disabled={offset+30>=total||busy} onClick={()=>setOffset(offset+30)}>下一页</button></div></div>
    </section>
   </>:<section className="panel"><div className="proxy-heading"><div><h2>代理列表</h2><p>代理密码只写入加密存储，不会回显</p></div><button className="primary" onClick={()=>setProxyEditor({input:{name:"",protocol:"socks5",host:"",port:1080,username:"",password:""}})}>添加代理</button></div>
-   {proxies.length?<div className="proxy-grid">{proxies.map(p=><article className="proxy-card" key={p.id}><div className="proxy-card-title"><strong>{p.name}</strong>{p.is_default&&<span className="status status-joined">默认</span>}</div><p>{p.protocol.toUpperCase()} · {p.host}:{p.port}</p><small>{p.username||"无用户名"} · {p.has_password?"已配置密码":"无密码"}</small><small>最近检测：{p.last_check_status||"尚未检测"} {p.last_check_latency_ms?(`· ${p.last_check_latency_ms} ms`):""}</small><div className="proxy-actions"><button onClick={()=>void checkProxy(p)} disabled={busy}>检测</button><button onClick={()=>setDefaultProxy(p)} disabled={busy||p.is_default}>设为默认</button><button onClick={()=>setProxyEditor({id:p.id,input:{name:p.name,protocol:p.protocol,host:p.host,port:p.port,username:p.username,password:""}})}>编辑</button><button className="danger-text" onClick={()=>void deleteProxy(p)} disabled={busy}>删除</button></div></article>)}</div>:<div className="empty">暂无代理配置</div>}
+   {proxies.length?<div className="proxy-grid">{proxies.map(p=><article className="proxy-card" key={p.id}><div className="proxy-card-title"><strong>{p.name}</strong>{p.is_default&&<span className="status status-joined">默认</span>}</div><p>{p.protocol.toUpperCase()} · {p.host}:{p.port}</p><small>{p.username||"无用户名"} · {p.has_password?"已配置密码":"无密码"}</small><small>最近检测：{p.last_check_status||"尚未检测"} {p.last_check_latency_ms?(`· ${p.last_check_latency_ms} ms`):""}</small><div className="proxy-actions"><button onClick={()=>void checkProxy(p)} disabled={busy}>检测</button><button onClick={()=>void showProxyHistory(p)} disabled={busy}>检测历史</button><button onClick={()=>setDefaultProxy(p)} disabled={busy||p.is_default}>设为默认</button><button onClick={()=>setProxyEditor({id:p.id,input:{name:p.name,protocol:p.protocol,host:p.host,port:p.port,username:p.username,password:""}})}>编辑</button><button className="danger-text" onClick={()=>void deleteProxy(p)} disabled={busy}>删除</button></div></article>)}</div>:<div className="empty">暂无代理配置</div>}
   </section>}
+  {proxyHistory&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProxyHistory(null)}}><section className="account-modal"><div className="modal-heading"><div><h2>{proxyHistory.proxy.name} · 检测历史</h2><p>结果仅表示代理认证及 Telegram 数据中心 TCP 隧道连通性，不代表账号已完成登录。</p></div><button className="ghost" onClick={()=>setProxyHistory(null)}>关闭</button></div><div className="profile-job-list">{proxyHistory.checks.map(item=><article key={item.id}><div className="profile-job-title"><strong>{item.check_type==="telegram_dc_tunnel"?"Telegram 数据中心 TCP 隧道":item.check_type}</strong><span className={`status ${item.status==="success"?"status-joined":"status-failed"}`}>{item.status==="success"?"成功":"失败"}</span></div><small>{fmt(item.checked_at)} · {item.latency_ms} ms</small>{item.message&&<small className={item.status==="success"?"":"account-last-error"}>{item.message}</small>}</article>)}{!proxyHistory.checks.length&&<div className="empty">暂无检测记录</div>}</div></section></div>}
   {loginOpen&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!qr)setLoginOpen(false)}}><section className="account-modal"><div className="modal-heading"><div><h2>添加 Telegram 账号</h2><p>使用二维码、手机号验证码或 Session 文件</p></div><button className="ghost" onClick={()=>setLoginOpen(false)} disabled={!!qr}>关闭</button></div>
    <div className="login-tabs"><button className={loginMode==="qr"?"active":""} onClick={()=>setLoginMode("qr")}>扫码登录</button><button className={loginMode==="phone"?"active":""} onClick={()=>setLoginMode("phone")}>手机号登录</button><button className={loginMode==="session"?"active":""} onClick={()=>setLoginMode("session")}>Session 导入</button></div>
    {!qr&&loginMode==="qr"&&<form onSubmit={startQR} className="account-form"><label>账号分组（可选）<input value={loginGroup} onChange={e=>setLoginGroup(e.target.value)} placeholder="例如：客服账号"/></label><button className="primary" disabled={busy}>生成 Telegram 登录二维码</button></form>}
