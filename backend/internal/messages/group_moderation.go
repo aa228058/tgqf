@@ -145,11 +145,20 @@ func (s *Service) MergePublicGroups(ctx context.Context,actorID string,sourceID,
     reason=strings.TrimSpace(reason)
     if sourceID<=0||targetID<=0||sourceID==targetID||len(reason)<5||len(reason)>500{return ErrGroupMergeConflict}
     tx,err:=s.db.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
+    // Lock both canonical rows in a stable order so concurrent merge requests
+    // cannot deadlock by locking source/target in opposite order.
+    lockedRows,err:=tx.QueryContext(ctx,`SELECT id FROM public_groups WHERE id IN ($1,$2) ORDER BY id FOR UPDATE`,sourceID,targetID)
+    if err!=nil{return err}
+    locked:=0
+    for lockedRows.Next(){locked++}
+    if err:=lockedRows.Err();err!=nil{lockedRows.Close();return err}
+    if err:=lockedRows.Close();err!=nil{return err}
+    if locked!=2{return ErrGroupMergeConflict}
     var sourceType,targetType string;var snapshot []byte
     err=tx.QueryRowContext(ctx,`SELECT jsonb_build_object('telegram_chat_id',telegram_chat_id,'chat_type',chat_type,'title',title,'username',username,'member_count',member_count,'is_verified',is_verified,'default_permissions',default_permissions,'permissions_observed_at',permissions_observed_at),chat_type
-        FROM public_groups WHERE id=$1 FOR UPDATE`,sourceID).Scan(&snapshot,&sourceType)
+        FROM public_groups WHERE id=$1`,sourceID).Scan(&snapshot,&sourceType)
     if errors.Is(err,sql.ErrNoRows){return ErrGroupMergeConflict};if err!=nil{return err}
-    err=tx.QueryRowContext(ctx,`SELECT chat_type FROM public_groups WHERE id=$1 FOR UPDATE`,targetID).Scan(&targetType)
+    err=tx.QueryRowContext(ctx,`SELECT chat_type FROM public_groups WHERE id=$1`,targetID).Scan(&targetType)
     if errors.Is(err,sql.ErrNoRows){return ErrGroupMergeConflict};if err!=nil{return err}
     if sourceType!=targetType{return ErrGroupMergeConflict}
     if _,err=tx.ExecContext(ctx,`INSERT INTO public_group_sources(group_id,tenant_id,telegram_account_id,source_chat_id,account_rights_snapshot,account_rights_observed_at,first_seen_at,last_seen_at,discovery_count)
