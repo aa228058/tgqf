@@ -240,6 +240,20 @@ func TestNormalizeKeywordMediaAlbum(t *testing.T) {
     invalid=valid;invalid.MediaAlbumItems[1].MediaType="audio";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("unsupported album media type accepted")}
     invalid=valid;invalid.MediaAlbumItems[1].MediaType="document";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed document/photo album accepted")}
     invalid=valid;invalid.ReplyText="extra text";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("mixed text/album action accepted")}
+    invalid=valid;invalid.ChatTypes=[]string{"private","channel"};if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("channel album action accepted")}
+    invalid=valid;invalid.MediaAlbumItems[0].AssetID="bad-id";if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("invalid album asset UUID accepted")}
+    invalid=valid;invalid.MediaAlbumItems[0].Caption=strings.Repeat("中",1025);if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("oversized Unicode album caption accepted")}
+    invalid=valid;invalid.MediaAlbumItems=append(invalid.MediaAlbumItems,
+        KeywordMediaAlbumItem{AssetID:"33333333-3333-4333-8333-333333333333",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"44444444-4444-4444-8444-444444444444",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"55555555-5555-4555-8555-555555555555",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"66666666-6666-4666-8666-666666666666",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"77777777-7777-4777-8777-777777777777",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"88888888-8888-4888-8888-888888888888",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"99999999-9999-4999-8999-999999999999",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",MediaType:"photo"},
+        KeywordMediaAlbumItem{AssetID:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",MediaType:"photo"})
+    if _,err:=normalizeKeywordRule(invalid);err==nil{t.Fatal("11-item album accepted")}
 }
 
 
