@@ -68,7 +68,7 @@ func parseGroupCatalogueCSV(reader io.Reader) ([]GroupCatalogueImportRecord, err
 }
 
 func parseGroupCatalogueTXT(reader io.Reader) ([]GroupCatalogueImportRecord, error) {
-	return parseGroupCatalogueDelimited(reader, '\\t')
+	return parseGroupCatalogueDelimited(reader, '\t')
 }
 
 func (h *Handler) importGroupCatalogueTXT(w http.ResponseWriter, r *http.Request) {
