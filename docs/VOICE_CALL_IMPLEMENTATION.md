@@ -1,32 +1,33 @@
 # Telegram 原生语音来电弹出功能
 
-状态：进行中；已提交 MTGo 原生拨号请求的第一步，尚未完成业务闭环。
+状态：后端首轮实现已接入监控回复动作链路；仍待 CI、真实 Telegram 双账号弹窗验收及来电状态同步。
 
 ## 用户需求范围
 
-监控回复规则命中后，由指定的普通 Telegram 用户账号向目标用户发起 Telegram 原生语音呼叫，让目标设备出现 Telegram 原生来电界面。
+监控回复规则命中后，由指定的普通 Telegram 用户账号向发来私聊消息的用户发起 Telegram 原生语音呼叫，让目标设备出现 Telegram 原生来电界面。
 
-本阶段不开发独立通话产品、语音聊天室或自动接听功能；但必须如实区分“已发起/正在响铃”和“已接听/通话已连接”。不把语音消息当作来电。
+本阶段不开发独立通话产品、语音聊天室或自动接听功能。系统只报告“已向 Telegram 发起呼叫/正在响铃”，不把它伪报为对方已接听或音频通话已建立。
 
-## 已完成
+## 已提交的后端实现
 
-- 核实 MTGo v0.22.0 提供一对一呼叫相关 TL 类型、phone.requestCall RPC、DH 配置 RPC 和原始更新处理能力。
-- 新增 `backend/internal/telegrammtgo/voice_call.go`。
-- 新增 `Manager.RequestVoiceCall(ctx, accountID, targetUserID)`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性随机呼叫材料，并调用 Telegram `phone.requestCall`。
-- 返回 Telegram 的 call ID/access hash 和 ringing 状态；不会把 ringing 伪报为接听或已连接。
+- MTGo v0.22.0 提供一对一呼叫 TL 类型、`phone.requestCall`、DH 配置 RPC 和原始更新处理能力。
+- `backend/internal/telegrammtgo/voice_call.go` 新增 `Manager.RequestVoiceCall`：检查账号连接、要求目标用户已在该账号 peer cache 中且具有有效 access hash、从 Telegram 获取 DH 参数、生成一次性随机呼叫材料，并调用 Telegram `phone.requestCall`。
+- 监控回复规则新增 `action_type=voice_call`。该动作只允许私聊规则；目标用户取自触发消息的发送者 ID，不允许从前端任意指定用户 ID。
+- 新增迁移 `0057_keyword_voice_call_actions.sql`，为任务保存目标用户、Telegram call ID/access hash 和 ringing 状态。
+- Worker 执行 voice_call 任务，发起 MTGo 原生呼叫，并将 Telegram 返回的 call ID 和 ringing 状态写入租户隔离任务记录。
+- 关键词动作列表 API 返回 `target_user_id`、`telegram_call_id` 和 `voice_call_state`，不伪造 outgoing chat message。
+- 新增规则校验单元测试，并扩展现有任务集成测试 fixture。
 
-## 尚未完成的闭环
+## 尚未完成的验收
 
-1. 将此方法接入监控回复动作类型和任务执行器，使用当前租户已授权账号及消息事件中的目标用户。
-2. 为呼叫请求加上租户隔离的任务/动作记录、幂等键和速率限制；同一条命中消息不能重复拨号。
-3. 监听 `UpdatePhoneCall`，同步对方拒绝、接听、结束、超时和失败状态。
-4. 明确处理接听后的协议状态：如果产品只要求来电弹出，则在收到接听状态后按产品规则结束并记录“对方已接听来电提示，但未建立音频通话”；不得显示“通话成功”。
-5. 增加租户授权、Telegram 隐私拒绝、FloodWait、账号断线、重复事件和进程重启测试。
-6. 对真实 Telegram 双账号验证：目标设备确实出现原生来电界面，呼叫状态事件可被准确接收。
+1. CI 编译、Go tests 和 vet 必须通过；当前环境未能在本轮直接运行仓库测试。
+2. 监听 `UpdatePhoneCall`，把对方拒绝、接听、结束、超时和失败同步到任务状态。
+3. 真实 Telegram 双账号验证：目标设备确实出现原生来电界面，且 FloodWait/隐私限制错误被正确记录。
+4. 确认对方接听后的产品处理策略。当前实现只完成呼叫请求/响铃，不完成后续 DH 确认和音频媒体链路；不能展示“通话成功”。
 
-## 边界与安全
+## 安全边界
 
-- 只允许由租户明确选择并授权的账号执行；目标必须来自当前消息/联系人上下文，不能接受任意客户端传入的目标 user ID。
+- 只允许由租户已授权账号对当前收到私聊消息的发送者触发。
 - 尊重 Telegram 隐私设置和平台限制，不通过账号轮换、代理切换或并发拨号规避限制。
-- DH 随机材料不写普通日志；不得声称已经建立双向音频。
+- DH 随机材料不写普通日志。
 - 未通过真实双账号来电弹窗测试前，不标记模块完成。
