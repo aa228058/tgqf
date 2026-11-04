@@ -41,6 +41,7 @@ type bulkPhoneStartResult struct { Phone string `json:"phone"`; Account *Account
 func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{return &Handler{service:s,auth:a,telegram:m}}
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
+ m.Handle("GET /api/v1/accounts/{id}/profile",h.auth.Authenticated(http.HandlerFunc(h.getTelegramProfile)))
  m.Handle("GET /api/v1/accounts/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportCSV)))
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
  m.Handle("POST /api/v1/accounts/import",h.auth.Authenticated(http.HandlerFunc(h.importBatch)))
@@ -498,4 +499,17 @@ func (h *Handler) bulkRuntimeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error()); return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"action": strings.ToLower(strings.TrimSpace(input.Action)), "requested": len(input.AccountIDs), "changed": changed, "status": map[string]string{"disconnect":"disconnected", "reconnect":"authorized"}[strings.ToLower(strings.TrimSpace(input.Action))]})
+}
+
+// getTelegramProfile reads the live Telegram identity for an account owned by this tenant.
+func (h *Handler) getTelegramProfile(w http.ResponseWriter,r *http.Request) {
+ if h.telegram==nil { writeError(w,http.StatusServiceUnavailable,"Telegram runtime is not configured");return }
+ id:=strings.TrimSpace(r.PathValue("id")); if !validAccountUUID(id) { writeError(w,http.StatusBadRequest,"invalid account ID");return }
+ user:=auth.UserFromContext(r.Context())
+ owned,err:=h.service.OwnsAccount(r.Context(),user.TenantID,id)
+ if err!=nil { writeError(w,http.StatusInternalServerError,"failed to verify account ownership");return }
+ if !owned { writeError(w,http.StatusNotFound,"account not found");return }
+ profile,err:=h.telegram.AccountProfile(id)
+ if err!=nil { writeError(w,http.StatusConflict,err.Error());return }
+ writeJSON(w,http.StatusOK,map[string]any{"profile":profile})
 }
