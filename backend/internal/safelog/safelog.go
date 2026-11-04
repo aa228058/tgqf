@@ -10,8 +10,9 @@ import (
 
 var (
 	sensitiveKey    = regexp.MustCompile(`(?i)(password|passwd|secret|token|api.?hash|session|authorization|cookie|credential|private.?key|database.?url|redis.?url|dsn)`)
-	urlCredential   = regexp.MustCompile(`(?i)(postgres(?:ql)?|redis)://[^:/@\s]+:[^@\s]+@`)
+	urlCredential   = regexp.MustCompile(`(?i)((?:postgres(?:ql)?|rediss?|https?|socks5h?)://[^:/@\s]*:[^@/\s]+@`)
 	parameterSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)=([^&\s,;]+)`)
+	jsonSecret      = regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)"\s*:\s*")([^"]+)(")`)
 	bearerSecret    = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 )
 
@@ -45,11 +46,12 @@ func NewJSONHandler(w io.Writer, options *slog.HandlerOptions) slog.Handler {
 
 // RedactText scrubs credentials that may be embedded in dependency errors.
 func RedactText(value string) string {
-	value = urlCredential.ReplaceAllStringFunc(value, func(match string) string {
+	urlCredential   = regexp.MustCompile(`(?i)((?:postgres(?:ql)?|rediss?|https?|socks5h?)://[^:/@\s]*:[^@/\s]+@`)
 		scheme := strings.SplitN(match, "://", 2)[0]
 		return scheme + "://[REDACTED]@"
 	})
 	value = parameterSecret.ReplaceAllString(value, "$1="+redacted)
+	jsonSecret      = regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api[_-]?hash|session|authorization|cookie)"\s*:\s*")([^"]+)(")`)
 	value = jsonSecret.ReplaceAllString(value, "$1"+redacted+"$3")
 	value = bearerSecret.ReplaceAllString(value, "$1"+redacted)
 	return value
