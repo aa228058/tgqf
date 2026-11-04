@@ -3,6 +3,7 @@ package messages
 import (
 	"encoding/base64"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -45,4 +46,29 @@ func TestExtractTelegramLinksSkipsPreviewAndReservedRoutes(t *testing.T) {
     if len(got) != 0 {
         t.Fatalf("reserved Telegram routes must not be treated as public usernames: %#v", got)
     }
+}
+
+func TestExtractTelegramLinksRejectsEmbeddedLookalikeDomains(t *testing.T) {
+	os.Setenv("SESSION_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	defer os.Unsetenv("SESSION_ENCRYPTION_KEY")
+
+	got := ExtractTelegramLinks("https://evil.example/t.me/FakeGroup nottelegram.me/AnotherFake t.me/RealGroup")
+	if len(got) != 1 || got[0].PublicURL != "https://t.me/RealGroup" {
+		t.Fatalf("expected only the real Telegram host link, got %#v", got)
+	}
+}
+
+func TestExtractTelegramLinksAcceptsTelegramURLPunctuationAndQuery(t *testing.T) {
+	got := ExtractTelegramLinks("Link: (https://t.me/PublicGroup?start=abc),")
+	if len(got) != 1 || got[0].PublicURL != "https://t.me/PublicGroup" {
+		t.Fatalf("expected canonical public link, got %#v", got)
+	}
+}
+
+func TestExtractTelegramLinksRejectsOverlongPublicUsername(t *testing.T) {
+	username := strings.Repeat("a", 33)
+	got := ExtractTelegramLinks("https://t.me/" + username)
+	if len(got) != 0 {
+		t.Fatalf("overlong username must not be collected: %#v", got)
+	}
 }
