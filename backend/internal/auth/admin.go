@@ -2,6 +2,7 @@ package auth
 
 import (
  "context"
+ "database/sql"
  "crypto/rand"
  "encoding/hex"
  "errors"
