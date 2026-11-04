@@ -209,3 +209,50 @@ func TestActivationAfterExpiryFreezesOldWorkBeforeRenewal(t *testing.T) {
 		t.Fatalf("renewed expiry=%s, want future", expiry)
 	}
 }
+
+
+func TestListAuditLogsFiltersAndIncludesActorAndTenant(t *testing.T) {
+	db, cleanup := openTenantLifecycleIntegrationDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `ALTER TABLE tenants ADD COLUMN name TEXT NOT NULL DEFAULT ''`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE users(id UUID PRIMARY KEY,username TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE audit_logs(
+		id BIGSERIAL PRIMARY KEY,tenant_id UUID,actor_user_id UUID,action TEXT NOT NULL,
+		resource_type TEXT NOT NULL,resource_id TEXT NOT NULL,details JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at,name) VALUES($1,'active',NOW()+INTERVAL '30 days','Tenant Alpha')`, lifecycleTenantID); err != nil {
+		t.Fatal(err)
+	}
+	actorID := "44444444-4444-4444-8444-444444444444"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username) VALUES($1,'root-admin')`, actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_logs(tenant_id,actor_user_id,action,resource_type,resource_id,details)
+		VALUES($1,$2,'admin.tenant.status','tenant',$1,'{"status":"disabled"}'::jsonb),
+		(NULL,$2,'admin.cards.issue','activation_cards','','{"count":5}'::jsonb)`, lifecycleTenantID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := New(db).ListAuditLogs(ctx, lifecycleTenantID, "tenant.status", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("filtered audit rows total=%d len=%d, want 1", total, len(items))
+	}
+	if items[0].TenantName != "Tenant Alpha" || items[0].ActorUsername != "root-admin" || items[0].Action != "admin.tenant.status" {
+		t.Fatalf("audit row missing tenant/actor/action: %+v", items[0])
+	}
+	all, allTotal, err := New(db).ListAuditLogs(ctx, "", "", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allTotal != 2 || len(all) != 1 {
+		t.Fatalf("paginated audit rows total=%d len=%d, want total=2 len=1", allTotal, len(all))
+	}
+}
