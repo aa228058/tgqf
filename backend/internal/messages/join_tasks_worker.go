@@ -141,7 +141,7 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
-				status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' ELSE 'failed' END,
+				status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'failed' END,
 				lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$1,updated_at=NOW()
 			FROM tenant_join_tasks t
 			WHERE a.tenant_id=$2 AND a.task_id=$3 AND a.id=$4 AND a.status='processing' AND a.lease_until=$5
