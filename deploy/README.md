@@ -117,3 +117,10 @@ This checks API readiness, frontend HTTP response and authenticated-route protec
 - The API and Worker each apply storage migrations on startup; Compose orders Worker after API readiness.
 - Monitor `/health/ready`, Docker health, Worker heartbeat rows and structured logs.
 - Configure host-level log rotation and off-site backups. Test restore before production use.
+
+
+### Restore safety checks
+
+Before stopping the running stack, `deploy/restore.sh` verifies the optional SHA-256 manifest, validates the PostgreSQL dump and Redis archive, checks the Compose configuration and expected Redis volume, and makes sure the Alpine restore helper image is available. It then asks for the explicit `RESTORE` confirmation.
+
+If a restore fails after the services have been stopped, the script keeps the application services and Redis stopped rather than serving a potentially partial restore. Inspect the reported error and container logs, then rerun the restore from a verified backup before reopening traffic. The `.env` file (especially `SESSION_ENCRYPTION_KEY`) is not included in database/Redis backups and must be backed up separately and securely.
