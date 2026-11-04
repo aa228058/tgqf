@@ -329,6 +329,8 @@ func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
 	if filter.MaxMembers,err=parse("max_members");err!=nil{http.Error(w,"invalid max_members",http.StatusBadRequest);return}
 	if filter.MinSources,err=parse("min_sources");err!=nil{http.Error(w,"invalid min_sources",http.StatusBadRequest);return}
 	if filter.MinContributors,err=parse("min_contributors");err!=nil{http.Error(w,"invalid min_contributors",http.StatusBadRequest);return}
+	if _,_,filterErr:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);filterErr!=nil{http.Error(w,"invalid group filters",http.StatusBadRequest);return}
+	if filterErr:=validateGroupLibraryFilter(filter);filterErr!=nil{http.Error(w,"invalid group filters",http.StatusBadRequest);return}
 	maxRows:=10000
 	if raw:=r.URL.Query().Get("max_rows");raw!=""{v,e:=strconv.Atoi(raw);if e!=nil||v<1||v>10000{http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest);return};maxRows=v}
 	var output bytes.Buffer
