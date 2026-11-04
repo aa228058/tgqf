@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	"strings"
 )
 
 func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
@@ -64,8 +65,10 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	jobInactivePending:="20000000-0000-4000-8000-000000000001"
 	jobInactiveExpired:="20000000-0000-4000-8000-000000000002"
 	jobInactiveLive:="20000000-0000-4000-8000-000000000003"
+	jobUncertain:="10000000-0000-4000-8000-000000000004"
 	insertJob(jobA,activeTenant,accountA,"pending",time.Time{})
 	insertJob(jobB,activeTenant,accountB,"pending",time.Time{})
+	insertJob(jobUncertain,activeTenant,accountA,"processing",time.Now().Add(-time.Minute))
 	sourceA:="30000000-0000-4000-8000-000000000001"
 	sourceB:="30000000-0000-4000-8000-000000000002"
 	for _,source:=range []struct{id,tenant,account string;chat int64;msg int64}{{sourceA,activeTenant,accountA,101,11},{sourceB,activeTenant,accountB,102,12}} {
@@ -88,10 +91,15 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	for _,job:=range jobs{claimed[job.ID]=job}
 	if _,ok:=claimed[jobA];!ok{t.Fatal("authorized reply A was not claimed")}
 	if _,ok:=claimed[jobB];!ok{t.Fatal("authorized reply B was not claimed")}
-	for id,want:=range map[string]string{jobRevoked:"pending",jobInactivePending:"paused",jobInactiveExpired:"paused",jobInactiveLive:"processing"}{
+	for id,want:=range map[string]string{jobRevoked:"pending",jobInactivePending:"paused",jobInactiveExpired:"paused",jobInactiveLive:"processing",jobUncertain:"paused"}{
 		var status string
 		if err:=db.QueryRowContext(ctx,`SELECT status FROM message_reply_jobs WHERE id=$1`,id).Scan(&status);err!=nil{t.Fatal(err)}
 		if status!=want{t.Fatalf("reply job %s status=%q, want %q",id,status,want)}
+		if id==jobUncertain {
+			var reason string
+			if err:=db.QueryRowContext(ctx,`SELECT last_error FROM message_reply_jobs WHERE id=$1`,id).Scan(&reason);err!=nil{t.Fatal(err)}
+			if !strings.Contains(reason,"outcome uncertain"){t.Fatalf("expired active reply lease reason=%q, want uncertain outcome",reason)}
+		}
 	}
 	var savedLease time.Time
 	if err:=db.QueryRowContext(ctx,`SELECT lease_until FROM message_reply_jobs WHERE id=$1`,jobInactiveLive).Scan(&savedLease);err!=nil{t.Fatal(err)}
