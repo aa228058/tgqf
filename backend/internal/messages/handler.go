@@ -162,13 +162,23 @@ func (h *Handler) messageMedia(w http.ResponseWriter,r *http.Request){
  if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message media not found"});return}
  if strings.TrimSpace(identity.MediaType)==""{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message has no media"});return}
  if h.telegram==nil{messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Telegram runtime is not configured"});return}
- data,err:=h.telegram.DownloadMessagePhoto(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
+ data,err:=h.telegram.DownloadMessageMedia(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
  if err!=nil{messageJSON(w,http.StatusBadGateway,map[string]string{"error":"Telegram media could not be retrieved"});return}
  contentType:=http.DetectContentType(data)
- switch contentType {case "image/jpeg","image/png","image/gif","image/webp":default:messageJSON(w,http.StatusUnsupportedMediaType,map[string]string{"error":"only JPEG, PNG, GIF and WebP previews are supported"});return}
+ // Only well-known raster formats are rendered inline. Every other attachment,
+ // including SVG/HTML and unknown document types, is forced to download.
+ disposition:="attachment"
+ filename:="telegram-media"
+ switch contentType {
+ case "image/jpeg","image/png","image/gif","image/webp":
+  disposition="inline"
+ }
+ if extensions,extErr:=mime.ExtensionsByType(contentType);extErr==nil&&len(extensions)>0 {
+  filename+=extensions[0]
+ }
  w.Header().Set("Content-Type",contentType)
  w.Header().Set("Content-Length",strconv.Itoa(len(data)))
- w.Header().Set("Content-Disposition",mime.FormatMediaType("inline",map[string]string{"filename":"telegram-media"}))
+ w.Header().Set("Content-Disposition",mime.FormatMediaType(disposition,map[string]string{"filename":filename}))
  w.Header().Set("Cache-Control","private, no-store, max-age=0")
  w.Header().Set("Content-Security-Policy","default-src 'none'; sandbox")
  w.Header().Set("X-Content-Type-Options","nosniff")
