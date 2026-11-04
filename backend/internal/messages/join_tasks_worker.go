@@ -131,15 +131,19 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
 
 // RescheduleJoinTaskRetry retries transient Telegram failures with bounded
 // exponential backoff. The exact lease is consumed before the row is requeued.
+func joinTaskRetryDelay(attempt int) time.Duration {
+    if attempt < 1 { attempt = 1 }
+    delay := 30 * time.Second
+    for i := 1; i < attempt && delay < 30*time.Minute; i++ { delay *= 2 }
+    if delay > 30*time.Minute { return 30*time.Minute }
+    return delay
+}
+
 func (s *Service) RescheduleJoinTaskRetry(ctx context.Context, job JoinTaskJob, reason string) error {
     if job.Attempts >= 5 {
         return s.FailJoinTaskAccount(ctx, job, "retry limit reached: "+reason)
     }
-    delay := 30 * time.Second
-    for i := 1; i < job.Attempts && delay < 30*time.Minute; i++ {
-        delay *= 2
-    }
-    if delay > 30*time.Minute { delay = 30*time.Minute }
+    delay := joinTaskRetryDelay(job.Attempts)
     if len(reason) > 500 { reason = reason[:500] }
     return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
         if err := lockJoinTaskParent(ctx, tx, job.TenantID, job.TaskID); err != nil { return err }
