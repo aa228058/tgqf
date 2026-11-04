@@ -979,8 +979,8 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.message_type,j.contact_phone,j.contact_first_name,j.contact_last_name,j.attempts,j.status,j.created_at,j.lease_until
 				), scheduled AS (
 				UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
-				FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
-				) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
+				FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.tenant_id,a.id
+				) SELECT c.* FROM claimed c JOIN scheduled s ON s.tenant_id=c.tenant_id::uuid AND s.id=c.telegram_account_id::uuid`,tenantID,remaining)
 			if err!=nil{return err}
 			defer rows.Close()
 			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
