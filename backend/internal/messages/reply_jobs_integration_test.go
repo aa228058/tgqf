@@ -60,7 +60,7 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 	insertJob(jobRevoked,activeTenant,accountRevoked,"pending",time.Time{})
 	insertJob(jobInactivePending,inactiveTenant,inactivePendingAccount,"pending",time.Time{})
 	insertJob(jobInactiveExpired,inactiveTenant,inactiveExpiredAccount,"processing",time.Now().Add(-time.Minute))
-	liveLease:=time.Now().Add(2*time.Minute)
+	liveLease:=time.Now().Add(2*time.Minute).Truncate(time.Microsecond)
 	insertJob(jobInactiveLive,inactiveTenant,inactiveLiveAccount,"processing",liveLease)
 
 	service:=New(db)
