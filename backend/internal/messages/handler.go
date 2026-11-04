@@ -422,16 +422,14 @@ func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
 	if filter.MinContributors,err=parse("min_contributors");err!=nil{http.Error(w,"invalid min_contributors",http.StatusBadRequest);return}
 	if _,_,filterErr:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);filterErr!=nil{http.Error(w,"invalid group filters",http.StatusBadRequest);return}
 	if filterErr:=validateGroupLibraryFilter(filter);filterErr!=nil{http.Error(w,"invalid group filters",http.StatusBadRequest);return}
-	maxRows:=10000
-	if raw:=r.URL.Query().Get("max_rows");raw!=""{v,e:=strconv.Atoi(raw);if e!=nil||v<1||v>10000{http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest);return};maxRows=v}
 	var output bytes.Buffer
 	writer:=csv.NewWriter(&output);_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
-	for offset:=0;offset<maxRows;offset+=100 {
-		limit:=100;if offset+limit>maxRows{limit=maxRows-offset}
-		items,_,err:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,limit,offset)
+	for offset:=0;;offset+=100 {
+		items,_,err:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,100,offset)
 		if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to export public groups"});return}
 		for _,item:=range items{_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),string(item.DefaultPermissions),func()string{if item.PermissionsObservedAt==nil{return ""};return item.PermissionsObservedAt.UTC().Format(time.RFC3339)}(),strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})}
-		if len(items)<limit{break}
+		if len(items)<100{break}
+		if offset > int(^uint(0)>>1)-100 { messageJSON(w,http.StatusRequestEntityTooLarge,map[string]string{"error":"catalogue is too large to export in one request"});return }
 	}
 	writer.Flush();if err:=writer.Error();err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to encode public groups"});return}
 	w.Header().Set("Content-Type","text/csv; charset=utf-8");w.Header().Set("Content-Disposition",`attachment; filename="public-groups.csv"`);w.WriteHeader(http.StatusOK);_,_=w.Write(output.Bytes())
@@ -469,19 +467,17 @@ func (h *Handler) exportGroupLibraryTXT(w http.ResponseWriter, r *http.Request) 
 	if filter.MinContributors,err=parse("min_contributors"); err!=nil { http.Error(w,"invalid min_contributors",http.StatusBadRequest); return }
 	if _,_,e:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query); e!=nil { http.Error(w,"invalid group filters",http.StatusBadRequest); return }
 	if e:=validateGroupLibraryFilter(filter); e!=nil { http.Error(w,"invalid group filters",http.StatusBadRequest); return }
-	maxRows:=10000
-	if raw:=r.URL.Query().Get("max_rows"); raw!="" { v,e:=strconv.Atoi(raw); if e!=nil||v<1||v>10000 { http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest); return }; maxRows=v }
 	var output bytes.Buffer
 	writer:=csv.NewWriter(&output); writer.Comma='\t'
 	_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
-	for offset:=0; offset<maxRows; offset+=100 {
-		limit:=100; if offset+limit>maxRows { limit=maxRows-offset }
-		items,_,listErr:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,limit,offset)
+	for offset:=0;;offset+=100 {
+		items,_,listErr:=h.service.ListGroupLibraryFiltered(r.Context(),groupCatalogueTenantScope(user),filter,100,offset)
 		if listErr!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to export public groups"}); return }
 		for _,item:=range items { observed:=""; if item.PermissionsObservedAt!=nil { observed=item.PermissionsObservedAt.UTC().Format(time.RFC3339) }
 			_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),string(item.DefaultPermissions),observed,strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})
 		}
-		if len(items)<limit { break }
+		if len(items)<100 { break }
+		if offset > int(^uint(0)>>1)-100 { messageJSON(w,http.StatusRequestEntityTooLarge,map[string]string{"error":"catalogue is too large to export in one request"}); return }
 	}
 	writer.Flush(); if err:=writer.Error(); err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to encode public groups"}); return }
 	w.Header().Set("Content-Type","text/plain; charset=utf-8")
