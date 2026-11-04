@@ -187,3 +187,28 @@ func TestKeywordActionRetryDelay(t *testing.T) {
         if got:=keywordActionRetryDelay(tt.attempt,tt.flood);got!=tt.want {t.Fatalf("delay=%s want %s",got,tt.want)}
     }) }
 }
+
+func TestNormalizeKeywordRuleContactAction(t *testing.T) {
+    valid:=KeywordRule{
+        Name:"share contact",MatchMode:"any",Keywords:[]string{"contact"},
+        ChatTypes:[]string{"private","group"},ActionType:"contact",
+        ContactPhone:"+15551234567",ContactFirstName:"Sales",ContactLastName:"Team",
+    }
+    got,err:=normalizeKeywordRule(valid)
+    if err!=nil {t.Fatalf("valid contact action rejected: %v",err)}
+    if got.ActionType!="contact" || got.ContactPhone!=valid.ContactPhone || got.ContactFirstName!=valid.ContactFirstName {
+        t.Fatalf("contact action not preserved: %#v",got)
+    }
+    invalid:=valid
+    invalid.ContactPhone=""
+    if _,err:=normalizeKeywordRule(invalid);err==nil {t.Fatal("contact action without phone accepted")}
+    invalid=valid
+    invalid.ChatTypes=[]string{"private","channel"}
+    if _,err:=normalizeKeywordRule(invalid);err==nil {t.Fatal("contact action enabled for channel chats")}
+    invalid=valid
+    invalid.ReplyText="also send text"
+    if _,err:=normalizeKeywordRule(invalid);err==nil {t.Fatal("mixed contact and text action accepted")}
+    invalid=valid
+    invalid.ActionType="unsupported"
+    if _,err:=normalizeKeywordRule(invalid);err==nil {t.Fatal("unsupported action type accepted")}
+}
