@@ -1,6 +1,15 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppShell, AppUser } from "./AppShell";
+import { Workbench } from "./Workbench";
+import { AccountsPage } from "./AccountsPage";
+import { MessagesPage } from "./MessagesPage";
+import { GroupsPage } from "./GroupsPage";
+import { RuntimePage } from "./RuntimePage";
+import { SettingsPage } from "./SettingsPage";
+import { KeywordMonitor } from "./KeywordMonitor";
+import { JoinTasksPage } from "./JoinTasksPage";
 
 type Task = {
   id: string; group_id?: string; type: string; title: string; status: string;
@@ -30,6 +39,7 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signedIn, setSignedIn] = useState(false);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [total, setTotal] = useState(0);
@@ -41,75 +51,117 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const requestSequence = useRef(0);
+  const actionLock = useRef(false);
+  const loginLock = useRef(false);
   const limit = 30;
 
   const load = useCallback(async (currentToken: string, quiet = false) => {
+    const sequence = ++requestSequence.current;
     if (!quiet) setBusy(true);
     try {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
       if (status) params.set("status", status);
       if (type) params.set("type", type);
       if (accountID.trim()) params.set("account_id", accountID.trim());
-      const [taskData, summaryData] = await Promise.all([
+      const [taskResult, summaryResult] = await Promise.allSettled([
         request<TaskResponse>(`/api/v1/tasks?${params}`, currentToken),
         request<{ summary: Summary }>("/api/v1/tasks/summary", currentToken),
       ]);
-      setTasks(taskData.tasks || []); setTotal(taskData.total || 0); setSummary(summaryData.summary);
-      setSelected([]); setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "加载任务失败"); }
-    finally { if (!quiet) setBusy(false); }
+      if (sequence !== requestSequence.current) return;
+      const failures: string[] = [];
+      if (taskResult.status === "fulfilled") {
+        setTasks(taskResult.value.tasks || []);
+        setTotal(taskResult.value.total || 0);
+      } else failures.push(taskResult.reason instanceof Error ? taskResult.reason.message : "任务列表加载失败");
+      if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.summary);
+      else failures.push(summaryResult.reason instanceof Error ? summaryResult.reason.message : "任务统计加载失败");
+      setError(failures.join("；"));
+    } catch (e) {
+      if (sequence === requestSequence.current) setError(e instanceof Error ? e.message : "加载任务失败");
+    } finally {
+      if (sequence === requestSequence.current && !quiet) setBusy(false);
+    }
   }, [offset, status, type, accountID]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tgqf_access_token");
-    if (saved) { setToken(saved); setSignedIn(true); }
+    if (!saved) return;
+    setToken(saved);
+    setSignedIn(true);
+    void fetch(`${API_BASE}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${saved}` }, cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("会话已失效");
+        setUser(await response.json() as AppUser);
+      })
+      .catch(() => {
+        window.localStorage.removeItem("tgqf_access_token");
+        setToken("");
+        setSignedIn(false);
+        setUser(null);
+      });
   }, []);
   useEffect(() => { if (signedIn && token) void load(token); }, [signedIn, token, load]);
+  useEffect(() => { setSelected([]); }, [offset, status, type, accountID]);
   useEffect(() => {
     if (!signedIn || !token) return;
-    const timer = window.setInterval(() => { void load(token, true); }, 10000);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible" && !actionLock.current) void load(token, true); };
+    const timer = window.setInterval(refresh, 10000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      requestSequence.current++;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [signedIn, token, load]);
 
   async function login(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); if (loginLock.current) return; loginLock.current = true; setBusy(true); setError("");
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, device_label: "web-task-center" }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "登录失败");
       window.localStorage.setItem("tgqf_access_token", body.access_token);
-      setToken(body.access_token); setSignedIn(true); setPassword("");
+      setToken(body.access_token); setUser(body.user as AppUser); setSignedIn(true); setPassword("");
     } catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
-    finally { setBusy(false); }
+    finally { loginLock.current = false; setBusy(false); }
   }
-  function logout() { window.localStorage.removeItem("tgqf_access_token"); setToken(""); setSignedIn(false); setTasks([]); setSummary(null); }
+  function logout() {
+    requestSequence.current++; actionLock.current = false;
+    const currentToken = token;
+    window.localStorage.removeItem("tgqf_access_token");
+    setToken(""); setUser(null); setSignedIn(false); setTasks([]); setSummary(null);
+    if (currentToken) void fetch(`${API_BASE}/api/v1/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${currentToken}` } }).catch(() => undefined);
+  }
 
   async function act(task: Task, action: "pause" | "resume" | "retry" | "cancel") {
     if (action === "cancel" && !window.confirm("确定取消这条任务吗？")) return;
+    if (actionLock.current) return; actionLock.current = true;
     setBusy(true); setNotice(""); setError("");
     try { await request(`/api/v1/tasks/${task.type}/${encodeURIComponent(task.id)}/${action}`, token, { method: "POST" }); setNotice("任务状态已更新"); await load(token, true); }
     catch (e) { setError(e instanceof Error ? e.message : "操作失败"); }
-    finally { setBusy(false); }
+    finally { actionLock.current = false; setBusy(false); }
   }
   const selectedTasks = useMemo(() => tasks.filter(t => selected.includes(t.id)), [tasks, selected]);
   const selectedType = selectedTasks.length && selectedTasks.every(t => t.type === selectedTasks[0].type) ? selectedTasks[0].type : "";
   async function bulk(action: "pause" | "resume" | "retry" | "cancel") {
-    if (!selectedType || selectedTasks.length === 0) return;
+    if (!selectedType || selectedTasks.length === 0 || actionLock.current) return;
     if (action === "cancel" && !window.confirm(`确定取消选中的 ${selectedTasks.length} 条任务吗？`)) return;
-    setBusy(true); setNotice(""); setError("");
+    actionLock.current = true; setBusy(true); setNotice(""); setError("");
     try {
       const result = await request<{ succeeded: number; failed: number; results: { id: string; error?: string }[] }>(`/api/v1/tasks/bulk/${selectedType}/${action}`, token, { method: "POST", body: JSON.stringify({ ids: selectedTasks.map(t => t.id) }) });
       setNotice(`批量操作完成：成功 ${result.succeeded} 条，失败 ${result.failed} 条`);
       await load(token, true);
     } catch (e) { setError(e instanceof Error ? e.message : "批量操作失败"); }
-    finally { setBusy(false); }
+    finally { actionLock.current = false; setBusy(false); }
   }
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(v => v !== id) : [...current, id]);
 
-  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>任务中心登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
+  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={login}><div className="brand-mark">TG</div><h1>TG Manager</h1><p>管理控制台登录</p><label>用户名<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" required /></label><label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>{error && <div className="alert error">{error}</div>}<button className="primary full" disabled={busy}>{busy ? "登录中…" : "登录"}</button><small>API 地址：{API_BASE || "当前域名"}（可通过 NEXT_PUBLIC_API_BASE_URL 配置）</small></form></main>;
+  if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
-  return <main className="shell">
-    <header className="topbar"><div><div className="eyebrow">TG MANAGER</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot">实时刷新 · 10 秒</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>刷新</button><button className="ghost" onClick={logout}>退出</button></div></header>
+  return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} />} adminContent={<SettingsPage token={token} user={user} initialTab="cards" />}><main className="shell">
+    <header className="topbar"><div><div className="eyebrow">TG MANAGER</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot" role="status" aria-live="polite">{busy?"正在同步任务":"自动刷新 · 10 秒"}</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button></div></header>
     {error && <div className="alert error">{error}</div>}{notice && <div className="alert success">{notice}</div>}
     <section className="summary-grid">
       <article className="summary-card"><span>任务总数</span><strong>{summary?.total ?? "—"}</strong></article>
@@ -126,13 +178,13 @@ export default function Home() {
         <button className="secondary" onClick={() => void load(token)} disabled={busy}>筛选</button>
       </div>
       {selected.length > 0 && <div className="bulkbar"><span>已选 {selected.length} 条{!selectedType ? "（批量操作要求同一任务类型）" : ""}</span><button disabled={!selectedType || busy} onClick={() => void bulk("pause")}>暂停</button><button disabled={!selectedType || busy} onClick={() => void bulk("resume")}>恢复</button><button disabled={!selectedType || busy} onClick={() => void bulk("retry")}>重试</button><button className="danger-text" disabled={!selectedType || busy} onClick={() => void bulk("cancel")}>取消</button><button className="ghost" onClick={() => setSelected([])}>清除选择</button></div>}
-      <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="选择当前页全部任务" checked={tasks.length > 0 && selected.length === tasks.length} onChange={e => setSelected(e.target.checked ? tasks.map(t => t.id) : [])} /></th><th>任务</th><th>账号</th><th>状态</th><th>尝试</th><th>计划时间</th><th>最近错误</th><th>操作</th></tr></thead><tbody>
-        {tasks.map(task => <tr key={task.type + task.id}><td><input type="checkbox" aria-label={`选择任务 ${task.id}`} checked={selected.includes(task.id)} onChange={() => toggle(task.id)} /></td><td><strong>{task.title || typeNames[task.type]}</strong><small>{typeNames[task.type] || task.type} · {task.id}</small></td><td>{task.account_name || "—"}<small>{task.account_id}</small></td><td><span className={`status status-${task.status}`}>{statusNames[task.status] || task.status}</span>{task.lease_until && <small>租约至 {new Date(task.lease_until).toLocaleString()}</small>}</td><td>{task.attempts}</td><td>{task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "—"}</td><td className="error-cell">{task.last_error || "—"}</td><td><div className="row-actions">{task.can_pause && <button onClick={() => void act(task,"pause")} disabled={busy}>暂停</button>}{task.can_resume && <button onClick={() => void act(task,"resume")} disabled={busy}>恢复</button>}{task.can_retry && <button onClick={() => void act(task,"retry")} disabled={busy}>重试</button>}{task.can_cancel && <button className="danger-text" onClick={() => void act(task,"cancel")} disabled={busy}>取消</button>}</div></td></tr>)}
-        {tasks.length === 0 && <tr><td colSpan={8} className="empty">{busy ? "正在加载…" : "暂无符合条件的任务"}</td></tr>}
+      <div className="table-wrap task-table-wrap"><table className="task-table"><thead><tr><th><input type="checkbox" aria-label="选择当前页全部任务" checked={tasks.length > 0 && selected.length === tasks.length} onChange={e => setSelected(e.target.checked ? tasks.map(t => t.id) : [])} /></th><th>任务</th><th>账号</th><th>状态</th><th>尝试</th><th>计划时间</th><th>最近错误</th><th>操作</th></tr></thead><tbody>
+        {tasks.map(task => <tr key={task.type + task.id}><td data-label="选择"><input type="checkbox" aria-label={`选择任务 ${task.id}`} checked={selected.includes(task.id)} onChange={() => toggle(task.id)} /></td><td data-label="任务"><strong>{task.title || typeNames[task.type]}</strong><small>{typeNames[task.type] || task.type} · {task.id}</small></td><td data-label="账号">{task.account_name || "—"}<small>{task.account_id}</small></td><td data-label="状态"><span className={`status status-${task.status}`}>{statusNames[task.status] || task.status}</span>{task.lease_until && <small>租约至 {new Date(task.lease_until).toLocaleString()}</small>}</td><td data-label="尝试">{task.attempts}</td><td data-label="计划时间">{task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "—"}</td><td data-label="最近错误" className="error-cell">{task.last_error || "—"}</td><td data-label="操作"><div className="row-actions">{task.can_pause && <button onClick={() => void act(task,"pause")} disabled={busy}>暂停</button>}{task.can_resume && <button onClick={() => void act(task,"resume")} disabled={busy}>恢复</button>}{task.can_retry && <button onClick={() => void act(task,"retry")} disabled={busy}>重试</button>}{task.can_cancel && <button className="danger-text" onClick={() => void act(task,"cancel")} disabled={busy}>取消</button>}</div></td></tr>)}
+        {tasks.length === 0 && <tr><td colSpan={8} className="empty">{busy ? "正在加载…" : error ? "加载失败，请根据上方提示重试" : "暂无符合条件的任务"}</td></tr>}
       </tbody></table></div>
       <footer className="pagination"><span>共 {total} 条</span><div><button className="secondary" disabled={offset === 0 || busy} onClick={() => setOffset(Math.max(0, offset-limit))}>上一页</button><span>第 {Math.floor(offset/limit)+1} / {Math.max(1,Math.ceil(total/limit))} 页</span><button className="secondary" disabled={offset+limit >= total || busy} onClick={() => setOffset(offset+limit)}>下一页</button></div></footer>
     </section>
     <section className="panel counts-panel"><div className="panel-heading"><div><h2>任务状态分布</h2><p>按真实队列类型和状态汇总</p></div></div><div className="count-list">{(summary?.counts || []).map(item => <div className="count-item" key={item.type+item.status}><span>{typeNames[item.type] || item.type}</span><span className="muted">{statusNames[item.status] || item.status}</span><strong>{item.count}</strong></div>)}{!summary?.counts?.length && <p className="empty">暂无任务统计</p>}</div></section>
     <div className="footer-note">任务控制遵循各队列当前状态和租户授权；Telegram FloodWait 等平台冷却不会因任务重试而绕过。</div>
-  </main>;
+  </main></AppShell>;
 }

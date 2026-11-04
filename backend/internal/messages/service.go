@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
-	"strconv"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -106,6 +106,8 @@ type Incoming struct {
 	IsOutgoing bool
 	Text string
 	MediaType string
+	MediaMetadataJSON []byte
+	GroupedID int64
 	MessageDate time.Time
 }
 
@@ -121,11 +123,13 @@ type Message struct {
 	ReplyToMessageID int64 `json:"reply_to_message_id,omitempty"`
 	Text string `json:"text"`
 	MediaType string `json:"media_type"`
+	MediaMetadata json.RawMessage `json:"media_metadata"`
+	GroupedID int64 `json:"grouped_id,omitempty"`
 	MessageDate time.Time `json:"message_date"`
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 }
 
-type ListOptions struct { Limit int; Offset int; IncludeProcessed bool }
+type ListOptions struct { Limit int; Offset int; IncludeProcessed bool; AccountID string; ChatID int64; ChatType string; MediaType string; Query string }
 
 type CollectionSettings struct {
 	Enabled bool `json:"enabled"`
@@ -193,17 +197,27 @@ func ShouldCollect(chatType string, isOutgoing, replyToOwn bool) bool {
 func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (bool,error) {
 	if tenantID=="" || !validUUID(in.AccountID) || in.ChatID==0 || in.MessageID<=0 { return false,errors.New("invalid message identity") }
 	if !ShouldCatalogChat(in.ChatType) { return false,nil }
-	if len(in.Text)>16384 || len(in.MediaType)>40 { return false,errors.New("message payload too large") }
+	if len(in.Text)>16384 || len(in.MediaType)>40 || len(in.MediaMetadataJSON)>64*1024 { return false,errors.New("message payload too large") }
 	if in.MessageDate.IsZero() { in.MessageDate=time.Now().UTC() }
 	collected:=false
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		var exists bool
 		if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,in.AccountID).Scan(&exists);err!=nil{return err}
 		if !exists{return errors.New("account not found")}
+		// A Redis delivery may be replayed after a worker crash or an ACK failure.
+		// Claim the Telegram update inside this transaction so every downstream
+		// side effect (catalogue counters, link sources, keyword matches, messages)
+		// is applied at most once.
+		dedup,err:=tx.ExecContext(ctx,`INSERT INTO telegram_incoming_update_dedup(tenant_id,telegram_account_id,chat_id,message_id)
+			VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,tenantID,in.AccountID,in.ChatID,in.MessageID)
+		if err!=nil{return err}
+		claimed,err:=dedup.RowsAffected()
+		if err!=nil{return err}
+		if claimed==0{return nil}
 		// Keep the chat catalogue independent from message-content collection:
 		// observing a group must not require a reply to our own message or pass
 		// the tenant's text/media filters. Only metadata is stored here.
-		_,err:=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
+		_,err=tx.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_title,chat_type,username,member_count,is_verified,last_seen_at,updated_at)
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
 			ON CONFLICT(tenant_id,telegram_account_id,chat_id) DO UPDATE SET
 			chat_title=COALESCE(NULLIF(EXCLUDED.chat_title,''),tenant_message_chats.chat_title),
@@ -255,15 +269,23 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		if !ShouldCollect(in.ChatType,in.IsOutgoing,in.ReplyToOwnMessage) { return nil }
 		settings,err:=loadSettings(ctx,tx,tenantID);if err!=nil{return err}
 		if !settings.Allows(in){return nil}
-		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,$12) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
-			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,in.MessageDate)
+		result,insertErr:=tx.ExecContext(ctx,"INSERT INTO unified_messages(tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,media_metadata,grouped_id,message_date) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9,FALSE,$10,$11,COALESCE(NULLIF($12,'')::jsonb,'{}'::jsonb),NULLIF($13,0),$14) ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING",
+			tenantID,in.AccountID,in.ChatID,in.MessageID,in.ChatType,strings.TrimSpace(in.ChatTitle),in.SenderID,in.ReplyToMessageID,in.ReplyToOwnMessage,strings.TrimSpace(in.Text),in.MediaType,string(in.MediaMetadataJSON),in.GroupedID,in.MessageDate)
 		if insertErr!=nil { return insertErr }
 		inserted,_:=result.RowsAffected()
 		collected=inserted>0
+		if collected {
+			payload,marshalErr:=json.Marshal(MessageCreatedEvent{
+				Type:"message.created",AccountID:in.AccountID,ChatID:in.ChatID,
+				MessageID:in.MessageID,CreatedAt:time.Now().UTC(),
+			})
+			if marshalErr!=nil{return marshalErr}
+			if _,outboxErr:=tx.ExecContext(ctx,`INSERT INTO message_event_outbox(tenant_id,event_type,payload)
+				VALUES($1,'message.created',$2::jsonb)`,tenantID,string(payload));outboxErr!=nil{return outboxErr}
+		}
 		return nil
 	})
 	if err!=nil{return false,err}
-	if collected { s.publishCreated(ctx,tenantID,in) }
 	return collected,nil
 }
 
@@ -274,13 +296,31 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 		if link.Type=="public" {
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
 				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
-				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW()
+				ON CONFLICT(link_type,public_url) DO UPDATE SET
+				 last_seen_at=NOW(),
+				 status=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.status ELSE 'pending' END,
+				 last_checked_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_checked_at ELSE NULL END,
+				 last_check_error=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_check_error ELSE NULL END,
+				 check_attempts=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_attempts ELSE 0 END,
+				 next_check_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.next_check_at ELSE NULL END,
+				 check_lease_until=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_until ELSE NULL END,
+				 check_lease_tenant_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_tenant_id ELSE NULL END,
+				 check_lease_account_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_account_id ELSE NULL END
 				RETURNING id`,strings.TrimPrefix(strings.TrimPrefix(link.PublicURL,"https://t.me/"),"@"),link.PublicURL).Scan(&id);err!=nil{return err}
 		}else if link.Type=="invite" {
 			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status)
 				VALUES('invite',$1,$2,'pending')
-				ON CONFLICT(invite_hash) DO UPDATE SET last_seen_at=NOW()
+				ON CONFLICT(invite_hash) DO UPDATE SET
+				 last_seen_at=NOW(),
+				 status=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.status ELSE 'pending' END,
+				 last_checked_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_checked_at ELSE NULL END,
+				 last_check_error=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_check_error ELSE NULL END,
+				 check_attempts=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_attempts ELSE 0 END,
+				 next_check_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.next_check_at ELSE NULL END,
+				 check_lease_until=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_until ELSE NULL END,
+				 check_lease_tenant_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_tenant_id ELSE NULL END,
+				 check_lease_account_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_account_id ELSE NULL END
 				RETURNING id`,link.InviteHash,link.InviteCiphertext).Scan(&id);err!=nil{return err}
 		}else{continue}
 		_,err:=tx.ExecContext(ctx,`INSERT INTO public_group_link_sources(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id)
@@ -295,16 +335,74 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 
 func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]Message,int,error){
 	if opts.Limit<1||opts.Limit>100{opts.Limit=50};if opts.Offset<0{opts.Offset=0}
+	opts.AccountID=strings.TrimSpace(opts.AccountID)
+	opts.ChatType=strings.ToLower(strings.TrimSpace(opts.ChatType))
+	opts.MediaType=strings.ToLower(strings.TrimSpace(opts.MediaType))
+	opts.Query=strings.TrimSpace(opts.Query)
+	if opts.AccountID!=""&&!validUUID(opts.AccountID){return nil,0,errors.New("invalid account filter")}
+	if opts.ChatType!=""&&opts.ChatType!="private"&&opts.ChatType!="group"&&opts.ChatType!="channel"{return nil,0,errors.New("invalid chat type filter")}
+	if len(opts.MediaType)>32||len(opts.Query)>120{return nil,0,errors.New("invalid message filter")}
 	out:=[]Message{};total:=0
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		filter:="tenant_id=$1";if !opts.IncludeProcessed{filter+=" AND processed_at IS NULL"}
-		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM unified_messages WHERE "+filter,tenantID).Scan(&total);err!=nil{return err}
-		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+strings.ReplaceAll(filter,"tenant_id","m.tenant_id")+" ORDER BY m.message_date DESC,m.id DESC LIMIT $2 OFFSET $3"
-		rows,err:=tx.QueryContext(ctx,query,tenantID,opts.Limit,opts.Offset);if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var m Message;if err:=rows.Scan(&m.ID,&m.AccountID,&m.AccountName,&m.ChatID,&m.MessageID,&m.ChatType,&m.ChatTitle,&m.SenderID,&m.ReplyToMessageID,&m.Text,&m.MediaType,&m.MessageDate,&m.ProcessedAt);err!=nil{return err};out=append(out,m)}
+		filter:="m.tenant_id=$1"
+		args:=[]any{tenantID}
+		if !opts.IncludeProcessed{filter+=" AND m.processed_at IS NULL"}
+		if opts.AccountID!=""{args=append(args,opts.AccountID);filter+=fmt.Sprintf(" AND m.telegram_account_id=$%d",len(args))}
+		if opts.ChatID!=0{args=append(args,opts.ChatID);filter+=fmt.Sprintf(" AND m.chat_id=$%d",len(args))}
+		if opts.ChatType!=""{args=append(args,opts.ChatType);filter+=fmt.Sprintf(" AND m.chat_type=$%d",len(args))}
+		if opts.MediaType!=""{args=append(args,opts.MediaType);filter+=fmt.Sprintf(" AND m.media_type=$%d",len(args))}
+		if opts.Query!=""{args=append(args,"%"+opts.Query+"%");filter+=fmt.Sprintf(" AND (m.message_text ILIKE $%d OR m.chat_title ILIKE $%d)",len(args),len(args))}
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM unified_messages m WHERE "+filter,args...).Scan(&total);err!=nil{return err}
+		query:="SELECT m.id::text,m.telegram_account_id::text,COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.media_metadata,COALESCE(m.grouped_id,0),m.message_date,m.processed_at FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id WHERE "+filter+" ORDER BY m.message_date DESC,m.id DESC"
+		listArgs:=append(append([]any{},args...),opts.Limit,opts.Offset)
+		query+=fmt.Sprintf(" LIMIT $%d OFFSET $%d",len(listArgs)-1,len(listArgs))
+		rows,err:=tx.QueryContext(ctx,query,listArgs...);if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var m Message;if err:=rows.Scan(&m.ID,&m.AccountID,&m.AccountName,&m.ChatID,&m.MessageID,&m.ChatType,&m.ChatTitle,&m.SenderID,&m.ReplyToMessageID,&m.Text,&m.MediaType,&m.MediaMetadata,&m.GroupedID,&m.MessageDate,&m.ProcessedAt);err!=nil{return err};out=append(out,m)}
 		return rows.Err()
 	})
 	return out,total,err
+}
+
+
+// MediaIdentity is resolved only from a message row visible to the current tenant.
+type MediaIdentity struct { AccountID string; ChatID int64; MessageID int64; MediaType string }
+func (s *Service) GetMediaIdentity(ctx context.Context,tenantID,messageID string)(MediaIdentity,error){
+ if !validUUID(messageID){return MediaIdentity{},errors.New("message not found")}
+ var out MediaIdentity
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  return tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,message_id,media_type FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&out.AccountID,&out.ChatID,&out.MessageID,&out.MediaType)
+ })
+ if errors.Is(err,sql.ErrNoRows){return MediaIdentity{},errors.New("message not found")}
+ return out,err
+}
+
+// ListMediaAlbum returns all messages sharing the source message's Telegram
+// GroupedID. Non-album messages are returned as a one-item slice.
+func (s *Service) ListMediaAlbum(ctx context.Context,tenantID,messageID string)([]Message,error) {
+	if !validUUID(messageID){return nil,errors.New("message not found")}
+	out:=[]Message{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		var accountID string
+		var chatID,groupedID int64
+		if err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,COALESCE(grouped_id,0)
+			FROM unified_messages WHERE tenant_id=$1 AND id=$2`,tenantID,messageID).Scan(&accountID,&chatID,&groupedID);err!=nil{return err}
+		filter:=`m.tenant_id=$1 AND m.telegram_account_id=$2 AND m.chat_id=$3`
+		args:=[]any{tenantID,accountID,chatID}
+		if groupedID!=0 {filter+=` AND m.grouped_id=$4`;args=append(args,groupedID)} else {filter+=` AND m.id=$4`;args=append(args,messageID)}
+		rows,err:=tx.QueryContext(ctx,`SELECT m.id::text,m.telegram_account_id::text,
+			COALESCE(NULLIF(a.display_name,''),a.phone,''),m.chat_id,m.message_id,m.chat_type,m.chat_title,m.sender_id,
+			COALESCE(m.reply_to_message_id,0),m.message_text,m.media_type,m.media_metadata,COALESCE(m.grouped_id,0),
+			m.message_date,m.processed_at
+			FROM unified_messages m JOIN telegram_accounts a ON a.tenant_id=m.tenant_id AND a.id=m.telegram_account_id
+			WHERE `+filter+` ORDER BY m.message_id ASC`,args...)
+		if err!=nil{return err}
+		defer rows.Close()
+		for rows.Next(){var item Message;if err:=rows.Scan(&item.ID,&item.AccountID,&item.AccountName,&item.ChatID,&item.MessageID,&item.ChatType,&item.ChatTitle,&item.SenderID,&item.ReplyToMessageID,&item.Text,&item.MediaType,&item.MediaMetadata,&item.GroupedID,&item.MessageDate,&item.ProcessedAt);err!=nil{return err};out=append(out,item)}
+		return rows.Err()
+	})
+	if errors.Is(err,sql.ErrNoRows){return nil,errors.New("message not found")}
+	if err!=nil{return nil,err}
+	return out,nil
 }
 
 func (s *Service) MarkProcessed(ctx context.Context,tenantID,messageID string)error{
@@ -454,25 +552,25 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 	chatType,query,err:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query);if err!=nil{return nil,0,err}
 	if err:=validateGroupLibraryFilter(filter);err!=nil{return nil,0,err}
 	sortExpr:="g.last_seen_at DESC,g.title ASC,g.id ASC"
-	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) DESC,g.last_seen_at DESC,g.id ASC"}
+	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC"}
 	items:=[]GroupLibraryItem{};total:=0
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		clauses:=[]string{"1=1"};args:=[]any{}
+		clauses:=[]string{"1=1"};args:=[]any{tenantID}
 		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
 		if chatType!=""{add(chatType,"g.chat_type=$%d")}
 		if query!=""{args=append(args,query);n:=len(args);clauses=append(clauses,fmt.Sprintf("(strpos(lower(g.title),lower($%d))>0 OR strpos(lower(g.username),lower($%d))>0)",n,n));}
 		if filter.Verified!=nil{add(*filter.Verified,"g.is_verified=$%d")}
 		if filter.MinMembers>0{add(filter.MinMembers,"g.member_count >= $%d")}
 		if filter.MaxMembers>0{add(filter.MaxMembers,"g.member_count <= $%d")}
-		if filter.MinSources>0{add(filter.MinSources,"(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id) >= $%d")}
-		if filter.MinContributors>0{add(filter.MinContributors,"(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id) >= $%d")}
+		if filter.MinSources>0{add(filter.MinSources,"(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id) >= $%d")}
+		if filter.MinContributors>0{add(filter.MinContributors,"(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id) >= $%d")}
 		where:=strings.Join(clauses," AND ")
-		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g WHERE "+where,args...).Scan(&total);err!=nil{return err}
+		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE "+where,args...).Scan(&total);err!=nil{return err}
 		args=append(args,limit,offset);limitArg:=len(args)-1;offsetArg:=len(args)
 		querySQL:=fmt.Sprintf(`SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,g.default_permissions,g.permissions_observed_at,
-			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id),
-			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
-			FROM public_groups g WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
+			(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id),g.last_seen_at
+			FROM public_groups g CROSS JOIN (SELECT $1::uuid AS tenant_id) scope WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,where,sortExpr,limitArg,offsetArg)
 		rows,err:=tx.QueryContext(ctx,querySQL,args...);if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var item GroupLibraryItem;if err:=rows.Scan(&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt);err!=nil{return err};items=append(items,item)}
 		return rows.Err()
@@ -502,9 +600,9 @@ func (s *Service) GetGroupLibraryItem(ctx context.Context, tenantID string, grou
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT g.id,g.telegram_chat_id,g.title,g.chat_type,g.username,g.member_count,g.is_verified,
 			g.default_permissions,g.permissions_observed_at,
-			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id),
-			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id),g.last_seen_at
-			FROM public_groups g WHERE g.id=$1`, groupID).Scan(
+			(SELECT COUNT(*) FROM public_group_sources src WHERE src.group_id=g.id AND src.tenant_id=$2),
+			(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=$2),g.last_seen_at
+			FROM public_groups g WHERE g.id=$1`, groupID, tenantID).Scan(
 			&item.ID,&item.ChatID,&item.Title,&item.ChatType,&item.Username,&item.MemberCount,&item.IsVerified,
 			&item.DefaultPermissions,&item.PermissionsObservedAt,&item.SourceCount,&item.ContributorCount,&item.LastSeenAt)
 		if errors.Is(err, sql.ErrNoRows) { return ErrGroupLibraryNotFound }
@@ -895,9 +993,30 @@ func (s *Service) CreateReply(ctx context.Context, tenantID, messageID, textBody
 }
 
 // ClaimPendingReplies claims due jobs under each tenant's RLS scope. Expired
-// processing leases are reclaimable after a worker restart.
+// in-flight sends are quarantined instead of retried because their Telegram
+// outcome may be ambiguous after a worker crash.
 func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]ReplyJob,error) {
 	if maxJobs<1||maxJobs>50 {maxJobs=10}
+	// A lease expiring while a send was in flight has an ambiguous Telegram
+	// outcome: Telegram may have accepted the message just before the worker died.
+	// Never automatically resend that job. Freeze it for operator verification;
+	// an explicit ResumeReply remains available after checking the destination chat.
+	uncertainRows,err:=s.db.QueryContext(ctx,`SELECT DISTINCT tenant_id::text FROM message_reply_jobs
+		WHERE status='processing' AND lease_until<=NOW()`)
+	if err!=nil{return nil,err}
+	var uncertainTenants []string
+	for uncertainRows.Next(){var id string;if err:=uncertainRows.Scan(&id);err!=nil{uncertainRows.Close();return nil,err};uncertainTenants=append(uncertainTenants,id)}
+	if err:=uncertainRows.Err();err!=nil{uncertainRows.Close();return nil,err}
+	uncertainRows.Close()
+	for _,tenantID:=range uncertainTenants {
+		if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,
+				last_error='send outcome uncertain after worker lease expired; verify Telegram chat before resuming',
+				updated_at=NOW()
+				WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()`,tenantID)
+			return err
+		});err!=nil{return nil,err}
+	}
 	// Expired/disabled tenants are swept before any active tenant can claim work.
 	inactiveRows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status<>'active' OR expires_at IS NULL OR expires_at<=NOW()`)
 	if err!=nil{return nil,err}
@@ -906,26 +1025,33 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 	if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
 	for _,tenantID:=range inactiveTenants {
 		if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+			// Preserve a live processing lease while a Telegram send is in flight.
+			// Expired processing leases are safe to pause after worker recovery.
+			_,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+				WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,tenantID)
 			return err
 		});err!=nil{return nil,err}
 	}
-	rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW()`)
-	if err!=nil{return nil,err}
-	var tenants []string
-	for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
-	if err:=rows.Err();err!=nil{rows.Close();return nil,err};rows.Close()
 	jobs:=make([]ReplyJob,0,maxJobs)
-	for _,tenantID:=range tenants {
-		if len(jobs)>=maxJobs {break}
-		err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+	// Bound scheduler probes: a concurrent Worker may hold a selected job/account
+	// lock after the tenant cursor is advanced, yielding no claim this pass.
+	// Never spin indefinitely when all eligible work is temporarily locked.
+	maxTenantProbes:=maxJobs*10
+	if maxTenantProbes<10 { maxTenantProbes=10 }
+	for probes:=0; len(jobs)<maxJobs && probes<maxTenantProbes; probes++ {
+		tenantID,err:=s.nextReplyTenant(ctx)
+		if err!=nil{return nil,err}
+		if tenantID==""{break}
+		err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 			remaining:=maxJobs-len(jobs)
 			if remaining>2 { remaining=2 }
 			rows,err:=tx.QueryContext(ctx,`WITH picked AS (
 				SELECT j.id,j.tenant_id,j.telegram_account_id
 				FROM message_reply_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
 				WHERE j.tenant_id=$1
-				AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+				AND EXISTS (SELECT 1 FROM tenants active_tenant WHERE active_tenant.id=j.tenant_id AND active_tenant.status='active' AND active_tenant.expires_at>NOW())
+				AND j.status='pending' AND j.available_at<=NOW()
+				AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
 				AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
 				AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
 				AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
@@ -933,7 +1059,7 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
 				AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
 				AND NOT EXISTS (SELECT 1 FROM message_reply_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
-				AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+				AND e.status='pending' AND e.available_at<=NOW() AND (e.created_at,e.id)<(j.created_at,j.id))
 				ORDER BY j.created_at,j.id FOR UPDATE OF j,a SKIP LOCKED LIMIT $2
 				), claimed AS (
 				UPDATE message_reply_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
@@ -942,7 +1068,7 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				), scheduled AS (
 				UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
 				FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
-				) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
+				) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
 			if err!=nil{return err}
 			defer rows.Close()
 			for rows.Next(){var job ReplyJob;if err:=rows.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.MessageType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.Attempts,&job.Status,&job.CreatedAt,&job.LeaseUntil);err!=nil{return err};jobs=append(jobs,job)}
@@ -951,6 +1077,45 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 		if err!=nil{return nil,err}
 	}
 	return jobs,nil
+}
+
+// nextReplyTenant atomically rotates the next eligible tenant. The row lock
+// prevents multiple Worker instances from repeatedly selecting the same tenant.
+func (s *Service) nextReplyTenant(ctx context.Context) (string,error) {
+	tx,err:=s.db.BeginTx(ctx,nil)
+	if err!=nil{return "",err}
+	defer tx.Rollback()
+	var tenantID string
+	err=tx.QueryRowContext(ctx,`WITH candidate AS (
+		SELECT t.id
+		FROM tenants t
+		WHERE t.status='active' AND t.expires_at>NOW()
+		AND EXISTS (
+			SELECT 1 FROM message_reply_jobs j
+			JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
+			WHERE j.tenant_id=t.id
+			AND j.status='pending' AND j.available_at<=NOW()
+			AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
+			AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
+			AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
+			AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
+			AND NOT EXISTS (SELECT 1 FROM message_reply_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
+				AND e.status='pending' AND e.available_at<=NOW() AND (e.created_at,e.id)<(j.created_at,j.id))
+		)
+		ORDER BY t.reply_jobs_last_claimed_at NULLS FIRST,t.id
+		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED
+	)
+	UPDATE tenants t SET reply_jobs_last_claimed_at=clock_timestamp()
+	FROM candidate c WHERE t.id=c.id
+	RETURNING t.id::text`).Scan(&tenantID)
+	if errors.Is(err,sql.ErrNoRows){return "",nil}
+	if err!=nil{return "",err}
+	if err:=tx.Commit();err!=nil{return "",err}
+	return tenantID,nil
 }
 
 func (s *Service) TenantCanOperate(ctx context.Context, tenantID string) bool {
@@ -986,8 +1151,38 @@ func (s *Service) PauseReply(ctx context.Context, job ReplyJob, reason string) e
 func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessageID int64) error {
 	if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,telegramMessageID,job.LeaseUntil)
-		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")};return nil
+		// Persist the Telegram result and the outbound conversation message in
+		// one transaction. If the worker crashes after Telegram accepts the send,
+		// a later retry of this DB transaction is safe and does not send again.
+		var accountID,sourceMessageID string
+		var chatID,replyToID int64
+		var textBody,messageType string
+		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,unified_message_id::text,chat_id,reply_to_message_id,message_text,message_type
+			FROM message_reply_jobs WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3
+			FOR UPDATE`,job.TenantID,job.ID,job.LeaseUntil).Scan(&accountID,&sourceMessageID,&chatID,&replyToID,&textBody,&messageType)
+		if errors.Is(err,sql.ErrNoRows){return errors.New("reply job lease not found")}
+		if err!=nil{return err}
+		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,telegramMessageID,job.LeaseUntil)
+		if err!=nil{return err}
+		n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
+		mediaType:=""
+		if messageType=="contact"{mediaType="contact"}
+		_,err=tx.ExecContext(ctx,`INSERT INTO unified_messages(
+			tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,
+			reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date
+		)
+		SELECT $1,$2,$3,$4,source.chat_type,source.chat_title,0,$5,TRUE,TRUE,$6,$7,NOW()
+		FROM unified_messages source
+		WHERE source.tenant_id=$1 AND source.id=$8
+		ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING`,
+			job.TenantID,accountID,chatID,telegramMessageID,replyToID,textBody,mediaType,sourceMessageID)
+		if err!=nil{return err}
+		payload,err:=json.Marshal(MessageCreatedEvent{Type:"message.created",AccountID:accountID,ChatID:chatID,MessageID:telegramMessageID,CreatedAt:time.Now().UTC()})
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,`INSERT INTO message_event_outbox(tenant_id,event_type,payload)
+			VALUES($1,'message.created',$2::jsonb)`,job.TenantID,string(payload))
+		return err
 	})
 }
 
@@ -1016,6 +1211,25 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 	message:=cause.Error();if len(message)>500{message=message[:500]}
 	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		var tenantActive bool
+		if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
+		if !tenantActive {
+			res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',last_error='tenant inactive; manual review required',lease_until=NULL,updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3`,job.TenantID,job.ID,job.LeaseUntil)
+			if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
+			if floodWait>0 {
+				if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err}
+			}
+			return nil
+		}
+		if floodWait<=0 && isAmbiguousTelegramSendError(cause) {
+			uncertainMessage:="send outcome uncertain; verify Telegram chat before resuming: "+message
+			if len(uncertainMessage)>500 { uncertainMessage=uncertainMessage[:500] }
+			res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='paused',last_error=$3,lease_until=NULL,updated_at=NOW()
+				WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,uncertainMessage,job.LeaseUntil)
+			if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
+			return nil
+		}
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,delay,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("reply job lease not found")}
 		if floodWait>0 { if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,delay,job.TenantID,job.AccountID);err!=nil{return err} }

@@ -9,6 +9,8 @@ import (
     "regexp"
     "strings"
     "time"
+
+    "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 )
 
 var ErrInvalidKeywordRule = errors.New("invalid keyword rule")
@@ -119,7 +121,7 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
     rule.ActionType=strings.ToLower(strings.TrimSpace(rule.ActionType)); if rule.ActionType=="" { rule.ActionType="text" }
     rule.ContactPhone=strings.TrimSpace(rule.ContactPhone); rule.ContactFirstName=strings.TrimSpace(rule.ContactFirstName); rule.ContactLastName=strings.TrimSpace(rule.ContactLastName)
     rule.MediaAssetID=strings.TrimSpace(rule.MediaAssetID); rule.MediaType=strings.ToLower(strings.TrimSpace(rule.MediaType)); rule.MediaCaption=strings.TrimSpace(rule.MediaCaption)
-    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" { return rule,fmt.Errorf("%w: action_type must be text, contact, media, or media_album",ErrInvalidKeywordRule) }
+    if rule.ActionType!="text" && rule.ActionType!="contact" && rule.ActionType!="media" && rule.ActionType!="media_album" && rule.ActionType!="voice_call" { return rule,fmt.Errorf("%w: action_type must be text, contact, media, media_album, or voice_call",ErrInvalidKeywordRule) }
     if rule.ActionType=="contact" {
         if rule.ContactPhone=="" || rule.ContactFirstName=="" || len(rule.ContactPhone)>64 || len(rule.ContactFirstName)>128 || len(rule.ContactLastName)>128 { return rule,fmt.Errorf("%w: contact action requires phone and first name",ErrInvalidKeywordRule) }
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: contact action cannot include text replies",ErrInvalidKeywordRule) }
@@ -137,6 +139,14 @@ func normalizeKeywordRule(rule KeywordRule) (KeywordRule, error) {
         if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 { return rule,fmt.Errorf("%w: media action cannot include text replies",ErrInvalidKeywordRule) }
         if rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" { return rule,fmt.Errorf("%w: media action cannot include contact fields",ErrInvalidKeywordRule) }
     } else if rule.MediaAssetID!="" || rule.MediaType!="" || rule.MediaCaption!="" { return rule,fmt.Errorf("%w: media fields require media action",ErrInvalidKeywordRule) }
+    if rule.ActionType=="voice_call" {
+        if len(rule.ChatTypes)!=1 || rule.ChatTypes[0]!="private" {
+            return rule,fmt.Errorf("%w: voice_call actions are only allowed for private chats",ErrInvalidKeywordRule)
+        }
+        if rule.ReplyText!="" || len(rule.ReplyTextByChatType)>0 || rule.ContactPhone!="" || rule.ContactFirstName!="" || rule.ContactLastName!="" || rule.MediaAssetID!="" || rule.MediaType!="" || rule.MediaCaption!="" || len(rule.MediaAlbumItems)>0 {
+            return rule,fmt.Errorf("%w: voice_call action cannot include message payloads",ErrInvalidKeywordRule)
+        }
+    }
     if rule.ActionType=="contact" || rule.ActionType=="media" || rule.ActionType=="media_album" {
         for _,chatType:=range rule.ChatTypes { if chatType=="channel" { return rule,fmt.Errorf("%w: contact actions support private and group chats only",ErrInvalidKeywordRule) } }
     }
@@ -172,7 +182,12 @@ func keywordRuleMatches(rule KeywordRule, in Incoming) ([]string,bool) {
     if !rule.CaseSensitive {text=strings.ToLower(text)}
     if textPresent {for _,term:=range excluded {needle:=term;if !rule.CaseSensitive {needle=strings.ToLower(needle)};if strings.Contains(text,needle){return nil,false}}}
     matched:=[]string{}
-    if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {if !textPresent && len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true};return nil,false}
+    if len(rule.Keywords)==0 && len(rule.KeywordGroups)==0 {
+		// A media-only rule matches the selected media even when Telegram
+		// includes a caption in the same update.
+		if len(rule.MediaTypes)>0 {return []string{"media:"+in.MediaType},true}
+		return nil,false
+	}
     if !textPresent {return nil,false}
     if len(rule.KeywordGroups)>0 {
         matchedGroups:=make([][]string,0,len(rule.KeywordGroups))
@@ -211,6 +226,10 @@ func (s *Service) CreateKeywordRule(ctx context.Context, tenantID string, rule K
     rule,err:=normalizeKeywordRule(rule);if err!=nil{return rule,err}
     keywords,_:=json.Marshal(rule.Keywords);excluded,_:=json.Marshal(rule.ExcludeTerms);types,_:=json.Marshal(rule.ChatTypes);accounts,_:=json.Marshal(rule.AccountIDs);chats,_:=json.Marshal(rule.ChatIDs);media,_:=json.Marshal(rule.MediaTypes);chatTitles,_:=json.Marshal(rule.ChatTitles);chatUsernames,_:=json.Marshal(rule.ChatUsernames);senderIDs,_:=json.Marshal(rule.SenderIDs);senderUsernames,_:=json.Marshal(rule.SenderUsernames);senderNames,_:=json.Marshal(rule.SenderNames);keywordGroups,_:=json.Marshal(rule.KeywordGroups);replyTextByChatType,_:=json.Marshal(rule.ReplyTextByChatType)
     err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        // Serialize rule-count changes per tenant so concurrent requests cannot
+        // exceed the 100 enabled-rule limit.
+        var lockedTenant string
+        if err:=tx.QueryRowContext(ctx,`SELECT id::text FROM tenants WHERE id=$1 FOR UPDATE`,tenantID).Scan(&lockedTenant);err!=nil{return err}
         var count int
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE",tenantID).Scan(&count);err!=nil{return err}
         if rule.Enabled && count>=100{return errors.New("active keyword rule limit reached (100)")}
@@ -229,6 +248,10 @@ func (s *Service) UpdateKeywordRule(ctx context.Context,tenantID,id string,rule 
     rule,err:=normalizeKeywordRule(rule);if err!=nil{return rule,err}
     keywords,_:=json.Marshal(rule.Keywords);excluded,_:=json.Marshal(rule.ExcludeTerms);types,_:=json.Marshal(rule.ChatTypes);accounts,_:=json.Marshal(rule.AccountIDs);chats,_:=json.Marshal(rule.ChatIDs);media,_:=json.Marshal(rule.MediaTypes);chatTitles,_:=json.Marshal(rule.ChatTitles);chatUsernames,_:=json.Marshal(rule.ChatUsernames);senderIDs,_:=json.Marshal(rule.SenderIDs);senderUsernames,_:=json.Marshal(rule.SenderUsernames);senderNames,_:=json.Marshal(rule.SenderNames);keywordGroups,_:=json.Marshal(rule.KeywordGroups);replyTextByChatType,_:=json.Marshal(rule.ReplyTextByChatType)
     err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        // Use the same tenant row lock as create to serialize enable/disable
+        // transitions against the active-rule cap.
+        var lockedTenant string
+        if err:=tx.QueryRowContext(ctx,`SELECT id::text FROM tenants WHERE id=$1 FOR UPDATE`,tenantID).Scan(&lockedTenant);err!=nil{return err}
         if rule.Enabled {var count int;if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE AND id<>$2",tenantID,id).Scan(&count);err!=nil{return err};if count>=100{return errors.New("active keyword rule limit reached (100)")}}
         for _,accountID:=range rule.AccountIDs {var exists bool;if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,accountID).Scan(&exists);err!=nil{return err};if !exists{return errors.New("keyword filter account does not belong to tenant")}}
         if rule.ActionType=="media" { var exists bool; if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM tenant_media_assets WHERE tenant_id=$1 AND id=$2)",tenantID,rule.MediaAssetID).Scan(&exists);err!=nil{return err};if !exists{return ErrMediaAssetNotFound} }
@@ -282,7 +305,7 @@ func (s *Service) ListKeywordMatches(ctx context.Context,tenantID,ruleID string,
 func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID string,in Incoming)error {
     if in.IsOutgoing || (strings.TrimSpace(in.Text)=="" && strings.TrimSpace(in.MediaType)=="") {return nil}
     rows,err:=tx.QueryContext(ctx,`SELECT id::text,name,match_mode,keywords,exclude_terms,chat_types,account_ids,chat_ids,media_types,chat_titles,chat_usernames,sender_ids,sender_usernames,sender_names,keyword_groups,group_operator,reply_text,reply_text_by_chat_type,action_type,contact_phone,contact_first_name,contact_last_name,COALESCE(media_asset_id::text,''),media_type,media_caption,media_album_items,case_sensitive,enabled
-        FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE ORDER BY created_at,id LIMIT 100`,tenantID);if err!=nil{return err}
+        FROM tenant_keyword_rules WHERE tenant_id=$1 AND enabled=TRUE ORDER BY created_at,id`,tenantID);if err!=nil{return err}
     rules:=[]KeywordRule{}
     for rows.Next(){var r KeywordRule;var keywords,excluded,types,accounts,chats,media,chatTitles,chatUsernames,senderIDs,senderUsernames,senderNames,keywordGroups,replyTextByChatType,albumItems []byte;if err:=rows.Scan(&r.ID,&r.Name,&r.MatchMode,&keywords,&excluded,&types,&accounts,&chats,&media,&chatTitles,&chatUsernames,&senderIDs,&senderUsernames,&senderNames,&keywordGroups,&r.GroupOperator,&r.ReplyText,&replyTextByChatType,&r.ActionType,&r.ContactPhone,&r.ContactFirstName,&r.ContactLastName,&r.MediaAssetID,&r.MediaType,&r.MediaCaption,&albumItems,&r.CaseSensitive,&r.Enabled);err!=nil{rows.Close();return err};if err:=json.Unmarshal(keywords,&r.Keywords);err!=nil{rows.Close();return err};if err:=json.Unmarshal(excluded,&r.ExcludeTerms);err!=nil{rows.Close();return err};if err:=json.Unmarshal(types,&r.ChatTypes);err!=nil{rows.Close();return err};if err:=json.Unmarshal(accounts,&r.AccountIDs);err!=nil{rows.Close();return err};if err:=json.Unmarshal(chats,&r.ChatIDs);err!=nil{rows.Close();return err};if err:=json.Unmarshal(media,&r.MediaTypes);err!=nil{rows.Close();return err};if err:=json.Unmarshal(chatTitles,&r.ChatTitles);err!=nil{rows.Close();return err};if err:=json.Unmarshal(chatUsernames,&r.ChatUsernames);err!=nil{rows.Close();return err};if err:=json.Unmarshal(senderIDs,&r.SenderIDs);err!=nil{rows.Close();return err};if err:=json.Unmarshal(senderUsernames,&r.SenderUsernames);err!=nil{rows.Close();return err};if err:=json.Unmarshal(senderNames,&r.SenderNames);err!=nil{rows.Close();return err};if err:=json.Unmarshal(keywordGroups,&r.KeywordGroups);err!=nil{rows.Close();return err};if err:=json.Unmarshal(replyTextByChatType,&r.ReplyTextByChatType);err!=nil{rows.Close();return err};if err:=json.Unmarshal(albumItems,&r.MediaAlbumItems);err!=nil{rows.Close();return err};rules=append(rules,r)}
     if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
@@ -293,7 +316,11 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
         if errors.Is(err,sql.ErrNoRows) {continue}
         if err!=nil{return err}
         actionText:=keywordReplyTextForChat(rule,in.ChatType)
-        if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
+        if rule.ActionType=="voice_call" && in.ChatType=="private" && in.SenderID>0 {
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,target_user_id)
+                VALUES($1,$2,$3,$4,$5,'','voice_call',$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,in.SenderID)
+            if err!=nil{return err}
+        } else if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
             _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,contact_phone,contact_first_name,contact_last_name)
                 VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName)
             if err!=nil{return err}
@@ -328,12 +355,32 @@ type KeywordActionJob struct {
     MediaType string
     MediaCaption string
     MediaAlbumItems []KeywordMediaAlbumItem
+    TargetUserID int64
     Attempts int
     LeaseUntil time.Time
 }
 
 func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]KeywordActionJob,error) {
     if limit<1||limit>50 {limit=20}
+    // A crashed worker may have lost the RPC response after Telegram accepted
+    // the action. Quarantine expired in-flight sends instead of blindly replaying
+    // them; an operator can verify the chat and explicitly resume the action.
+    uncertainRows,err:=s.db.QueryContext(ctx,`SELECT DISTINCT tenant_id::text FROM keyword_action_jobs
+        WHERE status='processing' AND lease_until<=NOW()`)
+    if err!=nil{return nil,err}
+    var uncertainTenants []string
+    for uncertainRows.Next(){var id string;if err:=uncertainRows.Scan(&id);err!=nil{uncertainRows.Close();return nil,err};uncertainTenants=append(uncertainTenants,id)}
+    if err:=uncertainRows.Err();err!=nil{uncertainRows.Close();return nil,err}
+    uncertainRows.Close()
+    for _,tenantID:=range uncertainTenants {
+        if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,
+                last_error='send outcome uncertain after worker lease expired; verify Telegram chat before resuming',
+                updated_at=NOW()
+                WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()`,tenantID)
+            return err
+        });err!=nil{return nil,err}
+    }
     inactiveRows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status<>'active' OR expires_at IS NULL OR expires_at<=NOW()`)
     if err!=nil{return nil,err}
     inactiveTenants:=[]string{}
@@ -341,11 +388,14 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
     if err:=inactiveRows.Err();err!=nil{inactiveRows.Close();return nil,err};inactiveRows.Close()
     for _,tenantID:=range inactiveTenants {
         if err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE tenant_id=$1 AND status IN ('pending','processing')`,tenantID)
+            // A processing lease that is still live may represent an in-flight
+            // Telegram RPC. Pause pending jobs and only reclaim expired leases.
+            _,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW()
+                WHERE tenant_id=$1 AND (status='pending' OR (status='processing' AND lease_until<=NOW()))`,tenantID)
             return err
         });err!=nil{return nil,err}
     }
-    rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY id`)
+    rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants WHERE status='active' AND expires_at>NOW() ORDER BY keyword_actions_last_claimed_at NULLS FIRST,id`)
     if err!=nil{return nil,err}
     var tenants []string
     for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return nil,err};tenants=append(tenants,id)}
@@ -359,7 +409,9 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 SELECT j.id,j.tenant_id,j.telegram_account_id
                 FROM keyword_action_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
                 WHERE j.tenant_id=$1
-                AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
+                AND EXISTS (SELECT 1 FROM tenants active_tenant WHERE active_tenant.id=j.tenant_id AND active_tenant.status='active' AND active_tenant.expires_at>NOW())
+                AND j.status='pending' AND j.available_at<=NOW()
+                AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
                 AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
                 AND COALESCE(a.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
                 AND NOT EXISTS (SELECT 1 FROM message_reply_jobs x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
@@ -367,19 +419,26 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
                 AND NOT EXISTS (SELECT 1 FROM tenant_join_task_accounts x WHERE x.tenant_id=j.tenant_id AND x.telegram_account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                 AND NOT EXISTS (SELECT 1 FROM account_profile_update_jobs x WHERE x.tenant_id=j.tenant_id AND x.account_id=j.telegram_account_id AND x.status='processing' AND x.lease_until>NOW())
                 AND NOT EXISTS (SELECT 1 FROM keyword_action_jobs e WHERE e.tenant_id=j.tenant_id AND e.telegram_account_id=j.telegram_account_id
-                AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
+                AND e.status='pending' AND e.available_at<=NOW() AND (e.created_at,e.id)<(j.created_at,j.id))
                 ORDER BY j.created_at,j.id FOR UPDATE OF j,a SKIP LOCKED LIMIT $2
             ), claimed AS (
                 UPDATE keyword_action_jobs j SET status='processing',attempts=j.attempts+1,lease_until=NOW()+INTERVAL '3 minutes',updated_at=NOW()
                 FROM picked p WHERE j.id=p.id AND j.tenant_id=p.tenant_id
-                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.attempts,j.lease_until
+                RETURNING j.id::text,j.tenant_id::text,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,COALESCE(j.target_user_id,0),j.attempts,j.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts a SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE a.tenant_id=c.tenant_id::uuid AND a.id=c.telegram_account_id::uuid RETURNING a.id
-            ) SELECT c.* FROM claimed c JOIN scheduled s ON TRUE`,tenantID,remaining)
-            if err!=nil{return err};defer picked.Close()
-            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.Attempts,&job.LeaseUntil);err!=nil{return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{return err};jobs=append(jobs,job)}
-            return picked.Err()
+            ) SELECT c.* FROM claimed c JOIN scheduled s ON s.id=c.telegram_account_id::uuid`,tenantID,remaining)
+            if err!=nil{return err}
+            beforeClaimed:=len(jobs)
+            for picked.Next(){var job KeywordActionJob;var albumItems []byte;if err:=picked.Scan(&job.ID,&job.TenantID,&job.AccountID,&job.ChatID,&job.ReplyToMessageID,&job.Text,&job.ActionType,&job.ContactPhone,&job.ContactFirstName,&job.ContactLastName,&job.MediaAssetID,&job.MediaType,&job.MediaCaption,&albumItems,&job.TargetUserID,&job.Attempts,&job.LeaseUntil);err!=nil{picked.Close();return err};if err:=json.Unmarshal(albumItems,&job.MediaAlbumItems);err!=nil{picked.Close();return err};jobs=append(jobs,job)}
+            rowsErr:=picked.Err()
+            closeErr:=picked.Close()
+            if rowsErr!=nil{return rowsErr};if closeErr!=nil{return closeErr}
+            if len(jobs)>beforeClaimed {
+                if _,err:=tx.ExecContext(ctx,`UPDATE tenants SET keyword_actions_last_claimed_at=clock_timestamp() WHERE id=$1`,tenantID);err!=nil{return err}
+            }
+            return nil
         });if err!=nil{return nil,err}
     }
     return jobs,nil
@@ -408,9 +467,63 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             if messageIDs[0]!=telegramMessageID { return errors.New("primary Telegram message id does not match result list") }
             encodedIDs,err:=json.Marshal(messageIDs);if err!=nil{return err}
             result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='sent',telegram_message_id=$3,telegram_message_ids=$4::jsonb,lease_until=NULL,last_error='',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$5`,job.TenantID,job.ID,telegramMessageID,string(encodedIDs),job.LeaseUntil)
-            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            // Keep the conversation timeline consistent with Telegram: write
+            // every sent message (including each album item) and its realtime
+            // event in the same transaction as the action result.
+            for i,messageID:=range messageIDs {
+                mediaType:=""
+                messageText:=job.Text
+                switch job.ActionType {
+                case "contact":
+                    mediaType="contact"
+                    messageText=""
+                case "media":
+                    mediaType=job.MediaType
+                    messageText=job.MediaCaption
+                case "media_album":
+                    if i>=len(job.MediaAlbumItems){return errors.New("media album result count does not match request")}
+                    mediaType=job.MediaAlbumItems[i].MediaType
+                    messageText=job.MediaAlbumItems[i].Caption
+                }
+                _,err=tx.ExecContext(ctx,`INSERT INTO unified_messages(
+                    tenant_id,telegram_account_id,chat_id,message_id,chat_type,chat_title,sender_id,
+                    reply_to_message_id,reply_to_own_message,is_outgoing,message_text,media_type,message_date
+                )
+                SELECT $1,$2,$3,$4,
+                    COALESCE((SELECT chat_type FROM tenant_message_chats WHERE tenant_id=$1 AND telegram_account_id=$2 AND chat_id=$3 LIMIT 1),'private'),
+                    COALESCE((SELECT chat_title FROM tenant_message_chats WHERE tenant_id=$1 AND telegram_account_id=$2 AND chat_id=$3 LIMIT 1),''),
+                    0,$5,TRUE,TRUE,$6,$7,NOW()
+                ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING`,
+                    job.TenantID,job.AccountID,job.ChatID,messageID,job.ReplyToMessageID,messageText,mediaType)
+                if err!=nil{return err}
+                payload,marshalErr:=json.Marshal(MessageCreatedEvent{Type:"message.created",AccountID:job.AccountID,ChatID:job.ChatID,MessageID:messageID,CreatedAt:time.Now().UTC()})
+                if marshalErr!=nil{return marshalErr}
+                if _,err=tx.ExecContext(ctx,`INSERT INTO message_event_outbox(tenant_id,event_type,payload) VALUES($1,'message.created',$2::jsonb)`,job.TenantID,string(payload));err!=nil{return err}
+            }
+            return nil
+        }
+        var tenantActive bool
+        if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
+        if !tenantActive {
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',last_error='tenant inactive; manual review required',lease_until=NULL,updated_at=NOW()
+                WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3`,job.TenantID,job.ID,job.LeaseUntil)
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            if floodWait>0 {
+                waitSeconds:=int64(floodWait/time.Second);if floodWait%time.Second!=0{waitSeconds++};waitSeconds++
+                _,err=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID)
+            }
+            return err
         }
         message:=sendErr.Error();if len(message)>500{message=message[:500]}
+        if floodWait<=0 && isAmbiguousTelegramSendError(sendErr) {
+            uncertainMessage:="send outcome uncertain; verify Telegram chat before resuming: "+message
+            if len(uncertainMessage)>500 { uncertainMessage=uncertainMessage[:500] }
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',last_error=$3,lease_until=NULL,updated_at=NOW()
+                WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,uncertainMessage,job.LeaseUntil)
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            return nil
+        }
         delay:=keywordActionRetryDelay(job.Attempts,floodWait)
         status:="pending";if job.Attempts>=5&&floodWait<=0{status="failed"}
         result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,int64(delay.Seconds()),job.LeaseUntil)
@@ -464,6 +577,9 @@ type KeywordActionRecord struct {
     MediaType string `json:"media_type,omitempty"`
     MediaCaption string `json:"media_caption,omitempty"`
     MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
+    TargetUserID int64 `json:"target_user_id,omitempty"`
+    TelegramCallID *int64 `json:"telegram_call_id,omitempty"`
+    VoiceCallState string `json:"voice_call_state,omitempty"`
     Status string `json:"status"`
     Attempts int `json:"attempts"`
     TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
@@ -483,12 +599,12 @@ func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,
         if status!=""{args=append(args,status);where+=" AND j.status=$2"}
         if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM keyword_action_jobs j WHERE `+where,args...).Scan(&total);err!=nil{return err}
         args=append(args,limit,offset);li,oi:=len(args)-1,len(args)
-        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.status,j.attempts,j.telegram_message_id,j.telegram_message_ids,j.last_error,j.available_at,j.created_at,j.updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.target_user_id,j.telegram_call_id,j.voice_call_state,j.status,j.attempts,j.telegram_message_id,j.telegram_message_ids,j.last_error,j.available_at,j.created_at,j.updated_at
             FROM keyword_action_jobs j JOIN tenant_keyword_matches m ON m.id=j.keyword_match_id AND m.tenant_id=j.tenant_id
             JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
             WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item KeywordActionRecord;var albumItems,messageIDs []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&messageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};if err:=json.Unmarshal(messageIDs,&item.TelegramMessageIDs);err!=nil{return err};items=append(items,item)}
+        for rows.Next(){var item KeywordActionRecord;var albumItems,messageIDs []byte;var callID sql.NullInt64;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.TargetUserID,&callID,&item.VoiceCallState,&item.Status,&item.Attempts,&item.TelegramMessageID,&messageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};if callID.Valid { item.TelegramCallID=&callID.Int64 };if err:=json.Unmarshal(messageIDs,&item.TelegramMessageIDs);err!=nil{return err};items=append(items,item)}
         return rows.Err()
     })
     return items,total,err
@@ -530,3 +646,60 @@ func keywordReplyTextForChat(rule KeywordRule,chatType string) string {
 func keywordAlbumJSON(items []KeywordMediaAlbumItem) string { if len(items)==0{return "[]"};b,err:=json.Marshal(items);if err!=nil{return "[]"};return string(b) }
 
 func keywordNullableMediaAssetID(value string) any { if value == "" { return nil }; return value }
+
+
+// FinishKeywordVoiceCall persists the Telegram-native ringing result without
+// fabricating an outgoing chat message. Call state is tracked independently.
+func (s *Service) FinishKeywordVoiceCall(ctx context.Context, job KeywordActionJob, result telegrammtgo.VoiceCallRequestResult) error {
+    if job.ActionType != "voice_call" || job.TargetUserID <= 0 || result.CallID <= 0 || result.AccessHash == 0 || result.State != "ringing" {
+        return errors.New("invalid Telegram voice call result")
+    }
+    return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+        // Persist a successful external call request even if the tenant expires during the RPC.
+        updated, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
+            SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,
+                voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW()
+            WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3 AND action_type='voice_call'`,
+            job.TenantID, job.ID, job.LeaseUntil, result.CallID, result.AccessHash)
+        if err != nil {
+            return err
+        }
+        count, err := updated.RowsAffected()
+        if err != nil {
+            return err
+        }
+        if count == 0 {
+            return errors.New("keyword voice call action lease not found")
+        }
+        return nil
+    })
+}
+
+
+// UpdateKeywordVoiceCallState applies a Telegram update only to the matching
+// tenant/account/call tuple. found=false lets the worker retry an update that
+// races the initial call-result persistence.
+func (s *Service) UpdateKeywordVoiceCallState(ctx context.Context, tenantID, accountID string, callID int64, state string) (bool, error) {
+    switch state {
+    case "ringing", "accepted", "discarded", "ended", "failed", "unknown":
+    default:
+        return false, errors.New("invalid Telegram voice call state")
+    }
+    found := false
+    err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+        result, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
+            SET voice_call_state=$4, updated_at=NOW()
+            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND action_type='voice_call'`,
+            tenantID, accountID, callID, state)
+        if err != nil {
+            return err
+        }
+        count, err := result.RowsAffected()
+        if err != nil {
+            return err
+        }
+        found = count > 0
+        return nil
+    })
+    return found, err
+}

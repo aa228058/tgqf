@@ -73,6 +73,7 @@ type ProfileUpdateJob struct {
 	About string `json:"about"`
 	GenerateUsername bool `json:"generate_username"`
 	PhotoData []byte `json:"-"`
+	HasPhoto bool `json:"has_photo"`
 	UsernamePrefix string `json:"-"`
 	UsernameRandomLength int `json:"-"`
 	UsernameCharset string `json:"-"`
@@ -129,6 +130,7 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 				RETURNING id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at`,
 				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset,in.PhotoData).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
 			if err!=nil{return err}
+			job.HasPhoto = len(job.PhotoData) > 0
 			out=append(out,job)
 		}
 		return nil
@@ -145,10 +147,10 @@ func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,sta
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:=`tenant_id=$1 AND ($2='' OR batch_id=$2::uuid) AND ($3='' OR status=$3)`
 		if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM account_profile_update_jobs WHERE `+filter,tenantID,batchID,status).Scan(&total);err!=nil{return err}
-		rows,err:=tx.QueryContext(ctx,`SELECT id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,''::bytea,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at
+		rows,err:=tx.QueryContext(ctx,`SELECT id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,(octet_length(photo_data)>0),applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at
 			FROM account_profile_update_jobs WHERE `+filter+` ORDER BY created_at DESC,id LIMIT $4 OFFSET $5`,tenantID,batchID,status,limit,offset)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
+		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.HasPhoto,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
 	})
 	return out,total,err
@@ -158,12 +160,20 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 	if limit<1||limit>20{limit=10}
 	out:=[]ProfileUpdateJob{}
 	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		// An expired processing lease has an unknown Telegram-side outcome.
+		// Quarantine it for manual review instead of replaying a possibly applied
+		// profile change after a worker crash.
+		if _,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs
+			SET status='paused',lease_until=NULL,
+			    last_error='profile update outcome uncertain after worker lease expired; verify Telegram profile before resuming',
+			    updated_at=NOW()
+			WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()`,tenantID);err!=nil{return err}
 		rows,err:=tx.QueryContext(ctx,`WITH picked AS (
 			SELECT j.id,j.tenant_id,j.account_id
 			FROM account_profile_update_jobs j
 			JOIN telegram_accounts acc ON acc.tenant_id=j.tenant_id AND acc.id=j.account_id
 			WHERE j.tenant_id=$1 AND j.next_run_at<=NOW()
-			  AND (j.status='pending' OR (j.status='processing' AND j.lease_until<NOW()))
+			  AND j.status='pending'
 			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
 			  AND COALESCE(acc.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
 			  AND COALESCE(acc.telegram_send_cooldown_until,'-infinity'::timestamptz)<=NOW()
@@ -189,6 +199,33 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 		return rows.Err()
 	})
 	return out,err
+}
+
+// RecordProfileUpdateUsername persists a successfully applied Telegram username
+// before the rest of the job is finalized. This prevents a worker crash between
+// the Telegram RPC and job completion from generating a second username on retry.
+func (s *Service) RecordProfileUpdateUsername(ctx context.Context, job ProfileUpdateJob, username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("applied Telegram username is required")
+	}
+	return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE account_profile_update_jobs
+			SET applied_username=$3, updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,
+			job.TenantID, job.ID, username, job.LeaseUntil)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("profile update lease was lost while recording username")
+		}
+		return nil
+	})
 }
 
 func (s *Service) CompleteProfileUpdate(ctx context.Context,job ProfileUpdateJob)error {
@@ -293,7 +330,7 @@ func (s *Service) PauseInactiveProfileUpdateJobs(ctx context.Context) error {
  rows,err:=s.db.QueryContext(ctx,`SELECT id::text FROM tenants`); if err!=nil{return err}
  var ids []string; for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{rows.Close();return err};ids=append(ids,id)}
  if err:=rows.Err();err!=nil{rows.Close();return err};rows.Close()
- for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND j.status IN ('pending','processing') AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
+ for _,id:=range ids { err:=withTenantTx(ctx,s.db,id,func(tx *sql.Tx)error{_,e:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs j SET status='paused',lease_until=NULL,last_error='tenant inactive; manual review required',updated_at=NOW() WHERE j.tenant_id=$1 AND (j.status='pending' OR (j.status='processing' AND j.lease_until<=NOW())) AND EXISTS(SELECT 1 FROM tenants t WHERE t.id=j.tenant_id AND (t.status<>'active' OR t.expires_at<=NOW()))`,id);return e});if err!=nil{return err} }
  return nil
 }
 
@@ -301,3 +338,29 @@ func NormalizeUsernameGenerationSettingsForWorker(settings UsernameGenerationSet
 	return normalizeUsernameGenerationSettings(settings)
 }
 
+
+
+// PauseQueuedProfileUpdate pauses a job that has not been claimed by a worker.
+// A processing job cannot be safely interrupted because its Telegram RPC may
+// already have produced an external side effect.
+func (s *Service) PauseQueuedProfileUpdate(ctx context.Context, tenantID, id string) error {
+	if !validAccountUUID(id) {
+		return errors.New("profile update job not found")
+	}
+	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE account_profile_update_jobs
+			SET status='paused', lease_until=NULL, last_error='paused by user before execution', updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='pending'`, tenantID, id)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("profile update job is not pending; processing jobs cannot be interrupted")
+		}
+		return nil
+	})
+}

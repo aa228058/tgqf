@@ -42,6 +42,7 @@ type Manager struct {
 	pendingQR map[string]*pendingQR
  pendingPhone map[string]*pendingPhone
  messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
+	voiceCallUpdateHandler func(accountID string, callID int64, state string)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
@@ -54,6 +55,7 @@ type pendingQR struct {
 	client *telegram.Client
 	token []byte
 	expires int64
+	expiresAt time.Time
 }
 type QRChallenge struct { URL string; Expires int64 }
 type QRAuthResult struct { Pending bool; Challenge *QRChallenge; SessionString string; UserID int64; Username string; FirstName string; Phone string }
@@ -147,6 +149,7 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 	m.clients[accountID] = client
 	m.mu.Unlock()
 	m.registerMessageHandler(accountID, client)
+	m.registerVoiceCallHandler(accountID, client)
 
 	if err := client.Connect(m.cfg.ConnectTimeout); err != nil {
 		m.mu.Lock()
@@ -279,13 +282,38 @@ func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string, prof
 		m.mu.Unlock()
 		return QRAuthResult{SessionString:sessionString, UserID:token.User.ID, Username:token.User.Username, FirstName:token.User.FirstName, Phone:token.User.Phone}, nil
 	}
-	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires)}
+	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires), expiresAt:time.Now().Add(10*time.Minute)}
 	m.mu.Lock()
 	if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account client is already managed") }
 	if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account QR login is already pending") }
 	m.pendingQR[accountID] = entry
 	m.mu.Unlock()
+	go m.expireQRLogin(accountID, entry)
 	return QRAuthResult{Pending:true,Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(token.Token),Expires:int64(token.Expires)}},nil
+}
+
+
+
+// expireQRLogin bounds the lifetime of an abandoned QR authorization client.
+// Token refreshes do not extend this overall challenge lifetime.
+func (m *Manager) expireQRLogin(accountID string, entry *pendingQR) {
+	delay := time.Until(entry.expiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+
+	m.mu.Lock()
+	if m.pendingQR[accountID] != entry {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.pendingQR, accountID)
+	m.mu.Unlock()
+
+	_ = disconnectPending(entry)
 }
 
 func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, error) {
@@ -364,6 +392,44 @@ func (m *Manager) ManagedAccountIDs() []string {
      if chat==nil||chat.ID==0{return 0,errors.New("Telegram returned no joined chat identity")}
      return chat.ID,nil
  }
+
+// GetChatMetadata performs a read-only MTGo chat lookup for an already-known chat.
+// It does not join, leave, or modify the chat.
+func (m *Manager) GetChatMetadata(ctx context.Context, accountID string, chatID int64) (*types.Chat, error) {
+	if chatID == 0 {
+		return nil, errors.New("Telegram chat ID is required")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return nil, errors.New("Telegram account is not connected")
+	}
+	chat, err := client.GetChat(ctx, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("get Telegram chat metadata: %w", err)
+	}
+	if chat == nil || chat.ID == 0 {
+		return nil, errors.New("Telegram returned no chat metadata")
+	}
+	return chat, nil
+}
+
+// DownloadMessageMedia retrieves any supported message attachment through its
+// owning MTGo session. The authenticated API layer applies content disposition
+// and tenant authorization before returning the bytes.
+func (m *Manager) DownloadMessageMedia(ctx context.Context,accountID string,chatID,messageID int64)([]byte,error){
+ if messageID<=0 || messageID>int64(^uint32(0)>>1){return nil,errors.New("invalid Telegram message ID")}
+ m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
+ if client==nil || !client.IsConnected(){return nil,errors.New("Telegram account is not connected")}
+ messages,err:=client.GetMessages(ctx,chatID,[]int32{int32(messageID)})
+ if err!=nil{return nil,fmt.Errorf("load Telegram message: %w",err)}
+ if len(messages)==0 || messages[0]==nil{return nil,errors.New("Telegram message not found")}
+ data,err:=messages[0].Download()
+ if err!=nil{return nil,fmt.Errorf("download Telegram media: %w",err)}
+ if len(data)==0 || len(data)>50<<20{return nil,errors.New("media is empty or exceeds 50 MiB")}
+ return data,nil
+}
 
 // CheckPublicUsername resolves a public Telegram username without joining the chat.
 func (m *Manager) CheckPublicUsername(ctx context.Context, accountID, username string) (bool, error) {
@@ -563,7 +629,7 @@ func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, cha
     }
     sent,err:=client.SendMediaGroup(ctx,chatID,media,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
     if err!=nil{return nil,fmt.Errorf("send Telegram media album: %w",err)}
-    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram returned %d album messages for %d items",len(sent),len(items))}
+    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram send outcome uncertain: returned %d album messages for %d items",len(sent),len(items))}
     ids:=make([]int64,0,len(sent))
     for _,message:=range sent { if message==nil||message.ID<=0{return nil,errors.New("Telegram returned an empty album message")};ids=append(ids,int64(message.ID)) }
     return ids,nil
@@ -658,6 +724,7 @@ func (m *Manager) StartPhoneLogin(ctx context.Context, accountID, phone, proxyJS
 	if _,ok:=m.pendingQR[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account QR login is already pending")}
 	if _,ok:=m.pendingPhone[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account phone login is already pending")}
 	m.pendingPhone[accountID]=entry;m.mu.Unlock()
+	go m.expirePhoneLogin(accountID, entry)
 	delivery:="telegram"
 	if sent.Type!=nil { delivery=fmt.Sprintf("%T",sent.Type) }
 	return PhoneCodeResult{Timeout:sent.Timeout,DeliveryType:delivery},nil
@@ -697,6 +764,35 @@ func (m *Manager) finishPhoneLogin(accountID string, entry *pendingPhone, user *
 	delete(m.pendingPhone,accountID);m.clients[accountID]=entry.client
 	m.mu.Unlock()
 	return PhoneAuthResult{UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone,SessionString:session},false,nil
+}
+
+
+
+// expirePhoneLogin releases the temporary MTGo connection even when a user
+// abandons the OTP/2FA screen. The identity check prevents an old timer from
+// disconnecting a later login that reused the same account ID.
+func (m *Manager) expirePhoneLogin(accountID string, entry *pendingPhone) {
+	delay := time.Until(entry.expiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+
+	m.mu.Lock()
+	if m.pendingPhone[accountID] != entry {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.pendingPhone, accountID)
+	m.mu.Unlock()
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.client != nil {
+		_ = entry.client.Disconnect()
+	}
 }
 
 func (m *Manager) CancelPhoneLogin(accountID string) error {

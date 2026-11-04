@@ -44,6 +44,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
  m.Handle("PATCH /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateDisplayName)))
  m.Handle("GET /api/v1/accounts/{id}/profile",h.auth.Authenticated(http.HandlerFunc(h.getTelegramProfile)))
+ m.Handle("GET /api/v1/accounts/{id}/device-profile",h.auth.Authenticated(http.HandlerFunc(h.getDeviceProfile)))
  m.Handle("GET /api/v1/accounts/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportCSV)))
  m.Handle("POST /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.create)))
  m.Handle("POST /api/v1/accounts/import",h.auth.Authenticated(http.HandlerFunc(h.importBatch)))
@@ -54,6 +55,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
+ m.Handle("POST /api/v1/accounts/profile-updates/{id}/pause",h.auth.Authenticated(http.HandlerFunc(h.pauseQueuedProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/cancel",h.auth.Authenticated(http.HandlerFunc(h.cancelProfileUpdate)))
  m.Handle("DELETE /api/v1/accounts/bulk",h.auth.Authenticated(http.HandlerFunc(h.deleteBatch)))
@@ -289,6 +291,19 @@ func (h *Handler) retryProfileUpdate(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,map[string]string{"status":"pending"})
 }
 
+func (h *Handler) pauseQueuedProfileUpdate(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if err := h.service.PauseQueuedProfileUpdate(r.Context(), user.TenantID, r.PathValue("id")); err != nil {
+		status := http.StatusConflict
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+}
+
 func (h *Handler) resumeProfileUpdate(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
 	if err:=h.service.ResumeProfileUpdate(r.Context(),user.TenantID,r.PathValue("id"));err!=nil {
@@ -516,6 +531,27 @@ func (h *Handler) bulkRuntimeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error()); return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"action": strings.ToLower(strings.TrimSpace(input.Action)), "requested": len(input.AccountIDs), "changed": changed, "status": map[string]string{"disconnect":"disconnected", "reconnect":"authorized"}[strings.ToLower(strings.TrimSpace(input.Action))]})
+}
+
+
+// getDeviceProfile returns the persisted device-manager identity for an account owned by this tenant.
+func (h *Handler) getDeviceProfile(w http.ResponseWriter,r *http.Request) {
+ id:=strings.TrimSpace(r.PathValue("id"))
+ if !validAccountUUID(id) { writeError(w,http.StatusBadRequest,"invalid account ID");return }
+ user:=auth.UserFromContext(r.Context())
+ owned,err:=h.service.OwnsAccount(r.Context(),user.TenantID,id)
+ if err!=nil { writeError(w,http.StatusInternalServerError,"failed to verify account ownership");return }
+ if !owned { writeError(w,http.StatusNotFound,"account not found");return }
+ profile,err:=h.service.LoadDeviceProfile(r.Context(),user.TenantID,id)
+ if err!=nil {
+  if strings.Contains(err.Error(),"not found") { writeError(w,http.StatusNotFound,"device profile not found");return }
+  writeError(w,http.StatusInternalServerError,"failed to load persisted device profile");return
+ }
+ writeJSON(w,http.StatusOK,map[string]any{"device_profile":map[string]string{
+  "platform":"ios","device_model":profile.DeviceModel,"system_version":profile.SystemVersion,
+  "app_version":profile.AppVersion,"lang_code":profile.LangCode,
+  "system_lang_code":profile.SystemLangCode,"lang_pack":profile.LangPack,"package_id":profile.PackageID,
+ }})
 }
 
 // getTelegramProfile reads the live Telegram identity for an account owned by this tenant.

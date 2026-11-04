@@ -27,12 +27,12 @@ func (s *Service) GetUnifiedTaskSummary(ctx context.Context, tenantID string) (U
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		query := "SELECT task_type, status, COUNT(*)::int, " +
 			"COUNT(*) FILTER (WHERE status='processing')::int, " +
-			"COUNT(*) FILTER (WHERE status='processing' AND lease_until < NOW())::int " +
+			"COUNT(*) FILTER (WHERE (status='processing' OR (task_type='group_join' AND status='request_pending')) AND lease_until < NOW())::int " +
 			"FROM ( " +
 			"SELECT 'message_reply'::text AS task_type, status, lease_until FROM message_reply_jobs WHERE tenant_id=$1 " +
 			"UNION ALL SELECT 'keyword_action'::text, status, lease_until FROM keyword_action_jobs WHERE tenant_id=$1 " +
 			"UNION ALL SELECT 'profile_update'::text, status, lease_until FROM account_profile_update_jobs WHERE tenant_id=$1 " +
-			"UNION ALL SELECT 'group_join'::text, status, lease_until FROM tenant_join_task_accounts WHERE tenant_id=$1 " +
+			"UNION ALL SELECT 'group_join'::text, status, CASE WHEN status='request_pending' THEN approval_check_lease_until ELSE lease_until END FROM tenant_join_task_accounts WHERE tenant_id=$1 " +
 			") task_rows GROUP BY task_type, status ORDER BY task_type, status"
 		rows, err := tx.QueryContext(ctx, query, tenantID)
 		if err != nil { return err }

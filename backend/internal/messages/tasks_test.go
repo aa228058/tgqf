@@ -16,6 +16,9 @@ func TestNormalizeUnifiedTaskFilter(t *testing.T) {
 	if _, err := normalizeUnifiedTaskFilter(UnifiedTaskFilter{AccountID: "not-a-uuid"}); err == nil {
 		t.Fatal("expected invalid account id to be rejected")
 	}
+	if _, err := normalizeUnifiedTaskFilter(UnifiedTaskFilter{Offset: 10000001}); err == nil {
+		t.Fatal("expected excessive pagination offset to be rejected")
+	}
 }
 
 

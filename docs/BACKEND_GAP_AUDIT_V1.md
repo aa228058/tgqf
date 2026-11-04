@@ -34,20 +34,20 @@
 |---|---|---|---|
 | 多租户/认证 | tenants、users、activation_cards、auth_sessions、RLS；auth handlers | 已有基础实现，待完整验收 | 多设备会话、密码变更撤销策略、到期停任务/恢复暂停语义需集成测试 |
 | 超管/卡密 | admin handlers、activation_cards | 部分实现 | 租户生命周期完整操作、审计、续期暂停任务闭环需核验 |
-| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 单账号及批量登录 API 已实现；OTP/2FA challenge 暂存于 Manager 进程内，进程重启后需重新发起登录；Session 文件导入支持 JSON/CSV/TXT 及 Telethon/Pyrogram SQLite .session，仍需真实账号验收 |
+| MTProto/MTGo | telegrammtgo Manager、独立 Worker | 已有基础实现 | MTGo 手机验证码/2FA 单账号及批量登录 API 已实现；OTP/2FA challenge 暂存于 Manager 进程内，10 分钟到期定时清理并断开未完成的临时客户端（QR token 可刷新但整个挑战最多 10 分钟），进程重启后需重新发起登录；Session 文件导入支持 JSON/CSV/TXT 及 Telethon/Pyrogram SQLite .session，仍需真实账号验收 |
 | 二维码登录 | accounts QR start/poll/cancel 路由 | 已实现基础流程 | 需端到端测试过期、取消、重复登录、异常恢复 |
 | Session 安全 | session_ciphertext 加密、Worker 内解密 | 已有基础实现 | 文件导入/导出策略和密钥轮换/备份恢复需补齐 |
 | device-manager | telegram_device_profiles、RuntimeAccount.DeviceProfile、Manager.Start/StartQR | 核心实现已接入 | 持久化 profile 已用于 Worker 启动/重连和 QR 登录；仍需在线账号端到端验证 |
 | 账号列表/分组/标签 | accounts GET/POST/DELETE、搜索/筛选/分页、CSV/Session 文件导入导出、分组/标签、批量分组/代理绑定/断开重连 | 后端功能已实现，待 CI 与真实账号验收 | 标签本轮新增 PostgreSQL TEXT[]、单账号/批量替换 API 和 CSV 导出；登录挑战进程重启恢复仍未实现 |
 | 代理管理 | proxies CRUD、账号单/批量绑定、默认代理、协议认证检测、Telegram DC TCP 隧道检测、检测历史 | 后端功能已实现，待 CI/集成验收 | SOCKS4/5、HTTP/HTTPS 均执行协议协商/认证并尝试建立 Telegram DC TCP 隧道；检测结果及耗时持久化，Worker 每 10 分钟自动巡检并通过 PostgreSQL advisory lock 避免多 Worker 重复巡检；每代理保留最近 100 条结果，列表返回最近状态，支持历史查询；这不等于某个 MTGo 账号已完成 Telegram 授权连接 |
-| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile/UpdateProfilePhoto/UpdateUsername、资料任务 API 与 Worker | 后端功能已实现，待 CI/真实账号验收 | 支持姓名/简介/头像/随机用户名，逐账号结果、冲突重试、暂停/恢复/重试/取消；用户名规则前端仍待后续前端阶段 |
+| 批量资料修改 | account_profile_update_jobs、MTGo UpdateProfile/UpdateProfilePhoto/UpdateUsername、资料任务 API 与 Worker | 后端功能已实现，待 CI/真实账号验收 | 支持姓名/简介/头像/随机用户名，逐账号结果、冲突重试、暂停/恢复/重试/取消；新增 `POST /api/v1/accounts/profile-updates/{id}/pause`，只允许暂停尚未领取的 pending 任务，避免把已发起的 Telegram RPC 误报为可中断；Worker 租约过期的 processing 任务转 paused 并标记结果不确定，需人工核验后恢复；用户名规则前端仍待后续前端阶段 |
 | 消息收件箱 | unified_messages、筛选设置、列表、processed、reply jobs | 已有基础实现 | 媒体呈现/聊天上下文能力待核；需严格新消息语义 |
 | 实时消息 | GET /api/v1/messages/events，text/event-stream | 部分实现 | 当前为可断点续传的 SSE + Redis Streams；仍未实现 WebSocket，且需 Redis 集成测试覆盖断线重连、游标续传和保留窗口 |
-| 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups | 第一阶段已实现 | 已全局去重、记录来源与贡献租户；多来源合并审核、权限字段仍待补齐 |
+| 群组目录 | public_groups、public_group_sources、tenant_group_contributions、GET /api/v1/groups、CSV 导入导出、纠错审核/合并 | 核心后端闭环已实现，待最新 CI 与并发/多租户验收 | 全系统共享单一公共目录；实时采集跨租户汇总，来源账号/租户独立记录；CSV 导入现对已存在的全局群组也记录导入租户贡献，不覆盖现有 Telegram 元数据；超级管理员纠错审核与群合并会迁移来源/贡献/链接并留审计；仍需补齐 TXT/Excel 格式和真实多租户并发采集验收 |
 | 链接采集器 | ExtractTelegramLinks、public_group_links、public_group_link_sources、GET /api/v1/group-links | 采集与私密邀请只读验证已接入，尚待运行验收 | 只处理实时新消息文本/说明；支持公开 username、`+invite`、`joinchat`；私密邀请码 AES-GCM 加密并以哈希去重；worker 每 15 分钟对有来源账号执行到期检查（同一链接至少间隔 6 小时），仅调用 `messages.checkChatInvite`，不加入群；结果区分 valid/approval_required/invalid/unknown，保存最近检查时间和错误；公开 username 已接入 `contacts.resolveUsername` 只读解析（不加入群）；公开/私密链接均由 worker 按 6 小时冷却刷新并记录结果；链接与群资料自动关联完善仍待补齐 |
 | 自动加群 | tenant_join_tasks、tenant_join_task_accounts、Worker 租约执行器 | 公开用户名/公开链接/私密邀请链接执行及审批状态 Worker 轮询同步已实现代码闭环，仍需真实账号验收 | 支持明确授权、租户内账号分配、来源校验、任务状态机、过期租约回收；对 INVITE_REQUEST_SENT 记录待审批；FloodWait 向上取整并加 1 秒缓冲，同一任务及触发限流的账号进入冷却，不通过切换账号规避；Worker 领取子任务时同步返回递增后的 attempts，瞬时 CHANNELS_TOO_MUCH/USER_RESTRICTED 等错误进入有界退避，永久失效邀请/私有群等错误才终止；私密邀请审批在缺少可靠 chat_id 时保持 request_pending，不伪造审批结果 |
 | 关键词监听 | tenant_keyword_rules、tenant_keyword_matches、规则 CRUD 与实时匹配 | 第一阶段已实现 | 支持 any/all/exact/regex、OR/AND 关键词分组、排除词、账号/聊天/媒体/发送者过滤、聊天类型和大小写；规则启停和命中分页 API 已提供 |
-| 自动处理 | keyword_action_jobs、关键词命中自动入队及 Worker 执行 | 文本与原生联系人卡片动作已接入；租户媒体素材库基础 API 已实现 | 文本支持私聊/群组独立文案；联系人卡片支持私聊/群组，规则配置、租户持久化、命中入队、Worker 发送及任务结果查询已贯通；媒体素材支持租户隔离上传、列表、下载和删除，单文件上限 20 MiB、内容类型嗅探和 SHA-256 去重；MTGo 已增加基于受控字节内容的单条图片/视频/文件/音频/语音/圆形视频消息发送封装；素材尚未接入关键词动作队列，媒体动作配置、相册混合顺序发送和动作失败停止策略仍待实现 |
+| 自动处理 | keyword_action_jobs、关键词命中自动入队及 Worker 执行 | 文本与原生联系人卡片动作已接入；租户媒体素材库基础 API 已实现 | 文本支持私聊/群组独立文案；联系人卡片支持私聊/群组，规则配置、租户持久化、命中入队、Worker 发送及任务结果查询已贯通；媒体素材支持租户隔离上传、列表、下载和删除，单文件上限 20 MiB、内容类型嗅探和 SHA-256 去重；MTGo 已增加基于受控字节内容的单条图片/视频/文件/音频/语音/圆形视频消息发送封装；媒体动作已接入关键词动作队列，支持租户素材引用、单媒体发送、2-10 项相册发送及逐项结果回写；相册先完成全部上传再一次提交，上传失败不会发送不完整相册；发送结果不确定时暂停人工核验，避免超时后盲目重发 |
 | 真实语音通话 | 未发现调用链路 | 待专项技术验证/尚未实现 | 呼叫信令、密钥交换、音频传输、接听/拒绝均需端到端验证 |
 | 通用任务中心 | `GET /api/v1/tasks` 已聚合回复、关键词动作、资料修改、加群账号队列 | 第一阶段只读聚合已实现 | 统一任务控制 API 已支持消息回复暂停/恢复/重试/取消、关键词动作暂停/恢复/重试/取消、资料修改暂停/恢复/重试/取消、加群任务暂停/恢复/重试/取消（重试仅重新排队仍授权账号的失败子任务）；幂等键、断点恢复、统一任务生命周期和 WebSocket 推送仍待实现 |
 | 日志/监控/备份 | 基础健康检查、结构化日志、audit_logs 表 | 部分实现 | 资源监控、Worker 心跳、代理异常看板、备份恢复流程需补齐 |
@@ -73,12 +73,12 @@
 - [x] P1-07 第一阶段：新增 `public_group_sources`、`tenant_group_contributions`，记录来源账号、发现租户、发现次数和时间。
 - [x] P1-10 第二阶段：租户可提交群组标题、公开用户名、成员数和认证标记的纠错建议；超级管理员审核通过后才更新全局资料，拒绝/通过均记录审核人、时间和备注。
 - [x] P1-11 第一阶段：超级管理员可人工合并同类型重复群组；迁移来源记录、租户贡献、公开链接关联和纠错历史，并保存合并快照与审计日志。合并不自动根据相似名称执行。
-- P1-08 第一阶段已接入：Worker 从 MTGo `message.Chat.Permissions` 采集群组默认发言权限，并将当前账号的管理员/受限权限快照单独写入该租户的来源记录；两者分列保存；当前账号快照记录是否管理员/创建者及可用的管理员/受限权限字段，未获得的群组默认权限保持 SQL NULL/未知，不推断为允许。权限快照随实时消息更新，尚未建立离线全群定期刷新任务。
-- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 读取共享目录并提供来源数、贡献租户数；本轮增加稳定内部 ID、成员/来源/贡献筛选、认证状态筛选、多字段排序、群组默认权限快照、最多 10,000 条 CSV 导出。
+- P1-08 第一阶段已接入：Worker 从 MTGo `message.Chat.Permissions` 采集群组默认发言权限，并将当前账号的管理员/受限权限快照单独写入该租户的来源记录；两者分列保存；当前账号快照记录是否管理员/创建者及可用的管理员/受限权限字段，未获得的群组默认权限保持 SQL NULL/未知，不推断为允许。权限快照除实时消息更新外，已增加 Worker 离线定期刷新：按租户/账号来源独立领取 5 分钟租约，使用 MTGo GetChat 只读读取群组元数据，分别更新全局默认权限和该来源账号权限；失败按 30 分钟起步指数退避、最长 24 小时重试。已新增 PostgreSQL 集成测试覆盖多租户独立领取、租约过期重领、旧 Worker fencing、失败退避；仍需真实 Telegram 账号验收。
+- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 读取共享目录并提供来源数、贡献租户数；本轮增加稳定内部 ID、成员/来源/贡献筛选、认证状态筛选、多字段排序、群组默认权限快照、最多 10,000 条 CSV 导出；新增 insert-only CSV 总库导入，重复群组跳过且不覆盖已有资料。
 - P1-10/P1-11 已增加纠错建议审核、人工合并和合并审计；审核只由超级管理员执行，租户建议不会直接写入全局资料。本轮增加 CSV 导入纠错建议（最多 1,000 行），所有修改仍进入待审核队列；导入不直接创建/篡改全局群组。
 
 ### P2 — 自动化业务闭环
-- [x] P2-01 第一阶段：实时新消息链接识别与公共链接目录入库；私密邀请链接加密存储，不回溯历史。链接来源和待验证状态可查询。实际 Telegram 验证及自动关联群组实体仍待补齐。
+- [x] P2-01 第一阶段：实时新消息链接识别与公共链接目录入库；私密邀请链接加密存储，不回溯历史。链接来源和待验证状态可查询。公开 username 已在群组元数据入库时自动关联，并通过迁移回填历史未关联链接；私密邀请不凭空推断群组实体，待获得可靠 chat ID 后再关联。公开/私密链接的 MTGo 只读验证已接入；PostgreSQL 集成测试覆盖公开/私密链接租约独占、过期重领及旧 Worker fencing，仍需真实账号验收。
 - [x] P2-02：公开用户名/公开链接/加密私密邀请链接自动加入执行、租户内账号分配、明确授权、暂停/恢复/取消、租约回收、待审批状态、Worker 审批状态同步和 FloodWait 冷却已实现；仍需真实 Telegram 账号验收。
 - [x] P2-03 第一阶段：关键词规则模型、any/all/regex、排除词、聊天类型筛选、实时新消息评估与命中记录；不自动发送、不读取历史。
 - P2-04 私聊/群组动作链完全隔离；先实现安全、可审计的文本/媒体动作。
@@ -128,6 +128,7 @@
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 - `GET /api/v1/groups/export.csv`（沿用群组筛选条件导出 CSV，最多 10,000 条）
 - `POST /api/v1/groups/import.csv`（tenant_admin 导入 CSV 纠错建议，最多 1,000 行；只进入待审核队列）
+- `POST /api/v1/groups/catalogue/import.csv`（tenant_admin 导入共享群组总库；最多 10,000 行；仅插入新 Telegram 群组标识，已存在记录只跳过、不覆盖；成功新增记录写入租户贡献统计）
 - `GET /api/v1/groups` 支持 `chat_type`、`q`、`verified`、`min_members`、`max_members`、`min_sources`、`min_contributors`、`sort=recent|title|members|sources|contributors`；结果包含内部 `id` 与 Telegram `chat_id`、群组默认发言权限 JSON 和采集时间。
 - `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源、账号信息及该账号在该群的权限快照，不泄露其他租户的账号数据）
 - `POST /api/v1/groups/{id}/corrections`、`GET /api/v1/groups/corrections`（租户提交/查询自身的群组资料纠错建议）
@@ -451,17 +452,20 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 群链接采集继续按租户、发现账号、来源会话和消息记录归集；私密邀请码只保存 SHA-256 去重值及 AES-GCM 加密后的原始 hash。
 - [x] 公开链接和私密邀请链接均通过 MTGo 只读 messages.checkChatInvite / contacts.resolveUsername 检查；状态区分 valid、approval_required、invalid、unknown。检查路径不调用加入 API。
 - [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。检查领取使用 6 分钟数据库租约和 SKIP LOCKED，多 Worker 不会同时领取同一链接；写回使用租约时间 fencing，过期 Worker 无法覆盖新检查结果。
-- [x] 新消息再次发现链接时清空检查时间、下次检查时间、错误计数和旧检查租约，重新排入检查队列。
+- [x] 新消息再次发现链接时：若旧检查租约仍有效，只更新来源最近发现时间，不打断正在执行的检查、不清空重试状态；若租约不存在或已过期，则清空旧检查状态并重新排队。公开链接和私密邀请链接均遵守该规则。
 - [x] 新增 migration 0044/0045/0046：链接检查次数、下次检查时间、到期索引、带 fencing 的多 Worker 链接检查租约，以及加群审批状态轮询租约；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
 - [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布；列表同时返回检查次数和下次检查时间，支持按 type/status 筛选与分页。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
 - [x] 自动加群仅由明确创建并确认授权的 tenant_join_tasks 执行；支持公共 username/link 与私密邀请链接。MTGo Client.JoinChat 对私密邀请内部调用 messages.importChatInvite，该调用只在实际加群任务执行路径发生。
 - [x] 加群临时错误按 30 秒起步指数退避，最高 30 分钟；最多 5 次执行尝试后转失败。明确失效链接、禁入、权限拒绝等永久错误直接失败；FloodWait 使用 Telegram 指定等待时间。`INVITE_REQUEST_SENT` 进入 request_pending，`USER_ALREADY_PARTICIPANT` 记为 already_member，不误记失败；可能临时的 USER_RESTRICTED 保留重试。
 - [x] 保留账号级任务互斥、每次 claim 单条、3 分钟 lease、租户有效期检查、账号 Session 授权检查、租户来源校验和审批状态轮询。
-- [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined；明确 left/banned 状态同步为 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。私密邀请审批不伪装成可自动查询：checkChatInvite 不提供足够信息判定申请已被管理员批准或拒绝，因此保留 request_pending，待后续接入可靠的成员状态事件/映射后再同步。邀请链接本身只返回待审批或有效状态时，不伪造拒绝结论。
+- [x] 暂停/取消不再撤销正在执行的 Telegram RPC 租约：停止后续 claim，但允许当前 RPC 返回后写回真实加入结果；若返回可重试错误，则根据父任务 paused/cancelled 状态转为暂停/取消，不会重新排队。
+- [x] FloodWait 只延迟尚未领取的队列项，不再清空其他正在执行任务的 processing lease；账号级 FloodWait 冷却仍全局生效。新增 PostgreSQL 集成测试覆盖暂停成功写回、取消后不重试、同账号其他 in-flight lease 保留。
+- [x] 对于已有 Telegram chat ID 的公开群审批，通过 MTGo membership 查询同步为 joined/approved；left、banned、无效邀请只标记失败/unknown，不将无法证明的状态伪装成管理员 declined。私密邀请审批通过 messages.checkChatInvite 轮询：返回 ChatInviteAlready 时同步为 joined/approved，仍为 RequestNeeded/valid 时保持 request_pending；无法可靠区分管理员拒绝与仍待审批时不伪造 declined。审批状态轮询使用 2 分钟数据库租约、SKIP LOCKED 和 fencing，FloodWait 按 Telegram 指定时长延后。
 - [x] 增加加群重试退避和永久/临时错误分类单元测试。
-- [ ] 本批提交尚未运行 Go test、vet、API/Worker build、数据库迁移或 GitHub Actions；当前只能确认代码已提交，不能声称编译和测试通过。
-- [ ] 仍需 PostgreSQL 多 Worker 集成测试，验证链接和审批轮询租约过期重领、旧 Worker 延迟写回被 fencing、链接状态全局共享语义，以及不同账号/租户来源下的检查公平性。
+- [x] 新增 PostgreSQL 集成覆盖：公开/私密链接在有效检查租约期间被重复发现时保留租约与重试状态；租约过期后重新发现才清空旧状态并重新排队。
+- [x] GitHub Actions 已通过：Go test ./...、vet、API/Worker build；PostgreSQL 服务集成测试覆盖共享群组 insert-only 导入、租户来源权限快照刷新、公开/私密链接租约与旧 Worker fencing。
+- [ ] 仍需 PostgreSQL 多 Worker 集成测试覆盖加群审批状态轮询租约的过期重领和旧 Worker fencing；群链接检查租约及跨租户来源公平性已覆盖。
 - [ ] 仍需真实 Telegram 测试账号验证公开加入、私密邀请加入、审批通过/拒绝、FloodWait、链接过期和账号断线恢复。真实 Telegram 端的外部加入动作无法由单元测试替代。
 - [ ] 私密邀请 hash 本身无法在所有场景中可靠区分“管理员拒绝申请”与“申请仍在等待”；只有能够查询目标 chat membership 且 Telegram 返回明确 left/banned 时才标记 declined，其余情况保持 pending/unknown，避免误报。
 
@@ -479,3 +483,70 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 ## Keyword media albums
 
 关键词规则现支持 `action_type=media_album`，可按顺序绑定 2–10 个租户素材，支持图片/视频混合或纯文件相册。规则创建/修改会验证素材归属、重复素材、类型组合和单项说明长度；命中后把有序 JSONB 素材清单写入任务队列，Worker 逐项读取租户素材并调用 MTGo `SendMediaAlbumReply`。上传阶段任一素材失败不会提交相册；数据库触发器阻止删除仍被规则或任务引用的相册素材。任务记录当前保存 Telegram 返回的首条消息 ID，Telegram 相册整体结果按一个动作任务管理。尚未执行最终 CI/编译检查。
+
+
+## 2026-11-04 关键词监听与动作队列闭环增量
+
+- [x] 修复纯媒体关键词规则：即使 Telegram 更新同时带有 caption，也按媒体类型独立触发，不再要求消息文本为空。
+- [x] Worker 领取关键词动作时校验账号仍为 authorized 且 Session 密文存在；失效账号不再反复领取、重试同一动作。
+- [x] 租户订阅失效时只暂停 pending 和租约已过期的 processing 动作，不撤销仍在执行 Telegram RPC 的有效租约。
+- [x] 处理动作执行期间租户到期：成功 RPC 仍记录 sent；失败 RPC 转 paused，不继续自动重试；FloodWait 仍保存账号级冷却。
+- [x] 新增 PostgreSQL 集成测试覆盖授权账号领取、失效账号不领取、租户到期后的 in-flight 成功/失败结果，以及有效租约不被停用扫描清除。
+- [x] 新增租户行锁串行化关键词规则创建/启用时的 100 条启用规则上限，避免并发请求超限。
+
+
+## 2026-11-04 消息处理与人工回复队列闭环增量
+
+- [x] 回复任务领取仅接受仍处于 authorized 且 Session 密文存在的账号；失效账号任务留在队列中等待账号恢复，不会反复领取后空转。
+- [x] 租户停用/到期扫描只暂停 pending 和租约已过期的 processing 任务，不撤销仍在执行 Telegram RPC 的有效租约。
+- [x] Telegram 发送成功后，即使租户恰在 RPC 期间到期，仍持久化真实 sent 结果；发送失败则暂停任务，不在失效租户下继续重试。
+- [x] FloodWait 即使发生在租户到期边界，也保留账号级 Telegram 冷却，不能因暂停任务而丢失服务端等待要求。
+- [x] 新增 PostgreSQL 集成测试覆盖账号授权筛选、失效租户 live lease 保护、RPC 成功/失败写回和 FloodWait 冷却。
+
+
+## 2026-11-04 统一任务中心与加群子任务控制增量
+
+- [x] 修复任务中心对单个 group_join 子任务执行 pause/cancel 时直接清空 processing 租约的问题。
+- [x] 新增 migration 0054：`pause_requested` / `cancel_requested`。对正在执行的 Telegram RPC 只登记控制请求，不撤销租约；RPC 返回后根据实际结果和请求状态落库。
+- [x] 父级加群任务 pause/cancel 同样保留 in-flight lease；暂停后恢复会清除未完成的 pause request。
+- [x] Worker 处理重试/FloodWait/永久失败时消费 pause/cancel request；任务取消后不会因瞬时异常重新入队，暂停后不会继续自动重试。
+- [x] Worker 崩溃后，控制请求对应的 processing 租约到期时自动转为 paused/cancelled，不会被当作普通任务重新领取。
+- [x] 统一任务父级状态改为根据子任务状态派生，已取消父任务不会被子任务状态刷新重新激活。
+- [x] 增加 PostgreSQL 集成测试覆盖单子任务暂停/取消、父任务暂停及 in-flight RPC 结果落库。
+
+
+## 2026-11-04 群组重复实体合并资料保全（增量）
+
+- [x] 超管将重复公共群组合并到 canonical target 时，保留目标记录已有的标题和用户名；仅在目标字段为空时补入来源记录资料，避免合并后丢失唯一存在于来源记录中的基础资料。
+- [x] 成员数采用两条记录的较大值，认证标记采用 OR 合并；默认权限快照仍按 permissions_observed_at 的较新观测时间选择，最近发现时间取较大值。
+- [x] 新增 PostgreSQL 集成测试覆盖 canonical target 已有标题/缺少用户名时的资料保全、成员数与认证状态合并、较新权限快照优先、租户来源合并、发现次数与贡献数累计、来源链接迁移及重复源实体删除。
+- [x] 新增 TXT（TSV）目录导入/导出接口和 XLSX 目录导入/导出接口；XLSX 使用 Go 标准库 ZIP/XML 编解码，无新增第三方依赖。文件导入限 2 MiB、最多 10,000 行，仅首个工作表，按 insert-only 语义写入共享目录并记录租户贡献。\n- [x] 新增 PostgreSQL 并发导入集成测试：两个租户并发导入同一 Telegram 群组后只存在一个公共群实体，同时保留两个租户贡献记录。\n- [ ] 多租户并发采集 Worker 的断线恢复、租约到期重领和旧 Worker fencing 仍需补专项 PostgreSQL 集成测试；权限刷新和链接检查现有租约/重领/fencing 测试已覆盖。\n- [ ] 真实 Telegram 链接检查（有效/无效/审批邀请/FloodWait/账号断线）仍需真实账号专项验收，不能由模拟测试代替。
+
+
+## 2026-11-04 群组目录文件格式与并发验收增量
+
+- [x] 目录支持 CSV、制表符 TXT 和 XLSX 导入；支持 CSV、制表符 TXT 和 XLSX 导出，所有格式共用同一共享目录筛选和 insert-only 导入语义。
+- [x] XLSX 编解码使用 Go 标准库 ZIP/XML，不引入第三方 Excel 依赖；导入读取首个工作表，支持 shared strings、inline strings、数值及布尔单元格。
+- [x] 文件上传限制 2 MiB、最多 10,000 行；导入仍要求 tenant_admin，已有群资料不被导入文件覆盖，导入来源写入 tenant_group_contributions。
+- [x] 最新 CSV/TXT/群组合并测试提交对应 CI 已通过；XLSX 最新提交的 GitHub Actions 仍在执行，待最终完成后再标记 CI 通过。
+
+
+## 2026-11-04 自动加群模块闭环修正（phase-11）
+
+- [x] 新增失败任务重试 API：`POST /api/v1/join-tasks/{id}/retry`，复用租户隔离的 RetryJoinTask，仅重排仍授权账号的 failed 子任务，并保留显式授权检查。
+- [x] 修复从共享群组库选取的私密邀请链接审批同步：审批队列此前只读取任务直接输入的 private_invite_hash_ciphertext，遗漏 public_group_links.invite_ciphertext；现在查询及可领取条件均兼容两种加密来源，使用同一 AES-GCM 密钥在 Worker 内解密后调用 messages.checkChatInvite。
+- [x] 新增 PostgreSQL 集成测试，覆盖“由租户发现的私密邀请链接 -> 加群申请待审批 -> Worker 领取审批检查 -> 解密邀请 hash”闭环。
+- [x] 修复任务暂停期间在途 RPC 返回永久失败时被错误标记 failed 的问题；现在优先消费 pause_requested/父任务 paused，落为 paused；cancel 仍优先落为 cancelled。
+- [x] 扩展 PostgreSQL 集成测试覆盖父任务暂停期间在途 RPC 返回失败的状态保护。
+- [ ] 真实 Telegram 双账号验收仍需部署后验证公开加入、私密邀请、申请批准/拒绝、无效邀请、账号断线与 FloodWait；CI/模拟测试不代替真实 Telegram 结果。
+
+
+## 2026-11-04 监控回复模块闭环增量（phase-12）
+
+- [x] 修复 Redis incoming stream 的长期增长：入站事件在 PostgreSQL 持久化成功后，使用 Redis 事务同时 XACK 和 XDEL；未成功落库的消息仍留在 pending，可由 XAUTOCLAIM 重领。
+- [x] 修复发送结果不确定时的重复回复风险：网络超时、context deadline/cancel、EOF、连接重置、broken pipe 等不确定发送结果不再自动重试，回复任务/关键词动作进入 paused 并记录“send outcome uncertain”，等待人工核验 Telegram 对话后再恢复。
+- [x] Telegram 相册发送返回数量与请求数量不一致时明确标记 send outcome uncertain；避免可能部分成功的相册被自动重复发送。
+- [x] 已发布的 Redis 实时事件 outbox 增加 30 天保留清理，每 24 小时最多清理 1000 条；pending outbox 不会被清理。
+- [x] 新增测试覆盖模糊发送错误分类、回复与关键词动作在途发送结果不确定时转人工暂停，以及已发布 outbox 清理保留策略。
+- [ ] 仍需补 Redis 实例集成测试验证 XACK+XDEL 原子确认、消费者重领及 Redis 故障恢复；当前 CI 的 PostgreSQL 集成测试不替代真实 Redis 验收。
+- [ ] 仍需真实 Telegram 账号验证关键词文本/联系人/媒体/相册动作、部分相册异常、断线重连和 FloodWait。

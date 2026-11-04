@@ -60,6 +60,9 @@ func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, er
 	if filter.Offset < 0 {
 		filter.Offset = 0
 	}
+	if filter.Offset > 10000000 {
+		return filter, errors.New("task offset exceeds maximum")
+	}
 	return filter, nil
 }
 
@@ -105,7 +108,7 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 			SELECT ja.id::text, ja.task_id::text, 'group_join'::text, jt.name,
 				ja.status, ja.telegram_account_id::text,
 				COALESCE(NULLIF(a.display_name,''),a.phone,''),
-				ja.attempts, ja.available_at, ja.lease_until, ja.last_error,
+				ja.attempts, ja.available_at, CASE WHEN ja.status='request_pending' THEN ja.approval_check_lease_until ELSE ja.lease_until END, ja.last_error,
 				ja.created_at, ja.updated_at
 			FROM tenant_join_task_accounts ja
 			JOIN tenant_join_tasks jt ON jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id
@@ -113,7 +116,9 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 			WHERE ja.tenant_id=$1
 		`
 		const where = ` FROM (` + source + `) tasks
-			WHERE ($2='' OR tasks.status=$2)
+			WHERE ($2='' OR tasks.status=$2
+				OR ($2='queued' AND tasks.status IN ('pending','queued','request_pending'))
+				OR ($2='completed' AND tasks.status IN ('sent','joined','already_member','skipped','completed')))
 			  AND ($3='' OR tasks.task_type=$3)
 			  AND ($4='' OR tasks.account_id=$4)`
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)`+where, tenantID, filter.Status, filter.Type, filter.AccountID).Scan(&total); err != nil {

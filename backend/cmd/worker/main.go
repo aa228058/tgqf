@@ -63,9 +63,47 @@ func main() {
 	messageService := messages.New(store.DB, store.Redis)
 	var accountTenants sync.Map
 	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
+	manager.SetVoiceCallUpdateHandler(func(accountID string, callID int64, state string) {
+		tenantValue, ok := accountTenants.Load(accountID)
+		if !ok {
+			return
+		}
+		tenantID, ok := tenantValue.(string)
+		if !ok || tenantID == "" {
+			return
+		}
+		go func() {
+			for attempt := 0; attempt < 20; attempt++ {
+				if ctx.Err() != nil {
+					return
+				}
+				updateCtx, cancelUpdate := context.WithTimeout(ctx, 3*time.Second)
+				found, updateErr := messageService.UpdateKeywordVoiceCallState(updateCtx, tenantID, accountID, callID, state)
+				cancelUpdate()
+				if updateErr != nil {
+					logger.Warn("persist Telegram voice call update", "account_id", accountID, "call_id", callID, "state", state, "error", updateErr)
+					return
+				}
+				if found {
+					logger.Info("Telegram voice call state updated", "account_id", accountID, "call_id", callID, "state", state)
+					return
+				}
+				timer := time.NewTimer(250 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+			logger.Debug("ignored Telegram call update without a matching tenant action", "account_id", accountID, "call_id", callID, "state", state)
+		}()
+	})
 	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
-	manager.SetMessageHandler(func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool) {
-		if message == nil || message.Chat == nil { return }
+	manager.SetMessageHandler(func(accountID string, message *types.Message, _ int64, replyToOwn bool) {
+		if message == nil || message.Chat == nil {
+			return
+		}
 		chatType := ""
 		switch message.Chat.Type {
 		case types.ChatTypePrivate, types.ChatTypeDirect:
@@ -80,36 +118,87 @@ func main() {
 			return
 		}
 		tenantValue, ok := accountTenants.Load(accountID)
-		if !ok { return }
+		if !ok {
+			return
+		}
 		textBody := message.Text
-		if textBody == "" { textBody = message.Caption }
+		if textBody == "" {
+			textBody = message.Caption
+		}
 		mediaType := ""
-		if message.Media != nil { mediaType = string(message.Media.MediaType()) }
-		var defaultPermissionsJSON,accountRightsJSON []byte
-		if message.Chat.Permissions!=nil { defaultPermissionsJSON,_=json.Marshal(message.Chat.Permissions) }
-		accountRightsJSON,_=json.Marshal(map[string]any{
-			"is_admin":message.Chat.IsAdmin,"is_creator":message.Chat.IsCreator,
-			"admin_rights":message.Chat.AdminRights,"banned_rights":message.Chat.BannedRights,
-			"channel_admin_rights":message.Chat.ChannelAdminRights,"chat_admin_rights":message.Chat.ChatAdminRights,
+		var mediaMetadataJSON []byte
+		if message.Media != nil {
+			mediaType = string(message.Media.MediaType())
+			var marshalErr error
+			mediaMetadataJSON, marshalErr = json.Marshal(message.Media)
+			if marshalErr != nil {
+				logger.Warn("serialize incoming Telegram media metadata", "account_id", accountID, "message_id", message.ID, "error", marshalErr)
+				mediaMetadataJSON = nil
+			}
+			if len(mediaMetadataJSON) > 64*1024 {
+				logger.Warn("incoming Telegram media metadata exceeds limit", "account_id", accountID, "message_id", message.ID, "bytes", len(mediaMetadataJSON))
+				mediaMetadataJSON = nil
+			}
+		}
+		var defaultPermissionsJSON, accountRightsJSON []byte
+		if message.Chat.Permissions != nil {
+			defaultPermissionsJSON, _ = json.Marshal(message.Chat.Permissions)
+		}
+		accountRightsJSON, _ = json.Marshal(map[string]any{
+			"is_admin": message.Chat.IsAdmin, "is_creator": message.Chat.IsCreator,
+			"admin_rights": message.Chat.AdminRights, "banned_rights": message.Chat.BannedRights,
+			"channel_admin_rights": message.Chat.ChannelAdminRights, "chat_admin_rights": message.Chat.ChatAdminRights,
 		})
-		ingestCtx, cancelIngest := context.WithTimeout(ctx, 5*time.Second)
-		defer cancelIngest()
-		_, err := messageService.Ingest(ingestCtx, tenantValue.(string), messages.Incoming{
+		incoming := messages.Incoming{
 			AccountID: accountID, ChatID: message.ChatID, MessageID: int64(message.ID),
 			ChatType: chatType, ChatTitle: message.Chat.FullName(), ChatUsername: message.Chat.Username,
-			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified, DefaultPermissionsJSON:defaultPermissionsJSON, AccountRightsJSON:accountRightsJSON, SenderID: message.FromID, SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(), SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
+			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified,
+			DefaultPermissionsJSON: defaultPermissionsJSON, AccountRightsJSON: accountRightsJSON,
+			SenderID: message.FromID,
+			SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(),
+			SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
-			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MessageDate: message.Date,
-		})
-		if err != nil { logger.Warn("store filtered Telegram message", "account_id", accountID, "message_id", message.ID, "error", err) }
+			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MediaMetadataJSON: mediaMetadataJSON, GroupedID: message.GroupedID, MessageDate: message.Date,
+		}
+		// Do not acknowledge the MTGo callback until Redis has durably accepted
+		// the update. Retry transient Redis outages with bounded backoff.
+		delay := 250 * time.Millisecond
+		for {
+			enqueueCtx, cancelEnqueue := context.WithTimeout(ctx, 5*time.Second)
+			_, enqueueErr := messageService.EnqueueIncomingUpdate(enqueueCtx, tenantValue.(string), incoming)
+			cancelEnqueue()
+			if enqueueErr == nil {
+				return
+			}
+			if ctx.Err() != nil {
+				logger.Error("incoming Telegram update was not queued before shutdown", "account_id", accountID, "message_id", message.ID, "error", enqueueErr)
+				return
+			}
+			logger.Warn("queue incoming Telegram update; retrying", "account_id", accountID, "message_id", message.ID, "error", enqueueErr, "retry_in", delay.String())
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			delay *= 2
+			if delay > 5*time.Second {
+				delay = 5 * time.Second
+			}
+		}
 	})
 
 	lastSavedSessions := make(map[string]string)
+	lastAppliedProxies := make(map[string]string)
 	reconnects := make(map[string]reconnectState)
 	statusSynced := make(map[string]bool)
 	ticker := time.NewTicker(30*time.Second)
 	defer ticker.Stop()
 	lastProxySweep:=time.Time{}
+	lastPrivateInviteSweep:=time.Time{}
+	lastGroupPermissionSweep:=time.Time{}
+	lastMediaCacheSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
 	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
@@ -124,6 +213,8 @@ func main() {
 		}
 	}()
 	logger.Info("Telegram account worker started", "worker_id", workerID, "hostname", hostname)
+	go runIncomingUpdateLoop(ctx, messageService, workerID, logger)
+	go runMessageEventOutboxLoop(ctx, messageService, logger)
 	// Heartbeats run independently from queue processing. Telegram RPCs can
 	// legitimately take longer than one heartbeat interval; they must not make
 	// a live worker look stale merely because the main loop is busy.
@@ -144,7 +235,7 @@ func main() {
 		}
 	}()
 	for {
-		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
+		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, lastAppliedProxies, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
 		processKeywordActionJobs(ctx, messageService, manager, logger)
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
@@ -155,6 +246,36 @@ func main() {
 			go func(){
 				sweepCtx,cancelSweep:=context.WithTimeout(ctx,3*time.Minute);defer cancelSweep()
 				if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
+			}()
+		}
+		if time.Since(lastGroupPermissionSweep)>=30*time.Minute {
+			lastGroupPermissionSweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
+				accountTenants.Range(func(key,value any)bool {
+					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
+					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
+					if err:=refreshGroupPermissions(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
+						logger.Warn("refresh Telegram group permissions","account_id",accountID,"error",err)
+					}
+					return sweepCtx.Err()==nil
+				})
+			}()
+		}
+		if time.Since(lastMediaCacheSweep)>=24*time.Hour {
+			lastMediaCacheSweep=time.Now()
+			go func(){
+				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
+				seenTenants:=make(map[string]struct{})
+				accountTenants.Range(func(_,value any)bool {
+					tenantID,ok:=value.(string)
+					if !ok||tenantID=="" { return true }
+					if _,exists:=seenTenants[tenantID];exists{return true}
+					seenTenants[tenantID]=struct{}{}
+					removed,err:=messageService.PruneMessageMediaCache(sweepCtx,tenantID,90*24*time.Hour)
+					if err!=nil { logger.Warn("prune expired Telegram media cache links","tenant_id",tenantID,"error",err) } else if removed>0 { logger.Info("pruned expired Telegram media cache links","tenant_id",tenantID,"removed",removed) }
+					return sweepCtx.Err()==nil
+				})
 			}()
 		}
 		if time.Since(lastPrivateInviteSweep)>=15*time.Minute {
@@ -178,7 +299,11 @@ func main() {
 	}
 }
 
-func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
+func runtimeConfigChanged(currentSession, currentProxy, desiredSession, desiredProxy string) bool {
+	return currentSession != desiredSession || currentProxy != desiredProxy
+}
+
+func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, lastAppliedProxies map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
 	accountsList, err := accountsService.LoadAuthorizedRuntimeAccounts(ctx)
 	if err != nil { return err }
 	allowed := make(map[string]accounts.RuntimeAccount, len(accountsList))
@@ -189,12 +314,21 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 		if _, ok := allowed[id]; !ok {
 			if err := manager.Stop(id); err != nil { logger.Warn("stop inactive Telegram account", "account_id", id, "error", err) }
 			delete(lastSavedSessions, id)
+			delete(lastAppliedProxies, id)
 			delete(reconnects, id)
 			delete(statusSynced, id)
 			accountTenants.Delete(id)
 		}
 	}
 	for id, account := range allowed {
+		// Session or proxy settings can be edited while an MTGo client is online.
+		// Recreate the client so it uses the tenant's latest persisted configuration.
+		if manager.IsConnected(id) && lastSavedSessions[id] != "" && runtimeConfigChanged(lastSavedSessions[id], lastAppliedProxies[id], account.Session, account.ProxyJSON) {
+			if err := manager.Stop(id); err != nil {
+				logger.Warn("stop Telegram account after runtime config change", "account_id", id, "error", err)
+			}
+			delete(statusSynced, id)
+		}
 		if manager.IsConnected(id) {
 			delete(reconnects, id)
 			if account.ReconnectAttempts > 0 {
@@ -228,6 +362,7 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 				logger.Warn("clear Telegram reconnect state", "account_id", id, "error", clearErr)
 			}
 			lastSavedSessions[id] = account.Session
+			lastAppliedProxies[id] = account.ProxyJSON
 			logger.Info("Telegram account connected", "account_id", id)
 		}
 
@@ -302,7 +437,7 @@ func processReplyJobs(ctx context.Context, service *messages.Service, manager *t
 
 
 func processKeywordActionJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-    jobs,err:=service.ClaimKeywordActionJobs(ctx,1)
+    jobs,err:=service.ClaimKeywordActionJobs(ctx,10)
     if err!=nil {logger.Error("claim keyword action jobs","error",err);return}
     for _,job:=range jobs {
         if ctx.Err()!=nil{return}
@@ -320,6 +455,7 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
         var telegramMessageID int64
         var telegramMessageIDs []int64
         var sendErr error
+        var voiceCallResult telegrammtgo.VoiceCallRequestResult
         switch job.ActionType {
         case "", "text":
             telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
@@ -329,6 +465,8 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             var asset messages.MediaAssetContent
             asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,job.MediaAssetID)
             if sendErr==nil { telegramMessageID,sendErr=manager.SendMediaReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.MediaType,asset.FileName,asset.MIMEType,job.MediaCaption,asset.Content) }
+        case "voice_call":
+            voiceCallResult,sendErr=manager.RequestVoiceCall(sendCtx,job.AccountID,job.TargetUserID)
         case "media_album":
             album:=make([]telegrammtgo.MediaAlbumItem,0,len(job.MediaAlbumItems))
             for _,item:=range job.MediaAlbumItems {
@@ -346,8 +484,24 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
         }
         cancel()
-        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
         floodWait,_:=tgerr.AsFloodWait(sendErr)
+        if job.ActionType=="voice_call" {
+            if sendErr==nil {
+                if err:=service.FinishKeywordVoiceCall(ctx,job,voiceCallResult);err!=nil {
+                    logger.Error("persist Telegram voice call ringing result","job_id",job.ID,"error",err)
+                    continue
+                }
+                logger.Info("Telegram native voice call is ringing","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"call_id",voiceCallResult.CallID)
+            } else {
+                if err:=service.FinishKeywordAction(ctx,job,0,sendErr,floodWait);err!=nil {
+                    logger.Error("persist Telegram voice call failure","job_id",job.ID,"error",err)
+                    continue
+                }
+                logger.Warn("Telegram voice call request failed","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"error",sendErr)
+            }
+            continue
+        }
+        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
         if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait,telegramMessageIDs);err!=nil {
             logger.Error("persist keyword action result","job_id",job.ID,"error",err)
             continue
@@ -503,13 +657,21 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r\n\x1a\n" { fileName="profile.png" }
 				updateErr=manager.UpdateProfilePhoto(updateCtx,job.AccountID,job.PhotoData,fileName)
 			}
-			if updateErr==nil && job.GenerateUsername {
+			usernameResultUncertain := false
+			if updateErr==nil && job.GenerateUsername && job.AppliedUsername=="" {
 				var username string
 				for attempt:=0;attempt<8;attempt++ {
 					username,updateErr=generateRandomTelegramUsername(accounts.UsernameGenerationSettings{Prefix:job.UsernamePrefix,RandomLength:job.UsernameRandomLength,Charset:job.UsernameCharset})
 					if updateErr!=nil { break }
 					updateErr=manager.UpdateUsername(updateCtx,job.AccountID,username)
-					if updateErr==nil { job.AppliedUsername=username; break }
+					if updateErr==nil {
+						job.AppliedUsername=username
+						if persistErr:=accountService.RecordProfileUpdateUsername(updateCtx,job,username);persistErr!=nil {
+							usernameResultUncertain=true
+							updateErr=fmt.Errorf("Telegram username may have changed but its result could not be persisted: %w",persistErr)
+						}
+						break
+					}
 					if tgerr.IsUsernameOccupied(updateErr) { continue }
 					break
 				}
@@ -519,6 +681,13 @@ func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Serv
 			}
 			cancel()
 			if updateErr!=nil {
+				if usernameResultUncertain {
+					if pauseErr:=accountService.PauseProfileUpdate(ctx,job,updateErr.Error());pauseErr!=nil {
+						logger.Error("pause profile job after uncertain username update", "job_id",job.ID,"error",pauseErr)
+					}
+					logger.Warn("profile update paused because Telegram username outcome is uncertain","job_id",job.ID,"account_id",job.AccountID,"error",updateErr)
+					continue
+				}
 				floodWait,_:=tgerr.AsFloodWait(updateErr)
 				if floodWait>0 {
 					logger.Warn("Telegram profile update FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
@@ -634,4 +803,121 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 		}
 	}
 	return nil
+}
+
+
+func refreshGroupPermissions(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
+	for {
+		if ctx.Err()!=nil{return ctx.Err()}
+		items,err:=service.ListGroupPermissionRefreshes(ctx,tenantID,accountID,5)
+		if err!=nil{return err}
+		if len(items)==0{return nil}
+		for _,item:=range items {
+			if ctx.Err()!=nil{return ctx.Err()}
+			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+			chat,checkErr:=manager.GetChatMetadata(checkCtx,accountID,item.ChatID)
+			cancel()
+			var defaultPermissions,accountRights []byte
+			if checkErr==nil {
+				if chat.Permissions!=nil {
+					defaultPermissions,checkErr=json.Marshal(chat.Permissions)
+				}
+				if checkErr==nil {
+					accountRights,checkErr=json.Marshal(map[string]any{
+						"is_admin":chat.IsAdmin,"is_creator":chat.IsCreator,
+						"admin_rights":chat.AdminRights,"banned_rights":chat.BannedRights,
+						"channel_admin_rights":chat.ChannelAdminRights,"chat_admin_rights":chat.ChatAdminRights,
+					})
+				}
+				item.Title=chat.FullName()
+				item.Username=chat.Username
+				item.MemberCount=chat.MembersCount
+				item.IsVerified=chat.IsVerified
+			}
+			if persistErr:=service.RecordGroupPermissionRefresh(ctx,tenantID,accountID,item,defaultPermissions,accountRights,checkErr);persistErr!=nil {
+				logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
+			}
+		}
+	}
+}
+
+
+// processIncomingUpdates commits queued Telegram updates to PostgreSQL before
+// acknowledging their Redis Stream deliveries. Failed writes remain pending and
+// are reclaimed after the visibility timeout by a live or replacement worker.
+func processIncomingUpdates(ctx context.Context, service *messages.Service, consumer string, logger *slog.Logger) {
+	events, err := service.ReadIncomingUpdates(ctx, consumer, 100)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Warn("read incoming Telegram update queue", "error", err)
+		}
+		return
+	}
+	for _, event := range events {
+		if ctx.Err() != nil {
+			return
+		}
+		if event.DecodeErr != nil {
+			logger.Error("discard malformed incoming Telegram update", "stream_id", event.ID, "error", event.DecodeErr)
+			ackCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			if ackErr := service.AckIncomingUpdate(ackCtx, event.ID); ackErr != nil {
+				logger.Warn("ack malformed incoming Telegram update", "stream_id", event.ID, "error", ackErr)
+			}
+			cancel()
+			continue
+		}
+		ingestCtx, cancelIngest := context.WithTimeout(ctx, 15*time.Second)
+		_, ingestErr := service.Ingest(ingestCtx, event.TenantID, event.Incoming)
+		cancelIngest()
+		if ingestErr != nil {
+			logger.Warn("persist queued Telegram update; delivery remains pending", "stream_id", event.ID, "account_id", event.Incoming.AccountID, "message_id", event.Incoming.MessageID, "error", ingestErr)
+			continue
+		}
+		ackCtx, cancelAck := context.WithTimeout(ctx, 3*time.Second)
+		if ackErr := service.AckIncomingUpdate(ackCtx, event.ID); ackErr != nil {
+			logger.Warn("ack persisted Telegram update; duplicate-safe replay will recover", "stream_id", event.ID, "error", ackErr)
+		}
+		cancelAck()
+	}
+}
+
+
+func runIncomingUpdateLoop(ctx context.Context, service *messages.Service, consumer string, logger *slog.Logger) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		processIncomingUpdates(ctx, service, consumer, logger)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func runMessageEventOutboxLoop(ctx context.Context, service *messages.Service, logger *slog.Logger) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	lastPrune := time.Now()
+	for {
+		if _, err := service.PublishPendingMessageEvents(ctx, 100); err != nil && ctx.Err() == nil {
+			logger.Warn("publish committed message events", "error", err)
+		}
+		if time.Since(lastPrune) >= 24*time.Hour {
+			pruneCtx, cancelPrune := context.WithTimeout(ctx, 10*time.Second)
+			removed, err := service.PrunePublishedMessageEvents(pruneCtx, 30*24*time.Hour, 1000)
+			cancelPrune()
+			if err != nil {
+				logger.Warn("prune delivered message event outbox", "error", err)
+			} else if removed > 0 {
+				logger.Info("pruned delivered message event outbox", "rows", removed)
+			}
+			lastPrune = time.Now()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

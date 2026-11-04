@@ -23,6 +23,11 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
     if limit<1||limit>50 { limit=10 }
     jobs:=[]JoinTaskJob{}
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+        if _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET
+            status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'paused' END,
+            pause_requested=FALSE,cancel_requested=FALSE,lease_until=NULL,updated_at=NOW()
+            WHERE tenant_id=$1 AND status='processing' AND lease_until<=NOW()
+              AND (pause_requested=TRUE OR cancel_requested=TRUE)`,tenantID);err!=nil{return err}
         rows,err:=tx.QueryContext(ctx,`
             WITH picked AS (
                 SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,a.attempts,
@@ -53,17 +58,20 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 LIMIT $2 FOR UPDATE OF t,a,acc SKIP LOCKED
             ), claimed AS (
                 UPDATE tenant_join_task_accounts a
-                SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
+                SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,pause_requested=FALSE,cancel_requested=FALSE,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,a.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
+                RETURNING a.tenant_id,a.task_id,a.id,a.telegram_account_id,a.attempts,a.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts acc SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE acc.tenant_id=c.tenant_id AND acc.id=c.telegram_account_id
-                RETURNING acc.id
+                RETURNING acc.tenant_id,acc.id
             )
-            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.attempts,c.target_url,c.private_invite_hash_ciphertext,c.lease_until
-            FROM claimed c JOIN scheduled s ON TRUE
+            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.attempts,
+                   p.target_url,p.private_invite_hash_ciphertext,c.lease_until
+            FROM claimed c
+            JOIN picked p ON p.tenant_id=c.tenant_id AND p.id=c.id
+            JOIN scheduled s ON s.tenant_id=c.tenant_id AND s.id=c.telegram_account_id
         `,tenantID,limit)
         if err!=nil{return err};defer rows.Close()
         for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.Attempts,&job.TargetURL,&job.PrivateInviteCiphertext,&job.LeaseUntil);err!=nil{return err};if len(job.PrivateInviteCiphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(job.PrivateInviteCiphertext);if decryptErr!=nil{return decryptErr};job.TargetURL="https://t.me/+"+hash };jobs=append(jobs,job)}
@@ -79,7 +87,7 @@ func (s *Service) CompleteJoinTaskAccount(ctx context.Context,job JoinTaskJob,ch
     if applicationStatus!="request_pending"&&applicationStatus!="already_member"&&applicationStatus!="not_required" {return errors.New("invalid join task result")}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,telegram_chat_id=NULLIF($3,0),lease_until=NULL,last_error='',updated_at=NOW()
+        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,telegram_chat_id=NULLIF($3,0),lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error='',updated_at=NOW()
             WHERE tenant_id=$4 AND task_id=$5 AND id=$6 AND status='processing' AND lease_until=$7`,status,applicationStatus,chatID,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
@@ -94,35 +102,53 @@ func joinTaskCooldownSeconds(wait time.Duration) int64 {
 }
 
 func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,wait time.Duration,reason string)error {
-    seconds:=joinTaskCooldownSeconds(wait)
-    if seconds<=0{return errors.New("positive FloodWait duration is required")}
-    if len(reason)>500 {reason=reason[:500]}
-    return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
-        if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-        // Validate and consume the exact lease before mutating account-wide
-        // cooldown state. A stale worker must not delay newer work after its
-        // lease has been reclaimed by another worker.
-        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),lease_until=NULL,last_error=$2,updated_at=NOW()
-            WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='processing' AND lease_until=$6`,seconds,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
-        if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return nil}
-        if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET
-            join_flood_wait_until=GREATEST(COALESCE(join_flood_wait_until,NOW()),NOW()+($1 * INTERVAL '1 second')),
-            telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second'))
-            WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
-        if _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
-            WHERE tenant_id=$2 AND id=$3 AND status='queued'`,seconds,job.TenantID,job.TaskID);err!=nil{return err}
-        _,err=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),lease_until=NULL,last_error=$2,updated_at=NOW()
-            WHERE tenant_id=$3 AND id<>$4 AND (telegram_account_id=$5 OR task_id=$6) AND status IN ('processing','queued')`,seconds,strings.TrimSpace(reason),job.TenantID,job.AccountRowID,job.AccountID,job.TaskID)
-        return err
-    })
+	seconds:=joinTaskCooldownSeconds(wait)
+	if seconds<=0{return errors.New("positive FloodWait duration is required")}
+	if len(reason)>500 {reason=reason[:500]}
+	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
+		// Consume only this exact lease. Pause/cancel stops future work without
+		// invalidating a Telegram RPC that is already running.
+		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
+			status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'queued' END,
+			available_at=CASE WHEN NOT a.cancel_requested AND NOT a.pause_requested AND t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
+			lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$2,updated_at=NOW()
+			FROM tenant_join_tasks t
+			WHERE a.tenant_id=$3 AND a.task_id=$4 AND a.id=$5 AND a.status='processing' AND a.lease_until=$6
+			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,
+			seconds,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+		if err!=nil{return err}
+		n,_:=res.RowsAffected()
+		if n==0{return nil}
+		// FloodWait is account-wide and must be respected even if the task was
+		// paused or cancelled while the RPC was in flight.
+		if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET
+			join_flood_wait_until=GREATEST(COALESCE(join_flood_wait_until,NOW()),NOW()+($1 * INTERVAL '1 second')),
+			telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second'))
+			WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID);err!=nil{return err}
+		if _,err:=tx.ExecContext(ctx,`UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
+			WHERE tenant_id=$2 AND id=$3 AND status='queued'`,seconds,job.TenantID,job.TaskID);err!=nil{return err}
+		// Delay queued rows only. Never release another worker's processing lease.
+		_,err=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
+			available_at=GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')),updated_at=NOW()
+			FROM tenant_join_tasks t
+			WHERE a.tenant_id=$2 AND a.id<>$3 AND (a.telegram_account_id=$4 OR a.task_id=$5)
+			  AND a.status='queued' AND t.tenant_id=a.tenant_id AND t.id=a.task_id AND t.status='queued'`,
+			seconds,job.TenantID,job.AccountRowID,job.AccountID,job.TaskID)
+		return err
+	})
 }
 
 func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason string)error {
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status='failed',lease_until=NULL,last_error=$1,updated_at=NOW()
-            WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='processing' AND lease_until=$5`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+        res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
+				status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'failed' END,
+				lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$1,updated_at=NOW()
+			FROM tenant_join_tasks t
+			WHERE a.tenant_id=$2 AND a.task_id=$3 AND a.id=$4 AND a.status='processing' AND a.lease_until=$5
+			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
     })
@@ -140,26 +166,29 @@ func joinTaskRetryDelay(attempt int) time.Duration {
 }
 
 func (s *Service) RescheduleJoinTaskRetry(ctx context.Context, job JoinTaskJob, reason string) error {
-    if job.Attempts >= 5 {
-        return s.FailJoinTaskAccount(ctx, job, "retry limit reached: "+reason)
-    }
-    delay := joinTaskRetryDelay(job.Attempts)
-    if len(reason) > 500 { reason = reason[:500] }
-    return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
-        if err := lockJoinTaskParent(ctx, tx, job.TenantID, job.TaskID); err != nil { return err }
-        res, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts
-            SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),
-                lease_until=NULL,last_error=$2,updated_at=NOW()
-            WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='processing' AND lease_until=$6`,
-            int64(delay/time.Second), strings.TrimSpace(reason), job.TenantID, job.TaskID, job.AccountRowID, job.LeaseUntil)
-        if err != nil { return err }
-        n, err := res.RowsAffected()
-        if err != nil { return err }
-        if n == 0 { return errors.New("join task lease expired or was cancelled") }
-        _, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
-            WHERE tenant_id=$2 AND id=$3 AND status='queued'`, int64(delay/time.Second), job.TenantID, job.TaskID)
-        return err
-    })
+	if job.Attempts >= 5 {
+		return s.FailJoinTaskAccount(ctx, job, "retry limit reached: "+reason)
+	}
+	delay := joinTaskRetryDelay(job.Attempts)
+	if len(reason) > 500 { reason = reason[:500] }
+	return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+		if err := lockJoinTaskParent(ctx, tx, job.TenantID, job.TaskID); err != nil { return err }
+		res, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts a SET
+			status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'queued' END,
+			available_at=CASE WHEN NOT a.cancel_requested AND NOT a.pause_requested AND t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
+			lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$2,updated_at=NOW()
+			FROM tenant_join_tasks t
+			WHERE a.tenant_id=$3 AND a.task_id=$4 AND a.id=$5 AND a.status='processing' AND a.lease_until=$6
+			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,
+			int64(delay/time.Second), strings.TrimSpace(reason), job.TenantID, job.TaskID, job.AccountRowID, job.LeaseUntil)
+		if err != nil { return err }
+		n, err := res.RowsAffected()
+		if err != nil { return err }
+		if n == 0 { return errors.New("join task lease expired or was cancelled") }
+		_, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
+			WHERE tenant_id=$2 AND id=$3 AND status='queued'`, int64(delay/time.Second), job.TenantID, job.TaskID)
+		return err
+	})
 }
 
 func lockJoinTaskParent(ctx context.Context, tx *sql.Tx, tenantID, taskID string) error {
@@ -170,15 +199,7 @@ func lockJoinTaskParent(ctx context.Context, tx *sql.Tx, tenantID, taskID string
 }
 
 func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string)error {
-    _,err:=tx.ExecContext(ctx,`
-        UPDATE tenant_join_tasks t SET status=CASE
-            WHEN EXISTS(SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='failed') THEN 'failed'
-            ELSE 'completed' END,updated_at=NOW()
-        WHERE t.tenant_id=$1 AND t.id=$2 AND t.status IN ('queued','paused')
-          AND NOT EXISTS(SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id
-              AND a.status NOT IN ('joined','already_member','skipped','failed','cancelled'))
-    `,tenantID,taskID)
-    return err
+	return refreshJoinTaskControlStatus(ctx,tx,tenantID,taskID)
 }
 
 type JoinApprovalJob struct {
@@ -198,7 +219,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
   rows,err:=tx.QueryContext(ctx,`WITH due AS (
     SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
            COALESCE(a.telegram_chat_id,g.telegram_chat_id,0) AS chat_id,
-           t.private_invite_hash_ciphertext
+           COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) AS private_invite_hash_ciphertext
     FROM tenant_join_task_accounts a
     JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
     LEFT JOIN public_group_links l ON l.id=t.target_link_id
@@ -206,7 +227,7 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
     WHERE a.tenant_id=$1 AND t.status='queued' AND a.status='request_pending'
       AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
-      AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
+      AND (COALESCE(a.telegram_chat_id,g.telegram_chat_id) IS NOT NULL OR COALESCE(t.private_invite_hash_ciphertext,l.invite_ciphertext) IS NOT NULL)
       AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
       AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
     ORDER BY a.updated_at,a.id
@@ -215,10 +236,13 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
     UPDATE tenant_join_task_accounts a
     SET approval_check_lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
     FROM due p WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-    RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.chat_id,p.private_invite_hash_ciphertext,a.approval_check_lease_until
+    RETURNING a.tenant_id,a.task_id,a.id,a.telegram_account_id,a.approval_check_lease_until
    )
-   SELECT tenant_id::text,task_id::text,id,telegram_account_id::text,chat_id,private_invite_hash_ciphertext,approval_check_lease_until
-   FROM claimed ORDER BY id`,tenantID,limit)
+   SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,
+          d.chat_id,d.private_invite_hash_ciphertext,c.approval_check_lease_until
+   FROM claimed c
+   JOIN due d ON d.tenant_id=c.tenant_id AND d.id=c.id
+   ORDER BY c.id`,tenantID,limit)
   if err!=nil{return err}
   defer rows.Close()
   for rows.Next(){

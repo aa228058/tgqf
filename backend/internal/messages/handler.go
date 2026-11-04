@@ -2,18 +2,20 @@ package messages
 
 import (
 	"bytes"
-	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"mime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/auth"
+	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 )
 
 func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
@@ -32,8 +34,8 @@ func decodeMessageJSON(w http.ResponseWriter, r *http.Request, limit int64, dst 
 	return nil
 }
 
-type Handler struct { service *Service; auth *auth.Handler }
-func NewHandler(service *Service,authHandler *auth.Handler)*Handler{return &Handler{service:service,auth:authHandler}}
+type Handler struct { service *Service; auth *auth.Handler; telegram *telegrammtgo.Manager }
+func NewHandler(service *Service,authHandler *auth.Handler, managers ...*telegrammtgo.Manager)*Handler{ h:=&Handler{service:service,auth:authHandler};if len(managers)>0{h.telegram=managers[0]};return h }
 func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/tasks",h.auth.Authenticated(http.HandlerFunc(h.unifiedTasks)))
 	mux.Handle("GET /api/v1/tasks/summary",h.auth.Authenticated(http.HandlerFunc(h.unifiedTaskSummary)))
@@ -56,12 +58,19 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/join-tasks/{id}",h.auth.Authenticated(http.HandlerFunc(h.joinTask)))
 	mux.Handle("POST /api/v1/join-tasks/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.joinTaskAction)))
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
+	mux.Handle("GET /api/v1/messages/{id}/media",h.auth.Authenticated(http.HandlerFunc(h.messageMedia)))
+	mux.Handle("GET /api/v1/messages/{id}/album",h.auth.Authenticated(http.HandlerFunc(h.messageAlbum)))
 	mux.Handle("GET /api/v1/messages/events",h.auth.Authenticated(http.HandlerFunc(h.events)))
 	mux.Handle("GET /api/v1/messages/chats",h.auth.Authenticated(http.HandlerFunc(h.listChats)))
 	mux.Handle("GET /api/v1/groups",h.auth.Authenticated(http.HandlerFunc(h.listGroupLibrary)))
 	mux.Handle("GET /api/v1/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.getGroupLibraryItem)))
 	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
+	mux.Handle("GET /api/v1/groups/export.txt",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryTXT)))
+	mux.Handle("GET /api/v1/groups/export.xlsx",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryXLSX)))
 	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
+	mux.Handle("POST /api/v1/groups/catalogue/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueCSV)))
+	mux.Handle("POST /api/v1/groups/catalogue/import.txt",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueTXT)))
+	mux.Handle("POST /api/v1/groups/catalogue/import.xlsx",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueXLSX)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
 	mux.Handle("GET /api/v1/group-links/stats",h.auth.Authenticated(http.HandlerFunc(h.groupLinkStats)))
 	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
@@ -143,7 +152,7 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 	taskType, id, action := r.PathValue("type"), r.PathValue("id"), r.PathValue("action")
 	if err := h.service.ChangeUnifiedTaskStatus(r.Context(), user.TenantID, taskType, id, action); err != nil {
 		status := http.StatusConflict
-		if err.Error() == "invalid task type" || err.Error() == "unsupported task action" || err.Error() == "invalid task" {
+		if err.Error() == "invalid task type" || err.Error() == "unsupported task action" || err.Error() == "invalid task" || err.Error() == "invalid task id" || err.Error() == "invalid group join task id" {
 			status = http.StatusBadRequest
 		}
 		messageJSON(w, status, map[string]string{"error": err.Error()})
@@ -152,12 +161,67 @@ func (h *Handler) unifiedTaskAction(w http.ResponseWriter, r *http.Request) {
 	messageJSON(w, http.StatusOK, map[string]any{"type": taskType, "id": id, "status": "updated"})
 }
 
+
+func (h *Handler) messageAlbum(w http.ResponseWriter,r *http.Request) {
+	user:=auth.UserFromContext(r.Context())
+	items,err:=h.service.ListMediaAlbum(r.Context(),user.TenantID,r.PathValue("id"))
+	if err!=nil {
+		if err.Error()=="message not found"{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message not found"})}else{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load media album"})}
+		return
+	}
+	messageJSON(w,http.StatusOK,map[string]any{"messages":items,"total":len(items)})
+}
+
+func (h *Handler) messageMedia(w http.ResponseWriter,r *http.Request){
+ user:=auth.UserFromContext(r.Context())
+ identity,err:=h.service.GetMediaIdentity(r.Context(),user.TenantID,r.PathValue("id"))
+ if err!=nil{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message media not found"});return}
+ if strings.TrimSpace(identity.MediaType)==""{messageJSON(w,http.StatusNotFound,map[string]string{"error":"message has no media"});return}
+
+ // Serve a tenant-scoped cached copy first. Cache misses fall through to MTGo.
+ cached,cacheErr:=h.service.GetCachedMessageMedia(r.Context(),user.TenantID,identity.AccountID,identity.ChatID,identity.MessageID)
+ var data []byte
+ contentType:=""
+ filename:="telegram-media"
+ if cacheErr==nil {
+  data=cached.Content
+  contentType=cached.MIMEType
+  filename=cached.FileName
+ } else {
+  if h.telegram==nil{messageJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Telegram runtime is not configured"});return}
+  data,err=h.telegram.DownloadMessageMedia(r.Context(),identity.AccountID,identity.ChatID,identity.MessageID)
+  if err!=nil{messageJSON(w,http.StatusBadGateway,map[string]string{"error":"Telegram media could not be retrieved"});return}
+  contentType=http.DetectContentType(data)
+  if extensions,extErr:=mime.ExtensionsByType(contentType);extErr==nil&&len(extensions)>0{filename+=extensions[0]}
+  // Cache failures must not make a successful Telegram download unavailable.
+  // The asset store enforces a per-object size limit and tenant-scoped dedup.
+  _,_=h.service.CacheMessageMedia(r.Context(),user.TenantID,identity.AccountID,identity.ChatID,identity.MessageID,filename,contentType,data)
+ }
+ // Only well-known raster formats are rendered inline. Other formats are
+ // downloads, including SVG/HTML and unknown documents.
+ disposition:="attachment"
+ switch contentType {case "image/jpeg","image/png","image/gif","image/webp":disposition="inline"}
+ w.Header().Set("Content-Type",contentType)
+ w.Header().Set("Content-Length",strconv.Itoa(len(data)))
+ w.Header().Set("Content-Disposition",mime.FormatMediaType(disposition,map[string]string{"filename":filename}))
+ w.Header().Set("Cache-Control","private, no-store, max-age=0")
+ w.Header().Set("Content-Security-Policy","default-src 'none'; sandbox")
+ w.Header().Set("X-Content-Type-Options","nosniff")
+ w.WriteHeader(http.StatusOK);_,_=w.Write(data)
+}
+
 func(h *Handler)list(w http.ResponseWriter,r *http.Request){
 	user:=auth.UserFromContext(r.Context())
 	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
-	include:=r.URL.Query().Get("include_processed")=="true"
-	items,total,err:=h.service.List(r.Context(),user.TenantID,ListOptions{Limit:limit,Offset:offset,IncludeProcessed:include})
-	if err!=nil{messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to load messages"});return}
+	include,parseErr:=strconv.ParseBool(r.URL.Query().Get("include_processed"))
+	if parseErr!=nil&&r.URL.Query().Get("include_processed")!=""{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid include_processed filter"});return}
+	chatID:=int64(0)
+	if raw:=strings.TrimSpace(r.URL.Query().Get("chat_id"));raw!=""{var err error;chatID,err=strconv.ParseInt(raw,10,64);if err!=nil||chatID==0{messageJSON(w,http.StatusBadRequest,map[string]string{"error":"invalid chat_id filter"});return}}
+	items,total,err:=h.service.List(r.Context(),user.TenantID,ListOptions{
+		Limit:limit,Offset:offset,IncludeProcessed:include,AccountID:r.URL.Query().Get("account_id"),
+		ChatID:chatID,ChatType:r.URL.Query().Get("chat_type"),MediaType:r.URL.Query().Get("media_type"),Query:r.URL.Query().Get("q"),
+	})
+	if err!=nil{messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()});return}
 	messageJSON(w,http.StatusOK,map[string]any{"messages":items,"total":total,"limit":normalizeLimit(limit),"offset":max(0,offset)})
 }
 func(h *Handler)markProcessed(w http.ResponseWriter,r *http.Request){
@@ -363,6 +427,58 @@ func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
 	w.Header().Set("Content-Type","text/csv; charset=utf-8");w.Header().Set("Content-Disposition",`attachment; filename="public-groups.csv"`);w.WriteHeader(http.StatusOK);_,_=w.Write(output.Bytes())
 }
 
+
+
+func (h *Handler) exportGroupLibraryXLSX(w http.ResponseWriter, r *http.Request) {
+	recorder:=httptest.NewRecorder()
+	h.exportGroupLibraryCSV(recorder,r)
+	if recorder.Code!=http.StatusOK {
+		messageJSON(w,recorder.Code,map[string]string{"error":"failed to prepare group catalogue export"})
+		return
+	}
+	reader:=csv.NewReader(recorder.Body)
+	rows,err:=reader.ReadAll()
+	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to read group catalogue export"});return }
+	data,err:=buildGroupCatalogueXLSX(rows)
+	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to generate XLSX workbook"});return }
+	w.Header().Set("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition",`attachment; filename="public-groups.xlsx"`)
+	w.Header().Set("Content-Length",strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK);_,_=w.Write(data)
+}
+
+func (h *Handler) exportGroupLibraryTXT(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	filter := GroupLibraryFilter{ChatType:r.URL.Query().Get("chat_type"),Query:r.URL.Query().Get("q"),Sort:r.URL.Query().Get("sort")}
+	if raw:=strings.TrimSpace(r.URL.Query().Get("verified")); raw!="" { v,err:=strconv.ParseBool(raw); if err!=nil { http.Error(w,"invalid verified filter",http.StatusBadRequest); return }; filter.Verified=&v }
+	parse:=func(key string)(int,error){ raw:=strings.TrimSpace(r.URL.Query().Get(key)); if raw=="" { return 0,nil }; return strconv.Atoi(raw) }
+	var err error
+	if filter.MinMembers,err=parse("min_members"); err!=nil { http.Error(w,"invalid min_members",http.StatusBadRequest); return }
+	if filter.MaxMembers,err=parse("max_members"); err!=nil { http.Error(w,"invalid max_members",http.StatusBadRequest); return }
+	if filter.MinSources,err=parse("min_sources"); err!=nil { http.Error(w,"invalid min_sources",http.StatusBadRequest); return }
+	if filter.MinContributors,err=parse("min_contributors"); err!=nil { http.Error(w,"invalid min_contributors",http.StatusBadRequest); return }
+	if _,_,e:=normalizeGroupLibraryFilters(filter.ChatType,filter.Query); e!=nil { http.Error(w,"invalid group filters",http.StatusBadRequest); return }
+	if e:=validateGroupLibraryFilter(filter); e!=nil { http.Error(w,"invalid group filters",http.StatusBadRequest); return }
+	maxRows:=10000
+	if raw:=r.URL.Query().Get("max_rows"); raw!="" { v,e:=strconv.Atoi(raw); if e!=nil||v<1||v>10000 { http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest); return }; maxRows=v }
+	var output bytes.Buffer
+	writer:=csv.NewWriter(&output); writer.Comma='\t'
+	_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
+	for offset:=0; offset<maxRows; offset+=100 {
+		limit:=100; if offset+limit>maxRows { limit=maxRows-offset }
+		items,_,listErr:=h.service.ListGroupLibraryFiltered(r.Context(),user.TenantID,filter,limit,offset)
+		if listErr!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to export public groups"}); return }
+		for _,item:=range items { observed:=""; if item.PermissionsObservedAt!=nil { observed=item.PermissionsObservedAt.UTC().Format(time.RFC3339) }
+			_ = writer.Write([]string{strconv.FormatInt(item.ID,10),strconv.FormatInt(item.ChatID,10),item.Title,item.ChatType,item.Username,strconv.Itoa(item.MemberCount),strconv.FormatBool(item.IsVerified),string(item.DefaultPermissions),observed,strconv.Itoa(item.SourceCount),strconv.Itoa(item.ContributorCount),item.LastSeenAt.UTC().Format(time.RFC3339)})
+		}
+		if len(items)<limit { break }
+	}
+	writer.Flush(); if err:=writer.Error(); err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to encode public groups"}); return }
+	w.Header().Set("Content-Type","text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition",`attachment; filename="public-groups.txt"`)
+	w.WriteHeader(http.StatusOK); _,_=w.Write(output.Bytes())
+}
+
 func (h *Handler) importGroupCorrectionsCSV(w http.ResponseWriter,r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
 	if user.Role!="tenant_admin"{messageJSON(w,http.StatusForbidden,map[string]string{"error":"tenant_admin_required"});return}
@@ -410,9 +526,29 @@ func (h *Handler) getGroupLibraryItem(w http.ResponseWriter, r *http.Request) {
 	messageJSON(w, http.StatusOK, map[string]any{"group":item})
 }
 
+func parseGroupLibraryPagination(rawLimit, rawOffset string) (int, int, error) {
+	limit, offset := 50, 0
+	if strings.TrimSpace(rawLimit) != "" {
+		value, err := strconv.Atoi(strings.TrimSpace(rawLimit))
+		if err != nil || value < 1 || value > 100 {
+			return 0, 0, ErrInvalidGroupLibraryQuery
+		}
+		limit = value
+	}
+	if strings.TrimSpace(rawOffset) != "" {
+		value, err := strconv.Atoi(strings.TrimSpace(rawOffset))
+		if err != nil || value < 0 || value > 10000000 {
+			return 0, 0, ErrInvalidGroupLibraryQuery
+		}
+		offset = value
+	}
+	return limit, offset, nil
+}
+
 func (h *Handler) listGroupLibrary(w http.ResponseWriter, r *http.Request) {
 	user:=auth.UserFromContext(r.Context())
-	limit,_:=strconv.Atoi(r.URL.Query().Get("limit"));offset,_:=strconv.Atoi(r.URL.Query().Get("offset"))
+	limit,offset,paginationErr:=parseGroupLibraryPagination(r.URL.Query().Get("limit"),r.URL.Query().Get("offset"))
+	if paginationErr!=nil { messageJSON(w,http.StatusBadRequest,map[string]string{"error":paginationErr.Error()});return }
 	filter:=GroupLibraryFilter{ChatType:r.URL.Query().Get("chat_type"),Query:r.URL.Query().Get("q"),Sort:r.URL.Query().Get("sort")}
 	parseInt:=func(key string)(int,error){raw:=strings.TrimSpace(r.URL.Query().Get(key));if raw==""{return 0,nil};v,err:=strconv.Atoi(raw);if err!=nil{return 0,ErrInvalidGroupLibraryQuery};return v,nil}
 	var err error

@@ -96,6 +96,8 @@ func TestKeywordRuleMediaOnly(t *testing.T) {
 	if err!=nil {t.Fatalf("media-only rule rejected: %v",err)}
 	matched,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo"})
 	if !ok || len(matched)!=1 || matched[0]!="media:photo" {t.Fatalf("media-only match = %v, %v",matched,ok)}
+	matched,ok=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo",Text:"a caption"})
+	if !ok || len(matched)!=1 || matched[0]!="media:photo" {t.Fatalf("media-only rule must also match captioned media = %v, %v",matched,ok)}
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"video"});ok {t.Fatal("wrong media type matched")}
 	if _,ok:=keywordRuleMatches(rule,Incoming{ChatType:"private",MediaType:"photo",IsOutgoing:true});ok {t.Fatal("outgoing media matched")}
 }
@@ -289,5 +291,35 @@ func TestKeywordActionRecordSerializesAllTelegramMessageIDs(t *testing.T) {
     if err := json.Unmarshal(encoded, &decoded); err != nil { t.Fatal(err) }
     if len(decoded.TelegramMessageIDs) != 3 || decoded.TelegramMessageIDs[0] != 101 || decoded.TelegramMessageIDs[2] != 103 {
         t.Fatalf("Telegram message IDs were not preserved: %#v", decoded.TelegramMessageIDs)
+    }
+}
+
+
+func TestNormalizeKeywordVoiceCallActionRequiresPrivateChat(t *testing.T) {
+    rule, err := normalizeKeywordRule(KeywordRule{
+        Name: "call on greeting",
+        MatchMode: "any",
+        Keywords: []string{"hello"},
+        ChatTypes: []string{"private"},
+        ActionType: "voice_call",
+        Enabled: true,
+    })
+    if err != nil {
+        t.Fatalf("normalize private voice-call rule: %v", err)
+    }
+    if rule.ActionType != "voice_call" || len(rule.ChatTypes) != 1 || rule.ChatTypes[0] != "private" {
+        t.Fatalf("unexpected normalized voice-call rule: %#v", rule)
+    }
+
+    _, err = normalizeKeywordRule(KeywordRule{
+        Name: "do not call group members",
+        MatchMode: "any",
+        Keywords: []string{"hello"},
+        ChatTypes: []string{"group"},
+        ActionType: "voice_call",
+        Enabled: true,
+    })
+    if err == nil {
+        t.Fatal("expected voice-call rules targeting group messages to be rejected")
     }
 }

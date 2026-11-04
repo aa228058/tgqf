@@ -161,7 +161,9 @@ func (s *Service) StartJoinTask(ctx context.Context,tenantID,id string)error {
         if err:=ensureJoinTaskAccountsAuthorized(ctx,tx,tenantID,id);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='draft'",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be started")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='processing'",tenantID,id)
         return err
     })
 }
@@ -171,7 +173,11 @@ func (s *Service) PauseJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be paused")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','processing')",tenantID,id)
+        // Do not revoke an in-flight processing lease: its Telegram RPC may already
+		// have succeeded. Record a pause request for the worker to consume on return.
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='queued'",tenantID,id)
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET pause_requested=TRUE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='processing'",tenantID,id)
         return err
     })
 }
@@ -185,7 +191,9 @@ func (s *Service) ResumeJoinTask(ctx context.Context,tenantID,id string)error {
         if err:=ensureJoinTaskAccountsAuthorized(ctx,tx,tenantID,id);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='paused'",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be resumed")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='processing'",tenantID,id)
         return err
     })
 }
@@ -195,7 +203,11 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued','paused')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be cancelled")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','processing','request_pending')",tenantID,id)
+        // Preserve processing leases until their Telegram RPC returns. A cancellation
+		// stops new claims and marks active RPCs for terminal cancellation on error.
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','request_pending')",tenantID,id)
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET cancel_requested=TRUE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='processing'",tenantID,id)
         if err!=nil{return err}
         return err
     })

@@ -128,3 +128,18 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - POST `/api/v1/admin/groups/{id}/merge`：超级管理员合并同类型重复群组，迁移来源、链接、贡献和权限快照并记录审计。
 
 **能力边界：** 这里的权限是消息更新中 MTGo Chat 对象可见的快照，并非对所有成员逐个枚举的实时权限表；采集时间应与当前状态区分。当前模块提供目录资料、来源权限快照及人工纠错/合并，不提供远程修改群默认权限、封禁/解封成员、任命管理员或群成员批量管理。此类写操作必须单独实现 MTGo 原生 RPC、权限前置校验、二次确认、任务租约及审计，不得通过数据库修改伪装成 Telegram 操作。
+
+## Release verification
+
+Before promoting a release candidate, run the same checks as CI from this directory:
+
+```bash
+go test ./...
+go vet ./...
+go build -o /tmp/tgqf-api ./cmd/api
+go build -o /tmp/tgqf-worker ./cmd/worker
+```
+
+The integration suite uses PostgreSQL through `TEST_DATABASE_URL`; a successful run without that variable may skip database-backed integration tests. Release CI must therefore provide a disposable PostgreSQL 16 service and set `TEST_DATABASE_URL`.
+
+The API applies embedded storage migrations before its readiness endpoint becomes healthy. In the production Compose stack, the Worker waits for API health before starting. Verify the complete migration chain and inspect API/Worker logs after first boot; do not treat a successful image build alone as deployment acceptance.

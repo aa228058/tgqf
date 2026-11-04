@@ -41,11 +41,12 @@ func (h *Handler) joinTaskAction(w http.ResponseWriter,r *http.Request) {
     case "pause":err=h.service.PauseJoinTask(r.Context(),user.TenantID,id)
     case "resume":err=h.service.ResumeJoinTask(r.Context(),user.TenantID,id)
     case "cancel":err=h.service.CancelJoinTask(r.Context(),user.TenantID,id)
+    case "retry":err=h.service.RetryJoinTask(r.Context(),user.TenantID,id)
     default:messageJSON(w,http.StatusNotFound,map[string]string{"error":"unknown task action"});return
     }
     if err!=nil{status:=http.StatusConflict;if err.Error()=="join task not found"{status=http.StatusNotFound};if err.Error()=="tenant subscription inactive"{status=http.StatusForbidden};messageJSON(w,status,map[string]string{"error":err.Error()});return}
     status:="updated"
-    switch r.PathValue("action"){case "start":status="queued";case "pause":status="paused";case "resume":status="queued";case "cancel":status="cancelled"}
+    switch r.PathValue("action"){case "start":status="queued";case "pause":status="paused";case "resume":status="queued";case "cancel":status="cancelled";case "retry":status="queued"}
     messageJSON(w,http.StatusOK,map[string]any{"status":status,"execution_enabled":true})
 }
 
