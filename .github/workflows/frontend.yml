@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "deploy/**"
+      - ".env.example"
       - ".github/workflows/frontend.yml"
   push:
     branches:
