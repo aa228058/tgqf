@@ -17,7 +17,7 @@ func TestExtractTelegramLinksDeduplicatesAndSkipsReservedPaths(t *testing.T) {
 		switch link.Type {
 		case "public":
 			public++
-			if link.PublicURL!="https://t.me/PublicGroup" { t.Errorf("public URL=%q",link.PublicURL) }
+			if link.PublicURL!="https://t.me/publicgroup" { t.Errorf("public URL=%q",link.PublicURL) }
 		case "invite":
 			invites++
 			if len(link.InviteHash)!=32||len(link.InviteCiphertext)==0 { t.Errorf("invite not hashed/encrypted: %#v",link) }
@@ -53,14 +53,14 @@ func TestExtractTelegramLinksRejectsEmbeddedLookalikeDomains(t *testing.T) {
 	defer os.Unsetenv("SESSION_ENCRYPTION_KEY")
 
 	got := ExtractTelegramLinks("https://evil.example/t.me/FakeGroup nottelegram.me/AnotherFake t.me/RealGroup")
-	if len(got) != 1 || got[0].PublicURL != "https://t.me/RealGroup" {
+	if len(got) != 1 || got[0].PublicURL != "https://t.me/realgroup" {
 		t.Fatalf("expected only the real Telegram host link, got %#v", got)
 	}
 }
 
 func TestExtractTelegramLinksAcceptsTelegramURLPunctuationAndQuery(t *testing.T) {
 	got := ExtractTelegramLinks("Link: (https://t.me/PublicGroup?start=abc),")
-	if len(got) != 1 || got[0].PublicURL != "https://t.me/PublicGroup" {
+	if len(got) != 1 || got[0].PublicURL != "https://t.me/publicgroup" {
 		t.Fatalf("expected canonical public link, got %#v", got)
 	}
 }
