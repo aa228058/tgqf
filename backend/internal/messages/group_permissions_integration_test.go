@@ -217,4 +217,20 @@ func TestLinkRediscoveryPreservesActiveCheckLeases(t *testing.T) {
 	var sourceCount int
 	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM public_group_link_sources WHERE tenant_id=$1 AND telegram_account_id=$2`,tenantID,accountID).Scan(&sourceCount);err!=nil{t.Fatal(err)}
 	if sourceCount!=2{t.Fatalf("rediscovered sources=%d, want 2",sourceCount)}
+
+	// Once the old lease has expired, a fresh discovery should reset the stale
+	// result and put the link back into the pending queue.
+	if _,err:=db.ExecContext(ctx,`UPDATE public_group_links SET check_lease_until=NOW()-INTERVAL '1 second' WHERE id IN ($1,$2)`,publicID,inviteID);err!=nil{t.Fatal(err)}
+	in.MessageID=78
+	if err:=withTenantTx(ctx,db,tenantID,func(tx *sql.Tx)error{return storeDiscoveredLinks(ctx,tx,tenantID,in)});err!=nil{t.Fatal(err)}
+	for _,id:=range []int64{publicID,inviteID} {
+		var status string
+		var lastError sql.NullString
+		var attempts int
+		var nextCheck,lease sql.NullTime
+		if err:=db.QueryRowContext(ctx,`SELECT status,last_check_error,check_attempts,next_check_at,check_lease_until FROM public_group_links WHERE id=$1`,id).Scan(&status,&lastError,&attempts,&nextCheck,&lease);err!=nil{t.Fatal(err)}
+		if status!="pending"||lastError.Valid||attempts!=0||nextCheck.Valid||lease.Valid {
+			t.Fatalf("expired link lease was not requeued on rediscovery for %d: status=%s error=%v attempts=%d next=%v lease=%v",id,status,lastError,attempts,nextCheck,lease)
+		}
+	}
 }
