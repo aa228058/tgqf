@@ -569,6 +569,9 @@ type KeywordActionRecord struct {
     MediaType string `json:"media_type,omitempty"`
     MediaCaption string `json:"media_caption,omitempty"`
     MediaAlbumItems []KeywordMediaAlbumItem `json:"media_album_items,omitempty"`
+    TargetUserID int64 `json:"target_user_id,omitempty"`
+    TelegramCallID *int64 `json:"telegram_call_id,omitempty"`
+    VoiceCallState string `json:"voice_call_state,omitempty"`
     Status string `json:"status"`
     Attempts int `json:"attempts"`
     TelegramMessageID *int64 `json:"telegram_message_id,omitempty"`
@@ -588,12 +591,12 @@ func (s *Service) ListKeywordActions(ctx context.Context,tenantID,status string,
         if status!=""{args=append(args,status);where+=" AND j.status=$2"}
         if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM keyword_action_jobs j WHERE `+where,args...).Scan(&total);err!=nil{return err}
         args=append(args,limit,offset);li,oi:=len(args)-1,len(args)
-        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.status,j.attempts,j.telegram_message_id,j.telegram_message_ids,j.last_error,j.available_at,j.created_at,j.updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT j.id::text,j.keyword_match_id,r.name,j.telegram_account_id::text,j.chat_id,j.reply_to_message_id,j.message_text,j.action_type,j.contact_phone,j.contact_first_name,j.contact_last_name,COALESCE(j.media_asset_id::text,''),j.media_type,j.media_caption,j.media_album_items,j.target_user_id,j.telegram_call_id,j.voice_call_state,j.status,j.attempts,j.telegram_message_id,j.telegram_message_ids,j.last_error,j.available_at,j.created_at,j.updated_at
             FROM keyword_action_jobs j JOIN tenant_keyword_matches m ON m.id=j.keyword_match_id AND m.tenant_id=j.tenant_id
             JOIN tenant_keyword_rules r ON r.id=m.rule_id AND r.tenant_id=m.tenant_id
             WHERE `+where+fmt.Sprintf(" ORDER BY j.created_at DESC,j.id DESC LIMIT $%d OFFSET $%d",li,oi),args...)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item KeywordActionRecord;var albumItems,messageIDs []byte;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.Status,&item.Attempts,&item.TelegramMessageID,&messageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};if err:=json.Unmarshal(messageIDs,&item.TelegramMessageIDs);err!=nil{return err};items=append(items,item)}
+        for rows.Next(){var item KeywordActionRecord;var albumItems,messageIDs []byte;var callID sql.NullInt64;if err:=rows.Scan(&item.ID,&item.MatchID,&item.RuleName,&item.AccountID,&item.ChatID,&item.ReplyToMessageID,&item.Text,&item.ActionType,&item.ContactPhone,&item.ContactFirstName,&item.ContactLastName,&item.MediaAssetID,&item.MediaType,&item.MediaCaption,&albumItems,&item.TargetUserID,&callID,&item.VoiceCallState,&item.Status,&item.Attempts,&item.TelegramMessageID,&messageIDs,&item.LastError,&item.AvailableAt,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};if err:=json.Unmarshal(albumItems,&item.MediaAlbumItems);err!=nil{return err};if callID.Valid { item.TelegramCallID=&callID.Int64 };if err:=json.Unmarshal(messageIDs,&item.TelegramMessageIDs);err!=nil{return err};items=append(items,item)}
         return rows.Err()
     })
     return items,total,err
