@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 	"strconv"
+	"strings"
+	"crypto/sha256"
 	"time"
 )
 
@@ -70,4 +72,28 @@ func TestJoinTaskControlRequestsDoNotRevokeInflightLeases(t *testing.T) {
 	if err:=service.CompleteJoinTaskAccount(ctx,parentJob,-100123,"not_required");err!=nil{t.Fatal(err)}
 	if err:=db.QueryRowContext(ctx,`SELECT status FROM tenant_join_tasks WHERE id=$1`,parentPause).Scan(&status);err!=nil{t.Fatal(err)}
 	if status!="paused"{t.Fatalf("parent task status after in-flight success and paused sibling=%s",status)}
+}
+
+
+func TestPendingApprovalUsesDiscoveredInviteLinkCiphertext(t *testing.T) {
+	db,cleanup:=openGroupIntegrationDB(t)
+	defer cleanup()
+	ctx:=context.Background()
+	t.Setenv("SESSION_ENCRYPTION_KEY",strings.Repeat("a",64))
+	tenantID:="66666666-6666-4666-8666-666666666666"
+	accountID:="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`,tenantID);err!=nil{t.Fatal(err)}
+	if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',decode('01','hex'))`,tenantID,accountID);err!=nil{t.Fatal(err)}
+	hash:="AbCdEfGh123"
+	ciphertext,err:=encryptJoinInviteHash(hash);if err!=nil{t.Fatal(err)}
+	digest:=sha256.Sum256([]byte(hash))
+	var linkID int64
+	if err:=db.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status) VALUES('invite',$1,$2,'approval_required') RETURNING id`,digest[:],ciphertext).Scan(&linkID);err!=nil{t.Fatal(err)}
+	taskID:="77777777-7777-4777-8777-777777777777"
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_join_tasks(id,tenant_id,name,target_link_id,status) VALUES($1,$2,'discovered invite approval',$3,'queued')`,taskID,tenantID,linkID);err!=nil{t.Fatal(err)}
+	if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status,application_status) VALUES($1,$2,$3,'request_pending','request_pending')`,tenantID,taskID,accountID);err!=nil{t.Fatal(err)}
+	jobs,err:=New(db).ListPendingJoinApprovals(ctx,tenantID,10)
+	if err!=nil{t.Fatal(err)}
+	if len(jobs)!=1{t.Fatalf("pending approval jobs=%d, want 1",len(jobs))}
+	if jobs[0].InviteHash!=hash{t.Fatalf("invite hash=%q, want decrypted public-link invite %q",jobs[0].InviteHash,hash)}
 }
