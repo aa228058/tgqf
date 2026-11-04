@@ -136,6 +136,7 @@ func (h *Handler) unifiedTasks(w http.ResponseWriter, r *http.Request) {
 		Status: r.URL.Query().Get("status"),
 		Type: r.URL.Query().Get("type"),
 		AccountID: r.URL.Query().Get("account_id"),
+		Query: r.URL.Query().Get("q"),
 		Limit: limit,
 		Offset: offset,
 	})
