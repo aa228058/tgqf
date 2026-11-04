@@ -662,15 +662,16 @@ func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID 
  return out,err
 }
 
-func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID string,linkID int64,status,checkError string) error {
+func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID string,linkID int64,status,checkError string,retryAfter ...time.Duration) error {
  allowed:=map[string]bool{"valid":true,"invalid":true,"unknown":true}
  if linkID<=0||!allowed[status]{return errors.New("invalid public link check result")}
  if len(checkError)>500{checkError=checkError[:500]}
+ retrySeconds:=int64(0);if len(retryAfter)>0&&retryAfter[0]>0{retrySeconds=int64(retryAfter[0]/time.Second);if retryAfter[0]%time.Second!=0{retrySeconds++}}
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
   result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
     check_attempts=check_attempts+1,
-    next_check_at=NOW()+CASE WHEN $3='unknown' THEN INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE INTERVAL '6 hours' END
-   WHERE l.id=$1 AND l.link_type='public' AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError)
+    next_check_at=CASE WHEN $3='unknown' AND $5>0 THEN NOW()+GREATEST($5*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $3='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END
+   WHERE l.id=$1 AND l.link_type='public' AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError,retrySeconds)
   if err!=nil{return err}
   n,_:=result.RowsAffected()
   if n==0{return errors.New("public Telegram link not found")}
@@ -692,7 +693,7 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
    FROM public_group_links l
    JOIN public_group_link_sources src ON src.link_id=l.id
    WHERE l.link_type='invite' AND src.tenant_id=$1 AND src.telegram_account_id=$2
-    AND (l.last_checked_at IS NULL OR l.last_checked_at < NOW()-INTERVAL '6 hours')
+    AND (l.next_check_at IS NULL OR l.next_check_at <= NOW())
    ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id
    LIMIT $3`, tenantID, accountID, limit)
   if err != nil { return err }
@@ -711,10 +712,11 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
  return out,err
 }
 
-func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string, linkID int64, status, checkError string) error {
+func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string, linkID int64, status, checkError string, retryAfter ...time.Duration) error {
  allowed := map[string]bool{"valid":true,"approval_required":true,"invalid":true,"unknown":true}
  if linkID <= 0 || !allowed[status] { return errors.New("invalid private invite check result") }
  if len(checkError)>500 { checkError=checkError[:500] }
+ retrySeconds:=int64(0);if len(retryAfter)>0&&retryAfter[0]>0{retrySeconds=int64(retryAfter[0]/time.Second);if retryAfter[0]%time.Second!=0{retrySeconds++}}
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error {
   result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
     check_attempts=check_attempts+1,
