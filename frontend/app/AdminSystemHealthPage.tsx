@@ -16,7 +16,7 @@ export function AdminSystemHealthPage({token}:{token:string}){
   const sequence=++requestSequence.current;
   try{
    const response=await fetch(API+"/api/v1/admin/system-health",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
-   const result=await readAPIJSON<{health:Health;status:string}>(response);
+   const result=await readAPIJSON<{health:Health;status:string;error?:string}>(response);
    if(!response.ok)throw new Error(result.error||"监控数据获取失败");
    if(sequence!==requestSequence.current)return;
    setHealth(result.health);setStatus(result.status);setUpdated(new Date().toLocaleTimeString());setError("");
