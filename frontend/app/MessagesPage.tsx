@@ -29,7 +29,8 @@ export function MessagesPage({token}:{token:string}){
  const [offset,setOffset]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [settings,setSettings]=useState<Settings|null>(null),[settingsOpen,setSettingsOpen]=useState(false),[settingsBusy,setSettingsBusy]=useState(false);
  const [replyText,setReplyText]=useState<Record<string,string>>({}),[contactMessage,setContactMessage]=useState<string|null>(null);
- const [mediaPreview,setMediaPreview]=useState<{url:string;type:string;messageID:string}|null>(null);\n const [keywordOpen,setKeywordOpen]=useState(false);
+ const [mediaPreview,setMediaPreview]=useState<{url:string;type:string;messageID:string}|null>(null);
+ const [keywordOpen,setKeywordOpen]=useState(false);
  const [contact,setContact]=useState({phone:"",first_name:"",last_name:""}),[replyJobs,setReplyJobs]=useState<Record<string,Reply>>({});
 
  const loadChats=useCallback(async()=>{
