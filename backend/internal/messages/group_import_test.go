@@ -6,14 +6,12 @@ import (
 )
 
 func TestParseGroupCatalogueCSVAcceptsExportedColumns(t *testing.T) {
-	input := "id,telegram_chat_id,title,chat_type,username,member_count,is_verified\n42,-1001234567890,Design Group,supergroup,design_group,1200,true\n"
+	input := "id,telegram_chat_id,title,chat_type,username,member_count,is_verified\n42,-1001234567890,Design Group,channel,design_group,1200,true\n"
 	records, err := parseGroupCatalogueCSV(strings.NewReader(input))
 	if err != nil { t.Fatal(err) }
 	if len(records) != 1 { t.Fatalf("records=%d, want 1",len(records)) }
 	got := records[0]
-	if got.ChatID != -1001234567890 || got.ChatType != "supergroup" {
-		// The catalogue intentionally stores Telegram's normalized channel
-		// entity kind as "channel"; imported files must use supported kinds.
+	if got.ChatID != -1001234567890 || got.ChatType != "channel" {
 		t.Fatalf("unexpected identity: %#v",got)
 	}
 }
