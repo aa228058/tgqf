@@ -78,3 +78,16 @@ GitHub Actions runs `go mod tidy`, `go test ./...`, `go vet ./...`, and builds t
 - GET /api/v1/message-replies/{id}：查询回复任务状态（pending、processing、sent、failed）、尝试次数和 Telegram 返回的消息 ID。
 
 消息列表保留 account_id、chat_id、message_id、chat_title、reply_to_message_id。回复任务采用 PostgreSQL 持久队列、租户 RLS、5 分钟处理租约和最多 5 次失败重试；Worker 使用对应账号的 MTProto 客户端发送 Telegram 原生回复，并回写 Telegram 消息 ID。Worker 崩溃后过期租约可重新领取；发送成功但回写数据库失败时存在极小概率重复发送，因此当前是可恢复的至少一次投递语义，不承诺严格 exactly-once。群组资料缓存已接入实时消息。Worker 每 5 分钟对每个在线账号最近活跃的最多 20 个已知聊天回查最近 50 条消息，补齐短暂断线期间遗漏的记录；仍未发现过的新聊天不会自动枚举，完整历史导入需后续单独实现。历史回填复用相同固定规则和租户筛选，群组只收明确回复当前账号本人消息的内容。
+
+
+## 关键词自动处理与媒体相册
+
+关键词规则和任务均按租户隔离，Telegram 发送由独立 Worker 使用 MTGo 执行。支持文字、原生联系人卡片、单素材媒体及相册动作。
+- 关键词规则支持创建、更新、列表、删除和匹配记录查询；规则中的账号过滤和素材引用必须属于当前租户。
+- 媒体库接口：GET/POST /api/v1/keyword-media-assets、GET/DELETE /api/v1/keyword-media-assets/{id}。上传限制为单素材 20 MiB，按租户 SHA-256 去重。
+- 相册动作使用 action_type=media_album，media_album_items 按顺序包含 2-10 个 {asset_id,media_type,caption}；支持 photo/video 混合或纯 document，不允许 document 与 photo/video 混合。
+- 每个相册素材必须属于当前租户，素材被规则或任务引用时禁止删除；API 校验和 PostgreSQL 触发器双重验证素材归属、重复项、媒体类型和 caption 长度。
+- 单项最大 20 MiB，相册总量最大 100 MiB；每项 caption 最多 1024 个 Unicode 字符。MTGo 上传全部素材后一次性提交媒体组，返回的全部 Telegram message ID 会保存到 keyword_action_jobs.telegram_message_ids；旧 telegram_message_id 字段保留为首条消息 ID兼容字段。
+- GET /api/v1/keyword-actions 返回任务状态、重试次数、错误信息、相册素材清单及完整 telegram_message_ids；任务状态支持 pending、processing、sent、failed、paused。
+- Worker 对离线账号释放租约并延迟重试，租户停用时暂停任务，Telegram FloodWait 进入账号冷却；普通失败最多重试 5 次。
+- 任务采用至少一次投递语义：若 Telegram 已接受发送但数据库结果回写失败，租约过期后可能重复发送；Telegram MTProto 媒体组接口不提供本项目可用的端到端幂等键，因此不承诺 exactly-once。
