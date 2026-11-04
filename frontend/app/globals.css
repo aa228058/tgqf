@@ -1231,3 +1231,5 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .login-mode-switch button small{font-size:11px;font-weight:400;color:var(--muted,#687586)}
 .login-mode-switch button.active{border-color:var(--accent,#315efb);background:color-mix(in srgb,var(--accent,#315efb) 9%,white);color:var(--accent,#315efb)}
 @media(max-width:420px){.login-mode-switch{gap:6px}.login-mode-switch button{padding:10px;font-size:12px}}
+
+.admin-mobile-nav{grid-template-columns:minmax(0,1fr)!important}
