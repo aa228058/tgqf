@@ -378,7 +378,7 @@ func TestMergePublicGroupsPreservesMetadataAndCombinesTenantSources(t *testing.T
 	}
 	var permissionMap map[string]bool
 	if err := json.Unmarshal([]byte(permissions), &permissionMap); err != nil { t.Fatal(err) }
-	if permissionMap["send_messages"] { t.Fatalf("older source permission snapshot overwrote newer target: %s", permissions) }
+	if !permissionMap["send_messages"] { t.Fatalf("newer target permission snapshot was overwritten by older source: %s", permissions) }
 
 	var sourceCount, contributionCount int
 	var discoveries int
