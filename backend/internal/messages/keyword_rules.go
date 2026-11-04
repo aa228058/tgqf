@@ -632,3 +632,37 @@ func keywordReplyTextForChat(rule KeywordRule,chatType string) string {
 func keywordAlbumJSON(items []KeywordMediaAlbumItem) string { if len(items)==0{return "[]"};b,err:=json.Marshal(items);if err!=nil{return "[]"};return string(b) }
 
 func keywordNullableMediaAssetID(value string) any { if value == "" { return nil }; return value }
+
+
+// FinishKeywordVoiceCall persists the Telegram-native ringing result without
+// fabricating an outgoing chat message. Call state is tracked independently.
+func (s *Service) FinishKeywordVoiceCall(ctx context.Context, job KeywordActionJob, result telegrammtgo.VoiceCallRequestResult) error {
+    if job.ActionType != "voice_call" || job.TargetUserID <= 0 || result.CallID <= 0 || result.AccessHash == 0 || result.State != "ringing" {
+        return errors.New("invalid Telegram voice call result")
+    }
+    return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+        var active bool
+        if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`, job.TenantID).Scan(&active); err != nil {
+            return err
+        }
+        if !active {
+            return errors.New("tenant inactive before voice call result persistence")
+        }
+        updated, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
+            SET status='sent', telegram_call_id=$4, telegram_call_access_hash=$5,
+                voice_call_state='ringing', lease_until=NULL, last_error='', updated_at=NOW()
+            WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3 AND action_type='voice_call'`,
+            job.TenantID, job.ID, job.LeaseUntil, result.CallID, result.AccessHash)
+        if err != nil {
+            return err
+        }
+        count, err := updated.RowsAffected()
+        if err != nil {
+            return err
+        }
+        if count == 0 {
+            return errors.New("keyword voice call action lease not found")
+        }
+        return nil
+    })
+}
