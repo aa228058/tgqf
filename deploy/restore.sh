@@ -9,6 +9,7 @@ fail() { echo "[restore] ERROR: $*" >&2; exit 1; }
 log() { echo "[restore] $*"; }
 
 [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]] || fail "Usage: bash deploy/restore.sh /path/to/backup"
+BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd -P)"
 [[ -f "$ENV_FILE" ]] || fail "Missing $ENV_FILE"
 [[ -f "$BACKUP_DIR/postgres.dump" && -f "$BACKUP_DIR/redis-data.tar.gz" ]] || fail "Backup files are incomplete"
 
