@@ -274,7 +274,7 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 		if link.Type=="public" {
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
 				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
-				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL
+				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,next_check_at=NULL,check_attempts=0
 				RETURNING id`,strings.TrimPrefix(strings.TrimPrefix(link.PublicURL,"https://t.me/"),"@"),link.PublicURL).Scan(&id);err!=nil{return err}
 		}else if link.Type=="invite" {
 			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
