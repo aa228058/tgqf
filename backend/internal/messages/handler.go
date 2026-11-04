@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"mime"
 	"strconv"
 	"strings"
@@ -65,9 +66,11 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("GET /api/v1/groups/{id}",h.auth.Authenticated(http.HandlerFunc(h.getGroupLibraryItem)))
 	mux.Handle("GET /api/v1/groups/export.csv",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryCSV)))
 	mux.Handle("GET /api/v1/groups/export.txt",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryTXT)))
+	mux.Handle("GET /api/v1/groups/export.xlsx",h.auth.Authenticated(http.HandlerFunc(h.exportGroupLibraryXLSX)))
 	mux.Handle("POST /api/v1/groups/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCorrectionsCSV)))
 	mux.Handle("POST /api/v1/groups/catalogue/import.csv",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueCSV)))
 	mux.Handle("POST /api/v1/groups/catalogue/import.txt",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueTXT)))
+	mux.Handle("POST /api/v1/groups/catalogue/import.xlsx",h.auth.Authenticated(http.HandlerFunc(h.importGroupCatalogueXLSX)))
 	mux.Handle("GET /api/v1/group-links",h.auth.Authenticated(http.HandlerFunc(h.listGroupLinks)))
 	mux.Handle("GET /api/v1/group-links/stats",h.auth.Authenticated(http.HandlerFunc(h.groupLinkStats)))
 	mux.Handle("GET /api/v1/group-links/settings",h.auth.Authenticated(http.HandlerFunc(h.getLinkSettings)))
@@ -424,6 +427,25 @@ func (h *Handler) exportGroupLibraryCSV(w http.ResponseWriter,r *http.Request) {
 	w.Header().Set("Content-Type","text/csv; charset=utf-8");w.Header().Set("Content-Disposition",`attachment; filename="public-groups.csv"`);w.WriteHeader(http.StatusOK);_,_=w.Write(output.Bytes())
 }
 
+
+
+func (h *Handler) exportGroupLibraryXLSX(w http.ResponseWriter, r *http.Request) {
+	recorder:=httptest.NewRecorder()
+	h.exportGroupLibraryCSV(recorder,r)
+	if recorder.Code!=http.StatusOK {
+		messageJSON(w,recorder.Code,map[string]string{"error":"failed to prepare group catalogue export"})
+		return
+	}
+	reader:=csv.NewReader(recorder.Body)
+	rows,err:=reader.ReadAll()
+	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to read group catalogue export"});return }
+	data,err:=buildGroupCatalogueXLSX(rows)
+	if err!=nil { messageJSON(w,http.StatusInternalServerError,map[string]string{"error":"failed to generate XLSX workbook"});return }
+	w.Header().Set("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition",`attachment; filename="public-groups.xlsx"`)
+	w.Header().Set("Content-Length",strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK);_,_=w.Write(data)
+}
 
 func (h *Handler) exportGroupLibraryTXT(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
