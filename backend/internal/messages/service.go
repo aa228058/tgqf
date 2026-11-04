@@ -274,13 +274,31 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 		if link.Type=="public" {
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
 				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
-				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,check_attempts=0,next_check_at=NULL,check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
+				ON CONFLICT(link_type,public_url) DO UPDATE SET
+				 last_seen_at=NOW(),
+				 status=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.status ELSE 'pending' END,
+				 last_checked_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_checked_at ELSE NULL END,
+				 last_check_error=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_check_error ELSE NULL END,
+				 check_attempts=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_attempts ELSE 0 END,
+				 next_check_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.next_check_at ELSE NULL END,
+				 check_lease_until=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_until ELSE NULL END,
+				 check_lease_tenant_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_tenant_id ELSE NULL END,
+				 check_lease_account_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_account_id ELSE NULL END
 				RETURNING id`,strings.TrimPrefix(strings.TrimPrefix(link.PublicURL,"https://t.me/"),"@"),link.PublicURL).Scan(&id);err!=nil{return err}
 		}else if link.Type=="invite" {
 			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status)
 				VALUES('invite',$1,$2,'pending')
-				ON CONFLICT(invite_hash) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,check_attempts=0,next_check_at=NULL,check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
+				ON CONFLICT(invite_hash) DO UPDATE SET
+				 last_seen_at=NOW(),
+				 status=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.status ELSE 'pending' END,
+				 last_checked_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_checked_at ELSE NULL END,
+				 last_check_error=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.last_check_error ELSE NULL END,
+				 check_attempts=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_attempts ELSE 0 END,
+				 next_check_at=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.next_check_at ELSE NULL END,
+				 check_lease_until=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_until ELSE NULL END,
+				 check_lease_tenant_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_tenant_id ELSE NULL END,
+				 check_lease_account_id=CASE WHEN public_group_links.check_lease_until>NOW() THEN public_group_links.check_lease_account_id ELSE NULL END
 				RETURNING id`,link.InviteHash,link.InviteCiphertext).Scan(&id);err!=nil{return err}
 		}else{continue}
 		_,err:=tx.ExecContext(ctx,`INSERT INTO public_group_link_sources(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id)
