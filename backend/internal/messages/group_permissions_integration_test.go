@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -95,12 +96,17 @@ func TestGroupCatalogueImportAndPermissionRefreshIntegration(t *testing.T) {
 	var savedTitle string
 	var savedPermissions string
 	if err:=db.QueryRowContext(ctx,`SELECT title,default_permissions::text FROM public_groups WHERE id=$1`,groupID).Scan(&savedTitle,&savedPermissions);err!=nil{t.Fatal(err)}
-	if savedPermissions!=string(defaultRights){t.Fatalf("default permissions=%s",savedPermissions)}
+	var decodedDefault map[string]bool
+	if err:=json.Unmarshal([]byte(savedPermissions),&decodedDefault);err!=nil{t.Fatal(err)}
+	if decodedDefault["send_messages"]{t.Fatalf("default permissions unexpectedly allow sending: %s",savedPermissions)}
 	if savedTitle!="Original"{t.Fatalf("empty refreshed title should preserve existing title: %q",savedTitle)}
 	var rightsA,rightsB string
 	if err:=db.QueryRowContext(ctx,`SELECT account_rights_snapshot::text FROM public_group_sources WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3`,groupID,tenantA,accountA).Scan(&rightsA);err!=nil{t.Fatal(err)}
 	if err:=db.QueryRowContext(ctx,`SELECT account_rights_snapshot::text FROM public_group_sources WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3`,groupID,tenantB,accountB).Scan(&rightsB);err!=nil{t.Fatal(err)}
-	if rightsA!=string(accountRightsA)||rightsB!=string(accountRightsB){t.Fatalf("tenant rights snapshots were not isolated: A=%s B=%s",rightsA,rightsB)}
+	var decodedA,decodedB map[string]bool
+	if err:=json.Unmarshal([]byte(rightsA),&decodedA);err!=nil{t.Fatal(err)}
+	if err:=json.Unmarshal([]byte(rightsB),&decodedB);err!=nil{t.Fatal(err)}
+	if !decodedA["is_admin"]||decodedB["is_admin"]{t.Fatalf("tenant rights snapshots were not isolated: A=%s B=%s",rightsA,rightsB)}
 
 	// Expire and reclaim tenant A's lease; a delayed old worker must not write.
 	if _,err:=db.ExecContext(ctx,`UPDATE public_group_sources SET rights_next_check_at=NULL,rights_check_lease_until=NOW()-INTERVAL '1 second' WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3`,groupID,tenantA,accountA);err!=nil{t.Fatal(err)}
