@@ -147,15 +147,22 @@ export default function Home() {
     finally { actionLock.current = false; setBusy(false); }
   }
   const selectedTasks = useMemo(() => tasks.filter(t => selected.includes(t.id)), [tasks, selected]);
-  const selectedType = selectedTasks.length && selectedTasks.every(t => t.type === selectedTasks[0].type) ? selectedTasks[0].type : "";
+  const selectedTypes = [...new Set(selectedTasks.map(t => t.type))];
   async function bulk(action: "pause" | "resume" | "retry" | "cancel") {
-    if (!selectedType || selectedTasks.length === 0 || actionLock.current) return;
-    if (action === "cancel" && !window.confirm(`确定取消选中的 ${selectedTasks.length} 条任务吗？`)) return;
+    if (selectedTasks.length === 0 || actionLock.current) return;
+    if (action === "cancel" && !window.confirm("确定取消选中的 " + selectedTasks.length + " 条任务吗？")) return;
     actionLock.current = true; setBusy(true); setNotice(""); setError("");
     try {
-      const result = await request<{ succeeded: number; failed: number; results: { id: string; error?: string }[] }>(`/api/v1/tasks/bulk/${selectedType}/${action}`, token, { method: "POST", body: JSON.stringify({ ids: selectedTasks.map(t => t.id) }) });
-      setNotice(`批量操作完成：成功 ${result.succeeded} 条，失败 ${result.failed} 条`);
-      await load(token, true);
+      let succeeded = 0, failed = 0;
+      const failures: string[] = [];
+      for (const taskType of selectedTypes) {
+        const ids = selectedTasks.filter(t => t.type === taskType).map(t => t.id);
+        const result = await request<{ succeeded: number; failed: number; results: { id: string; error?: string }[] }>("/api/v1/tasks/bulk/" + taskType + "/" + action, token, { method: "POST", body: JSON.stringify({ ids }) });
+        succeeded += result.succeeded; failed += result.failed;
+        for (const item of result.results || []) if (item.error) failures.push(taskType + "/" + item.id + ": " + item.error);
+      }
+      setNotice("批量操作完成：成功 " + succeeded + " 条，失败 " + failed + " 条" + (failures.length ? "；" + failures.slice(0,3).join("；") : ""));
+      setSelected([]); await load(token, true);
     } catch (e) { setError(e instanceof Error ? e.message : "批量操作失败"); }
     finally { actionLock.current = false; setBusy(false); }
   }
@@ -182,7 +189,7 @@ export default function Home() {
         <input value={query} maxLength={120} onChange={e => { setQuery(e.target.value); setOffset(0); }} placeholder="搜索任务、账号、错误信息或 ID" />
         <button className="secondary" onClick={() => void load(token)} disabled={busy}>筛选</button>
       </div>
-      {selected.length > 0 && <div className="bulkbar"><span>已选 {selected.length} 条{!selectedType ? "（批量操作要求同一任务类型）" : ""}</span><button disabled={!selectedType || busy} onClick={() => void bulk("pause")}>暂停</button><button disabled={!selectedType || busy} onClick={() => void bulk("resume")}>恢复</button><button disabled={!selectedType || busy} onClick={() => void bulk("retry")}>重试</button><button className="danger-text" disabled={!selectedType || busy} onClick={() => void bulk("cancel")}>取消</button><button className="ghost" onClick={() => setSelected([])}>清除选择</button></div>}
+      {selected.length > 0 && <div className="bulkbar"><span>已选 {selected.length} 条{selectedTypes.length > 1 ? "（跨 " + selectedTypes.length + " 种任务类型）" : ""}</span><button disabled={busy} onClick={() => void bulk("pause")}>暂停</button><button disabled={!selectedType || busy} onClick={() => void bulk("resume")}>恢复</button><button disabled={!selectedType || busy} onClick={() => void bulk("retry")}>重试</button><button className="danger-text" disabled={!selectedType || busy} onClick={() => void bulk("cancel")}>取消</button><button className="ghost" onClick={() => setSelected([])}>清除选择</button></div>}
       <div className="table-wrap task-table-wrap"><table className="task-table"><thead><tr><th><input type="checkbox" aria-label="选择当前页全部任务" checked={tasks.length > 0 && selected.length === tasks.length} onChange={e => setSelected(e.target.checked ? tasks.map(t => t.id) : [])} /></th><th>任务</th><th>账号</th><th>状态</th><th>尝试</th><th>计划时间</th><th>最近错误</th><th>操作</th></tr></thead><tbody>
         {tasks.map(task => <tr key={task.type + task.id}><td data-label="选择"><input type="checkbox" aria-label={`选择任务 ${task.id}`} checked={selected.includes(task.id)} onChange={() => toggle(task.id)} /></td><td data-label="任务"><strong>{task.title || typeNames[task.type]}</strong><small>{typeNames[task.type] || task.type} · {task.id}</small></td><td data-label="账号">{task.account_name || "—"}<small>{task.account_id}</small></td><td data-label="状态"><span className={`status status-${task.status}`}>{statusNames[task.status] || task.status}</span>{task.lease_until && <small>租约至 {new Date(task.lease_until).toLocaleString()}</small>}</td><td data-label="尝试">{task.attempts}</td><td data-label="计划时间">{task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "—"}</td><td data-label="最近错误" className="error-cell">{task.last_error || "—"}</td><td data-label="操作"><div className="row-actions">{task.can_pause && <button onClick={() => void act(task,"pause")} disabled={busy}>暂停</button>}{task.can_resume && <button onClick={() => void act(task,"resume")} disabled={busy}>恢复</button>}{task.can_retry && <button onClick={() => void act(task,"retry")} disabled={busy}>重试</button>}{task.can_cancel && <button className="danger-text" onClick={() => void act(task,"cancel")} disabled={busy}>取消</button>}</div></td></tr>)}
         {tasks.length === 0 && <tr><td colSpan={8} className="empty">{busy ? "正在加载…" : error ? "加载失败，请根据上方提示重试" : "暂无符合条件的任务"}</td></tr>}
