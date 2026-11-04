@@ -103,14 +103,9 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 	gA := make([]byte, 256)
 	copy(gA[256-len(gABytes):], gABytes)
 
-	nonce := make([]byte, 256)
-	if _, err := rand.Read(nonce); err != nil {
-		return VoiceCallRequestResult{}, fmt.Errorf("generate call nonce: %w", err)
-	}
-	hashInput := make([]byte, 0, len(gA)+len(nonce))
-	hashInput = append(hashInput, gA...)
-	hashInput = append(hashInput, nonce...)
-	gaHash := sha256.Sum256(hashInput)
+	// Telegram's phone.requestCall requires SHA-256(g_a) exactly.
+	// Do not append messages.getDhConfig random bytes or a local nonce here.
+	gaHash := sha256.Sum256(gA)
 
 	var randomIDBytes [4]byte
 	if _, err := rand.Read(randomIDBytes[:]); err != nil {
