@@ -440,7 +440,7 @@ func (h *Handler) exportGroupLibraryTXT(w http.ResponseWriter, r *http.Request) 
 	maxRows:=10000
 	if raw:=r.URL.Query().Get("max_rows"); raw!="" { v,e:=strconv.Atoi(raw); if e!=nil||v<1||v>10000 { http.Error(w,"max_rows must be between 1 and 10000",http.StatusBadRequest); return }; maxRows=v }
 	var output bytes.Buffer
-	writer:=csv.NewWriter(&output); writer.Comma='\\t'
+	writer:=csv.NewWriter(&output); writer.Comma='\t'
 	_ = writer.Write([]string{"id","telegram_chat_id","title","chat_type","username","member_count","is_verified","default_permissions","permissions_observed_at","source_count","contributor_count","last_seen_at"})
 	for offset:=0; offset<maxRows; offset+=100 {
 		limit:=100; if offset+limit>maxRows { limit=maxRows-offset }
