@@ -1,6 +1,7 @@
 package messages
 
 import (
+    "encoding/json"
     "strings"
     "testing"
     "time"
