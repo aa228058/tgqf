@@ -683,7 +683,7 @@ func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID,accountID s
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
   result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$5,last_checked_at=NOW(),last_check_error=NULLIF($6,''),
     check_attempts=check_attempts+1,
-    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END,
+    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+LEAST(INTERVAL '6 hours',INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5))) ELSE NOW()+INTERVAL '6 hours' END,
     check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
    WHERE l.id=$1 AND l.link_type='public' AND l.check_lease_tenant_id=$2 AND l.check_lease_account_id=$3 AND l.check_lease_until=$4
     AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2 AND src.telegram_account_id=$3)`,linkID,tenantID,accountID,leaseUntil,status,checkError,retrySeconds)
@@ -745,7 +745,7 @@ func (s *Service) RecordPrivateInviteCheck(ctx context.Context,tenantID,accountI
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
   result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$5,last_checked_at=NOW(),last_check_error=NULLIF($6,''),
     check_attempts=check_attempts+1,
-    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END,
+    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+LEAST(INTERVAL '6 hours',INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5))) ELSE NOW()+INTERVAL '6 hours' END,
     check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
    WHERE l.id=$1 AND l.link_type='invite' AND l.check_lease_tenant_id=$2 AND l.check_lease_account_id=$3 AND l.check_lease_until=$4
     AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2 AND src.telegram_account_id=$3)`,linkID,tenantID,accountID,leaseUntil,status,checkError,retrySeconds)
