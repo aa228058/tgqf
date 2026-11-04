@@ -348,8 +348,8 @@ func (m *Manager) ManagedAccountIDs() []string {
 }
 
 
- // JoinChat performs one explicitly authorized public username or public link join.
- // Private invite hashes are intentionally not accepted by this worker path.
+ // JoinChat is invoked only by a tenant's explicitly authorized join-task worker.
+ // MTGo imports private invite hashes only on this execution path; link checks never call JoinChat.
  func (m *Manager) JoinChat(ctx context.Context,accountID,link string)(int64,error) {
      link=strings.TrimSpace(link)
      if link=="" { return 0,errors.New("Telegram join target is empty") }
