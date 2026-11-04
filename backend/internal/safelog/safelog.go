@@ -50,6 +50,7 @@ func RedactText(value string) string {
 		return scheme + "://[REDACTED]@"
 	})
 	value = parameterSecret.ReplaceAllString(value, "$1="+redacted)
+	value = jsonSecret.ReplaceAllString(value, "$1"+redacted+"$3")
 	value = bearerSecret.ReplaceAllString(value, "$1"+redacted)
 	return value
 }
