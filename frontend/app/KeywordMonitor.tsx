@@ -122,6 +122,8 @@ export function KeywordMonitor({token}:{token:string}){
   });
   setPrivateReplyText("");setGroupReplyText("");
  }
+ const parsedGroups=groupText.split(/\n/).map(line=>splitList(line)).filter(group=>group.length>0);
+ const invalidGroups=parsedGroups.length>10||parsedGroups.some(group=>group.length>20)||splitList(keywordText).length>20;
  const shownActions=actions.filter(x=>!status||x.status===status);
  return <section className="keyword-monitor">
   <div className="keyword-toolbar"><div><div className="eyebrow">LIVE MESSAGE AUTOMATION</div><h1>监控回复</h1><p>实时新消息关键词匹配、规则组合、命中追踪及自动动作执行。</p></div><button className="secondary" onClick={()=>void load()} disabled={busy}>刷新数据</button></div>
@@ -150,7 +152,7 @@ export function KeywordMonitor({token}:{token:string}){
    <label>基础关键词（逗号分隔）<textarea rows={2} value={keywordText} onChange={e=>setKeywordText(e.target.value)} placeholder="例如：招聘, 合作, 优惠；使用分组时可留空"/></label>
    <label>排除词（逗号分隔）<input value={excludeText} onChange={e=>setExcludeText(e.target.value)} placeholder="例如：广告, 违规"/></label>
    <div className="keyword-editor-grid"><label>匹配模式<select value={draft.match_mode} onChange={e=>setDraft({...draft,match_mode:e.target.value})}><option value="any">任意关键词</option><option value="all">全部关键词</option><option value="exact">完整文本</option><option value="regex">正则表达式</option></select></label><label>分组间关系<select value={draft.group_operator} onChange={e=>setDraft({...draft,group_operator:e.target.value})}><option value="any">任意分组命中（OR）</option><option value="all">所有分组都命中（AND）</option></select></label></div>
-   <label>关键词分组（每行一组，组内逗号分隔）<textarea rows={3} value={groupText} onChange={e=>setGroupText(e.target.value)} placeholder={"例如：\n投资, 融资\n招聘, 兼职"} /><small>组内按上方匹配模式判断；组与组之间按 OR/AND 判断。最多 10 组，每组最多 20 项。</small></label>
+   <label>关键词分组（每行一组，组内逗号分隔）<textarea rows={3} value={groupText} onChange={e=>setGroupText(e.target.value)} placeholder={"例如：\n投资, 融资\n招聘, 兼职"} /><small>组内按上方匹配模式判断；组与组之间按 OR/AND 判断。最多 10 组，每组最多 20 项。{invalidGroups&&<strong className="keyword-error">关键词或分组数量超出限制。</strong>}</small></label>
    <div className="keyword-editor-grid"><label>动作类型<select value={draft.action_type} onChange={e=>changeAction(e.target.value)}><option value="text">自动文本回复</option><option value="contact">发送联系人卡片</option><option value="media">发送媒体素材</option><option value="media_album">发送媒体相册</option><option value="voice_call">发起 Telegram 原生语音呼叫（仅私聊）</option></select></label><label className="keyword-inline-check"><input type="checkbox" checked={draft.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/>启用规则</label></div>
    {draft.action_type==="text"&&<><label>默认回复内容<textarea rows={3} maxLength={4096} value={draft.reply_text} onChange={e=>setDraft({...draft,reply_text:e.target.value})} placeholder="未配置聊天类型专属文案时使用"/></label><div className="keyword-editor-grid"><label>私聊回复文案<textarea rows={2} maxLength={4096} value={privateReplyText} onChange={e=>setPrivateReplyText(e.target.value)}/></label><label>群组回复文案<textarea rows={2} maxLength={4096} value={groupReplyText} onChange={e=>setGroupReplyText(e.target.value)}/></label></div></>}
    {draft.action_type==="voice_call"&&<div className="join-notice"><strong>原生呼叫</strong><span>仅在私聊关键词命中后，向该条入站消息的发送者发起 Telegram 原生呼叫；不会自动接听或绕过对方隐私设置。</span></div>}
@@ -166,7 +168,7 @@ export function KeywordMonitor({token}:{token:string}){
     <div className="keyword-editor-grid"><label>发送者 ID（逗号分隔）<input value={senderIDsText} onChange={e=>setSenderIDsText(e.target.value)}/></label><label>发送者 username（逗号分隔）<input value={senderUsernamesText} onChange={e=>setSenderUsernamesText(e.target.value)}/></label></div>
     <label>发送者名称（逗号分隔）<input value={senderNamesText} onChange={e=>setSenderNamesText(e.target.value)}/></label>
    </fieldset>
-   <button className="primary" disabled={busy||!draft.chat_types.length||(draft.action_type==="voice_call"&&(draft.chat_types.length!==1||!draft.chat_types.includes("private")))||(draft.action_type==="media"&&!draft.media_asset_id)||(draft.action_type==="media_album"&&((draft.media_album_items||[]).length<2||(draft.media_album_items||[]).length>10))}>保存规则</button>
+   <button className="primary" disabled={busy||invalidGroups||!draft.chat_types.length||(draft.action_type==="voice_call"&&(draft.chat_types.length!==1||!draft.chat_types.includes("private")))||(draft.action_type==="media"&&!draft.media_asset_id)||(draft.action_type==="media_album"&&((draft.media_album_items||[]).length<2||(draft.media_album_items||[]).length>10))}>保存规则</button>
   </form></div>}
  </section>;
 }
