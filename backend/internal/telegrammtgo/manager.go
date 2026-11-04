@@ -533,9 +533,17 @@ func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, cha
         if totalBytes>100<<20 { return nil,errors.New("album payload exceeds 100 MiB") }
         uploaded,err:=client.UploadFile(ctx,bytes.NewReader(item.Content),item.FileName,int64(len(item.Content)),nil)
         if err!=nil { return nil,fmt.Errorf("upload album item %q: %w",item.FileName,err) }
+        mimeType:=strings.TrimSpace(item.MIMEType)
+        if mimeType=="" { mimeType="application/octet-stream" }
         var inputMedia tg.InputMediaClass
-        if item.MediaType=="photo" { inputMedia=&tg.InputMediaUploadedPhoto{File:uploaded.File} } else {
-            inputMedia=&tg.InputMediaUploadedDocument{File:uploaded.File,MimeType:item.MIMEType}
+        if item.MediaType=="photo" {
+            inputMedia=&tg.InputMediaUploadedPhoto{File:uploaded.File}
+        } else {
+            attributes:=[]tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName:item.FileName}}
+            if item.MediaType=="video" {
+                attributes=append([]tg.DocumentAttributeClass{&tg.DocumentAttributeVideo{SupportsStreaming:true}},attributes...)
+            }
+            inputMedia=&tg.InputMediaUploadedDocument{File:uploaded.File,MimeType:mimeType,Attributes:attributes}
         }
         randomBytes:=make([]byte,8)
         if _,err:=cryptorand.Read(randomBytes);err!=nil{return nil,fmt.Errorf("generate album item id: %w",err)}
