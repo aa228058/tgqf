@@ -318,7 +318,6 @@ func (s *Service) List(ctx context.Context,tenantID string,opts ListOptions)([]M
 	opts.MediaType=strings.ToLower(strings.TrimSpace(opts.MediaType))
 	opts.Query=strings.TrimSpace(opts.Query)
 	if opts.AccountID!=""&&!validUUID(opts.AccountID){return nil,0,errors.New("invalid account filter")}
-	if opts.ChatID==0&&strings.TrimSpace(fmt.Sprint(opts.ChatID))!="" { /* zero means no chat filter */ }
 	if opts.ChatType!=""&&opts.ChatType!="private"&&opts.ChatType!="group"&&opts.ChatType!="channel"{return nil,0,errors.New("invalid chat type filter")}
 	if len(opts.MediaType)>32||len(opts.Query)>120{return nil,0,errors.New("invalid message filter")}
 	out:=[]Message{};total:=0
