@@ -452,7 +452,7 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [x] 公开链接和私密邀请链接均通过 MTGo 只读 messages.checkChatInvite / contacts.resolveUsername 检查；状态区分 valid、approval_required、invalid、unknown。检查路径不调用加入 API。
 - [x] Worker 每 15 分钟调度检查；同一链接正常检查后至少 6 小时才进入下一次常规检查。unknown 采用 15 分钟起步的指数退避，最高 6 小时；Telegram FloodWait 优先延后到服务端等待窗口（至少 15 分钟）。检查领取使用 2 分钟数据库租约和 SKIP LOCKED，多 Worker 不会同时领取同一链接；写回使用租约时间 fencing，过期 Worker 无法覆盖新检查结果。
 - [x] 新消息再次发现链接时清空检查时间、下次检查时间、错误计数和旧检查租约，重新排入检查队列。
-- [x] 新增 migration 0044：检查次数、下次检查时间、到期索引；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
+- [x] 新增 migration 0044/0045：检查次数、下次检查时间、到期索引、带 fencing 的多 Worker 检查租约；并将历史上已采集但未关联群组的公开链接按 username 回填到公共群组库。
 - [x] 新增 GET /api/v1/group-links/stats，返回当前租户可见链接的总数、公开/私密数量及状态分布。
 - [x] 修复 GET /api/v1/group-links 的租户隔离：列表、总数及来源计数均限定当前租户的来源记录，避免暴露其他租户发现的链接和来源数量。
 - [x] 自动加群仅由明确创建并确认授权的 tenant_join_tasks 执行；支持公共 username/link 与私密邀请链接。MTGo Client.JoinChat 对私密邀请内部调用 messages.importChatInvite，该调用只在实际加群任务执行路径发生。
