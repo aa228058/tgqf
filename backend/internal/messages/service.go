@@ -597,6 +597,35 @@ func (s *Service) ListGroupLinks(ctx context.Context, tenantID, linkType, status
 }
 
 
+
+type GroupLinkStats struct {
+    Total int `json:"total"`
+    Public int `json:"public"`
+    Invite int `json:"invite"`
+    Pending int `json:"pending"`
+    Valid int `json:"valid"`
+    ApprovalRequired int `json:"approval_required"`
+    Invalid int `json:"invalid"`
+    Unknown int `json:"unknown"`
+}
+
+func (s *Service) GetGroupLinkStats(ctx context.Context, tenantID string) (GroupLinkStats, error) {
+    var stats GroupLinkStats
+    err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+        return tx.QueryRowContext(ctx, `SELECT COUNT(DISTINCT l.id),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.link_type='public'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.link_type='invite'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='pending'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='valid'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='approval_required'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='invalid'),
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='unknown')
+            FROM public_group_links l JOIN public_group_link_sources src ON src.link_id=l.id
+            WHERE src.tenant_id=$1`, tenantID).Scan(&stats.Total,&stats.Public,&stats.Invite,&stats.Pending,&stats.Valid,&stats.ApprovalRequired,&stats.Invalid,&stats.Unknown)
+    })
+    return stats, err
+}
+
 type PublicLinkCheck struct {
  LinkID int64
  Username string
@@ -611,7 +640,7 @@ func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID 
    FROM public_group_links l
    JOIN public_group_link_sources src ON src.link_id=l.id
    WHERE l.link_type='public' AND src.tenant_id=$1 AND src.telegram_account_id=$2
-    AND (l.last_checked_at IS NULL OR l.last_checked_at < NOW()-INTERVAL '6 hours')
+    AND (l.next_check_at IS NULL OR l.next_check_at <= NOW())
    ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id LIMIT $3`,tenantID,accountID,limit)
   if err!=nil{return err}
   defer rows.Close()
@@ -636,7 +665,9 @@ func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID string,link
  if linkID<=0||!allowed[status]{return errors.New("invalid public link check result")}
  if len(checkError)>500{checkError=checkError[:500]}
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,'')
+  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
+    check_attempts=check_attempts+1,
+    next_check_at=NOW()+CASE WHEN $3='unknown' THEN INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE INTERVAL '6 hours' END
    WHERE l.id=$1 AND l.link_type='public' AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError)
   if err!=nil{return err}
   n,_:=result.RowsAffected()
@@ -683,7 +714,9 @@ func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string,
  if linkID <= 0 || !allowed[status] { return errors.New("invalid private invite check result") }
  if len(checkError)>500 { checkError=checkError[:500] }
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error {
-  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,'')
+  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
+    check_attempts=check_attempts+1,
+    next_check_at=NOW()+CASE WHEN $3='unknown' THEN INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE INTERVAL '6 hours' END
    WHERE l.id=$1 AND l.link_type='invite' AND EXISTS(
     SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError)
   if err!=nil{return err}
