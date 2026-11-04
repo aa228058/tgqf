@@ -13,6 +13,7 @@ type JoinTaskJob struct {
     TaskID string
     AccountRowID int64
     AccountID string
+    Attempts int
     TargetURL string
     PrivateInviteCiphertext []byte
     LeaseUntil time.Time
@@ -24,7 +25,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         rows,err:=tx.QueryContext(ctx,`
             WITH picked AS (
-                SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
+                SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,a.attempts,
                     COALESCE(l.public_url,CASE WHEN NULLIF(g.username,'') IS NOT NULL THEN 'https://t.me/'||g.username END) AS target_url,
                     t.private_invite_hash_ciphertext
                 FROM tenant_join_task_accounts a
@@ -55,7 +56,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
+                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts acc SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE acc.tenant_id=c.tenant_id AND acc.id=c.telegram_account_id
@@ -65,7 +66,7 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
             FROM claimed c JOIN scheduled s ON TRUE
         `,tenantID,limit)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.TargetURL,&job.PrivateInviteCiphertext,&job.LeaseUntil);err!=nil{return err};if len(job.PrivateInviteCiphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(job.PrivateInviteCiphertext);if decryptErr!=nil{return decryptErr};job.TargetURL="https://t.me/+"+hash };jobs=append(jobs,job)}
+        for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.Attempts,&job.TargetURL,&job.PrivateInviteCiphertext,&job.LeaseUntil);err!=nil{return err};if len(job.PrivateInviteCiphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(job.PrivateInviteCiphertext);if decryptErr!=nil{return decryptErr};job.TargetURL="https://t.me/+"+hash };jobs=append(jobs,job)}
         return rows.Err()
     })
     return jobs,err
@@ -124,6 +125,36 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
             WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='processing' AND lease_until=$5`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task lease expired or was cancelled")}
         return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
+    })
+}
+
+
+// RescheduleJoinTaskRetry retries transient Telegram failures with bounded
+// exponential backoff. The exact lease is consumed before the row is requeued.
+func (s *Service) RescheduleJoinTaskRetry(ctx context.Context, job JoinTaskJob, reason string) error {
+    if job.Attempts >= 5 {
+        return s.FailJoinTaskAccount(ctx, job, "retry limit reached: "+reason)
+    }
+    delay := 30 * time.Second
+    for i := 1; i < job.Attempts && delay < 30*time.Minute; i++ {
+        delay *= 2
+    }
+    if delay > 30*time.Minute { delay = 30*time.Minute }
+    if len(reason) > 500 { reason = reason[:500] }
+    return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+        if err := lockJoinTaskParent(ctx, tx, job.TenantID, job.TaskID); err != nil { return err }
+        res, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts
+            SET status='queued',available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second')),
+                lease_until=NULL,last_error=$2,updated_at=NOW()
+            WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='processing' AND lease_until=$6`,
+            int64(delay/time.Second), strings.TrimSpace(reason), job.TenantID, job.TaskID, job.AccountRowID, job.LeaseUntil)
+        if err != nil { return err }
+        n, err := res.RowsAffected()
+        if err != nil { return err }
+        if n == 0 { return errors.New("join task lease expired or was cancelled") }
+        _, err = tx.ExecContext(ctx, `UPDATE tenant_join_tasks SET available_at=GREATEST(available_at,NOW()+($1 * INTERVAL '1 second'))
+            WHERE tenant_id=$2 AND id=$3 AND status='queued'`, int64(delay/time.Second), job.TenantID, job.TaskID)
+        return err
     })
 }
 
