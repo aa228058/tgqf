@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -63,4 +62,3 @@ func (s *Service) ListAuditLogs(ctx context.Context, tenantID, action string, li
 	return items, total, rows.Err()
 }
 
-var _ = sql.ErrNoRows
