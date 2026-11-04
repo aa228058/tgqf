@@ -9,9 +9,9 @@ type IssuedCard={id:string;code:string;duration_days:number;created_at:string};
 type Tenant={id:string;name:string;status:string;account_limit:number;expires_at?:string;created_at:string};
 async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{const headers:Record<string,string>={Authorization:`Bearer ${token}`};if(!(init?.body instanceof FormData))headers["Content-Type"]="application/json";Object.assign(headers,init?.headers||{});const r=await fetch(API+path,{...init,headers,cache:"no-store"});if(!r.ok){let m=`请求失败（${r.status}）`;try{m=(await r.json()).error||m}catch{}throw Error(m)}return r.json() as Promise<T>}
 const date=(s?:string)=>s?new Date(s).toLocaleString():"—";
-export function SettingsPage({token,user}:{token:string;user:User}){
+export function SettingsPage({token,user,initialTab="profile"}:{token:string;user:User;initialTab?:"profile"|"username"|"cards"|"tenants"}){
  const admin=user.role==="super_admin";
- const [tab,setTab]=useState<"profile"|"username"|"cards"|"tenants">("profile");
+ const [tab,setTab]=useState<"profile"|"username"|"cards"|"tenants">(initialTab);
  const [currentPassword,setCurrentPassword]=useState(""),[newPassword,setNewPassword]=useState(""),[confirmPassword,setConfirmPassword]=useState("");
  const [username,setUsername]=useState<UsernameSettings>({prefix:"tg",random_length:10,charset:"alphanumeric"});
  const [cards,setCards]=useState<Card[]>([]),[issued,setIssued]=useState<IssuedCard[]>([]),[tenants,setTenants]=useState<Tenant[]>([]);
