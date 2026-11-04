@@ -13,7 +13,7 @@ type Rule={
  reply_text:string;reply_text_by_chat_type:Record<string,string>;action_type:string;
  enabled:boolean;case_sensitive:boolean;contact_phone?:string;contact_first_name?:string;
  contact_last_name?:string;media_asset_id?:string;media_type?:string;media_caption?:string;
- media_album_items?:AlbumItem[];
+ media_album_items?:AlbumItem[];action_steps?:ActionStep[];
 };
 type Match={id:number;rule_id:string;rule_name:string;account_id:string;chat_id:number;message_id:number;matched_terms:string[];matched_at:string};
 type StepResult={step_index:number;action_type:string;status:string;telegram_message_ids?:number[];telegram_call_id?:number;error?:string;completed_at:string};
@@ -37,7 +37,8 @@ const emptyRule=():Rule=>({
  chat_types:["private","group"],account_ids:[],chat_ids:[],media_types:[],chat_titles:[],chat_usernames:[],
  sender_ids:[],sender_usernames:[],sender_names:[],reply_text:"",reply_text_by_chat_type:{},
  action_type:"text",enabled:true,case_sensitive:false,contact_phone:"",contact_first_name:"",
- contact_last_name:"",media_asset_id:"",media_type:"photo",media_caption:"",media_album_items:[]
+ contact_last_name:"",media_asset_id:"",media_type:"photo",media_caption:"",media_album_items:[],
+ action_steps:[{action_type:"text",text:"",reply_text_by_chat_type:{}}]
 });
 
 export function KeywordMonitor({token}:{token:string}){
@@ -98,7 +99,8 @@ export function KeywordMonitor({token}:{token:string}){
    keyword_groups:groups,chat_ids:splitIDs(chatIDsText),media_types:splitList(mediaTypesText),
    chat_titles:splitList(chatTitlesText),chat_usernames:splitList(chatUsernamesText),
    sender_ids:splitIDs(senderIDsText),sender_usernames:splitList(senderUsernamesText),sender_names:splitList(senderNamesText),
-   reply_text_by_chat_type:{private:privateReplyText,group:groupReplyText}
+   reply_text_by_chat_type:{private:privateReplyText,group:groupReplyText},
+   action_steps:(draft.action_steps||[]).map(step=>step.action_type==="text"?{...step,reply_text_by_chat_type:step.reply_text_by_chat_type||{}}:step)
   };
   try{
    const result=await api<{rule:Rule}>(draft.id?`/api/v1/keyword-rules/${draft.id}`:"/api/v1/keyword-rules",token,{method:draft.id?"PUT":"POST",body:JSON.stringify(payload)});
@@ -142,6 +144,18 @@ export function KeywordMonitor({token}:{token:string}){
   const form=new FormData();form.append("file",file);operationLock.current=true;setBusy(true);setError("");setNotice("");
   try{await api("/api/v1/keyword-media-assets",token,{method:"POST",body:form});setNotice("媒体素材已上传");await load()}
   catch(e){setError(e instanceof Error?e.message:"媒体素材上传失败")}finally{operationLock.current=false;setBusy(false)}
+ }
+ function updateStep(index:number,patch:Partial<ActionStep>){
+  setDraft(current=>current?{...current,action_steps:(current.action_steps||[]).map((step,i)=>i===index?{...step,...patch}:step)}:current);
+ }
+ function addStep(){
+  setDraft(current=>current?{...current,action_steps:[...(current.action_steps||[]),{action_type:"text",text:"",reply_text_by_chat_type:{}}]}:current);
+ }
+ function moveStep(index:number,direction:-1|1){
+  setDraft(current=>{if(!current)return current;const steps=[...(current.action_steps||[])];const target=index+direction;if(target<0||target>=steps.length)return current;[steps[index],steps[target]]=[steps[target],steps[index]];return {...current,action_steps:steps}});
+ }
+ function removeStep(index:number){
+  setDraft(current=>current?{...current,action_steps:(current.action_steps||[]).filter((_,i)=>i!==index)}:current);
  }
  function changeAction(action:string){
   setDraft(current=>{
