@@ -101,6 +101,7 @@ func main() {
 	statusSynced := make(map[string]bool)
 	ticker := time.NewTicker(30*time.Second)
 	defer ticker.Stop()
+	lastProxySweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
 	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
@@ -141,6 +142,11 @@ func main() {
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
+		if time.Since(lastProxySweep)>=10*time.Minute {
+			sweepCtx,cancelSweep:=context.WithTimeout(ctx,3*time.Minute)
+			if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
+			cancelSweep();lastProxySweep=time.Now()
+		}
 		select {
 		case <-ctx.Done(): return
 		case <-ticker.C:
