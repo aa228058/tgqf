@@ -107,9 +107,9 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
 		// Consume only this exact lease. Pause/cancel stops future work without
 		// invalidating a Telegram RPC that is already running.
 		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
-			status=CASE WHEN t.status='cancelled' THEN 'cancelled' WHEN t.status='paused' THEN 'paused' ELSE 'queued' END,
-			available_at=CASE WHEN t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
-			lease_until=NULL,last_error=$2,updated_at=NOW()
+			status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'queued' END,
+			available_at=CASE WHEN NOT a.cancel_requested AND NOT a.pause_requested AND t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
+			lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$2,updated_at=NOW()
 			FROM tenant_join_tasks t
 			WHERE a.tenant_id=$3 AND a.task_id=$4 AND a.id=$5 AND a.status='processing' AND a.lease_until=$6
 			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,
@@ -141,8 +141,8 @@ func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
-				status=CASE WHEN t.status='cancelled' THEN 'cancelled' ELSE 'failed' END,
-				lease_until=NULL,last_error=$1,updated_at=NOW()
+				status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' ELSE 'failed' END,
+				lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$1,updated_at=NOW()
 			FROM tenant_join_tasks t
 			WHERE a.tenant_id=$2 AND a.task_id=$3 AND a.id=$4 AND a.status='processing' AND a.lease_until=$5
 			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,strings.TrimSpace(reason),job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
@@ -171,9 +171,9 @@ func (s *Service) RescheduleJoinTaskRetry(ctx context.Context, job JoinTaskJob, 
 	return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
 		if err := lockJoinTaskParent(ctx, tx, job.TenantID, job.TaskID); err != nil { return err }
 		res, err := tx.ExecContext(ctx, `UPDATE tenant_join_task_accounts a SET
-			status=CASE WHEN t.status='cancelled' THEN 'cancelled' WHEN t.status='paused' THEN 'paused' ELSE 'queued' END,
-			available_at=CASE WHEN t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
-			lease_until=NULL,last_error=$2,updated_at=NOW()
+			status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'queued' END,
+			available_at=CASE WHEN NOT a.cancel_requested AND NOT a.pause_requested AND t.status='queued' THEN GREATEST(a.available_at,NOW()+($1 * INTERVAL '1 second')) ELSE a.available_at END,
+			lease_until=NULL,pause_requested=FALSE,cancel_requested=FALSE,last_error=$2,updated_at=NOW()
 			FROM tenant_join_tasks t
 			WHERE a.tenant_id=$3 AND a.task_id=$4 AND a.id=$5 AND a.status='processing' AND a.lease_until=$6
 			  AND t.tenant_id=a.tenant_id AND t.id=a.task_id`,
@@ -196,15 +196,7 @@ func lockJoinTaskParent(ctx context.Context, tx *sql.Tx, tenantID, taskID string
 }
 
 func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string)error {
-    _,err:=tx.ExecContext(ctx,`
-        UPDATE tenant_join_tasks t SET status=CASE
-            WHEN EXISTS(SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id AND a.status='failed') THEN 'failed'
-            ELSE 'completed' END,updated_at=NOW()
-        WHERE t.tenant_id=$1 AND t.id=$2 AND t.status IN ('queued','paused')
-          AND NOT EXISTS(SELECT 1 FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id
-              AND a.status NOT IN ('joined','already_member','skipped','failed','cancelled'))
-    `,tenantID,taskID)
-    return err
+	return refreshJoinTaskControlStatus(ctx,tx,tenantID,taskID)
 }
 
 type JoinApprovalJob struct {
