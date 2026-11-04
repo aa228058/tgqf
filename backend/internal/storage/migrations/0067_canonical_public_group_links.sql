@@ -49,8 +49,7 @@ SET group_id=COALESCE(keeper.group_id,duplicate.group_id),
         WHEN keeper.status='invalid' AND duplicate.status='pending' THEN 'pending'
         ELSE keeper.status
     END,
-    last_checked_at=GREATEST(keeper.last_checked_at,duplicate.last_checked_at),
-    updated_at=NOW()
+    last_checked_at=GREATEST(keeper.last_checked_at,duplicate.last_checked_at)
 FROM ranked r
 JOIN public_group_links duplicate ON duplicate.id=r.id
 WHERE keeper.id=r.keeper_id AND duplicate.id<>r.keeper_id;
@@ -66,8 +65,7 @@ USING ranked r
 WHERE duplicate.id=r.id AND r.id<>r.keeper_id;
 
 UPDATE public_group_links
-SET public_url='https://t.me/' || lower(regexp_replace(public_url,'^https?://(www\\.)?(t\\.me|telegram\\.me)/','', 'i')),
-    updated_at=NOW()
+SET public_url='https://t.me/' || lower(regexp_replace(public_url,'^https?://(www\.)?(t\.me|telegram\.me)/','', 'i'))
 WHERE link_type='public';
 
 CREATE UNIQUE INDEX public_group_links_public_username_unique
