@@ -249,7 +249,11 @@ func (s *Service) DeferJoinApprovalCheck(ctx context.Context,job JoinApprovalJob
   if err!=nil{return err}
   n,_:=res.RowsAffected()
   if n==0{return errors.New("approval check lease expired or was superseded")}
-  return nil
+  _,err=tx.ExecContext(ctx,`UPDATE telegram_accounts SET
+   join_flood_wait_until=GREATEST(COALESCE(join_flood_wait_until,NOW()),NOW()+($1*INTERVAL '1 second')),
+   telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1*INTERVAL '1 second'))
+   WHERE tenant_id=$2 AND id=$3`,seconds,job.TenantID,job.AccountID)
+  return err
  })
 }
 
