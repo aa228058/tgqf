@@ -101,8 +101,7 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
             if pendingErr==nil && pending!=nil { result.Queues.IncomingPending=pending.Count }
         }
     }
-    if err:=s.db.QueryRowContext(ctx,`SELECT COUNT(*),COUNT(*) FILTER(WHERE status='authorized'),COUNT(*) FILTER(WHERE status='disconnected'),COUNT(*) FILTER(WHERE status='error'),COUNT(*) FILTER(WHERE status='pending') FROM telegram_accounts`).Scan(&result.Accounts.Total,&result.Accounts.Authorized,&result.Accounts.Disconnected,&result.Accounts.Error,&result.Accounts.Pending);err!=nil{return result,fmt.Errorf("account health: %w",err)}
-    if err:=s.db.QueryRowContext(ctx,`SELECT (SELECT COUNT(*) FROM tenant_proxies),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE checked_at >= NOW()-INTERVAL '15 minutes')`).Scan(&result.Proxies.Total,&result.Proxies.FailedChecks15m,&result.Proxies.SuccessfulChecks15m);err!=nil{return result,fmt.Errorf("proxy health: %w",err)}
+    if err:=s.aggregateTenantHealth(ctx,&result);err!=nil{return result,fmt.Errorf("tenant-scoped health: %w",err)}
     if pingErr!=nil{return result,fmt.Errorf("PostgreSQL ping failed: %w",pingErr)}
     return result,nil
 }
@@ -134,7 +133,7 @@ func sampleCPUPercent() float64 {
     if previousCPUTotal==0 || total<=previousCPUTotal { return 0 }
     totalDelta:=total-previousCPUTotal
     idleDelta:=idle-previousCPUIdle
-    if totalDelta==0 { return 0 }
+    if totalDelta==0 || idleDelta>totalDelta { return 0 }
     return 100*float64(totalDelta-idleDelta)/float64(totalDelta)
 }
 
