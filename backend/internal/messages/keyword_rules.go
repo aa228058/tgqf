@@ -9,6 +9,8 @@ import (
     "regexp"
     "strings"
     "time"
+
+    "github.com/aa228058/tgqf/backend/internal/telegrammtgo"
 )
 
 var ErrInvalidKeywordRule = errors.New("invalid keyword rule")
@@ -353,6 +355,7 @@ type KeywordActionJob struct {
     MediaType string
     MediaCaption string
     MediaAlbumItems []KeywordMediaAlbumItem
+    TargetUserID int64
     Attempts int
     LeaseUntil time.Time
 }
