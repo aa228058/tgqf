@@ -11,8 +11,9 @@ import (
 	"github.com/aa228058/tgqf/backend/internal/auth"
 )
 
-func parseGroupCatalogueCSV(reader io.Reader) ([]GroupCatalogueImportRecord, error) {
+func parseGroupCatalogueDelimited(reader io.Reader, delimiter rune) ([]GroupCatalogueImportRecord, error) {
 	csvReader := csv.NewReader(reader)
+	csvReader.Comma = delimiter
 	csvReader.FieldsPerRecord = -1
 	csvReader.TrimLeadingSpace = true
 	header, err := csvReader.Read()
@@ -60,6 +61,34 @@ func parseGroupCatalogueCSV(reader io.Reader) ([]GroupCatalogueImportRecord, err
 	}
 	if len(records) == 0 { return nil, errors.New("CSV contains no group records") }
 	return records,nil
+}
+
+func parseGroupCatalogueCSV(reader io.Reader) ([]GroupCatalogueImportRecord, error) {
+	return parseGroupCatalogueDelimited(reader, ',')
+}
+
+func parseGroupCatalogueTXT(reader io.Reader) ([]GroupCatalogueImportRecord, error) {
+	return parseGroupCatalogueDelimited(reader, '\\t')
+}
+
+func (h *Handler) importGroupCatalogueTXT(w http.ResponseWriter, r *http.Request) {
+	user := auth.UserFromContext(r.Context())
+	if user.Role != "tenant_admin" {
+		messageJSON(w,http.StatusForbidden,map[string]string{"error":"tenant_admin_required"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w,r.Body,2<<20)
+	records, err := parseGroupCatalogueTXT(r.Body)
+	if err != nil {
+		messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()})
+		return
+	}
+	inserted, skipped, err := h.service.ImportGroupCatalogue(r.Context(),user.TenantID,records)
+	if err != nil {
+		messageJSON(w,http.StatusBadRequest,map[string]string{"error":err.Error()})
+		return
+	}
+	messageJSON(w,http.StatusOK,map[string]any{"total":len(records),"inserted":inserted,"skipped_existing":skipped,"mode":"insert_only","shared_catalogue":true})
 }
 
 func (h *Handler) importGroupCatalogueCSV(w http.ResponseWriter, r *http.Request) {
