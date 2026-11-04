@@ -75,7 +75,7 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			status TEXT NOT NULL,application_status TEXT NOT NULL DEFAULT 'not_started',attempts INTEGER NOT NULL DEFAULT 0,
 			available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),lease_until TIMESTAMPTZ,telegram_chat_id BIGINT,
 			last_error TEXT NOT NULL DEFAULT '',updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			approval_check_lease_until TIMESTAMPTZ)`,
+			approval_check_lease_until TIMESTAMPTZ,pause_requested BOOLEAN NOT NULL DEFAULT FALSE,cancel_requested BOOLEAN NOT NULL DEFAULT FALSE)`,
 	}
 	for _,statement:=range ddl { if _,err:=db.Exec(statement);err!=nil{db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close();t.Fatal(err)} }
 	cleanup:=func(){db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close()}
