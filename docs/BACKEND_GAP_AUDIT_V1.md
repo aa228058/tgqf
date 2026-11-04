@@ -128,6 +128,7 @@
 - `GET /api/v1/groups`（全局共享公共群组/频道目录；返回来源数和贡献租户数）
 - `GET /api/v1/groups/export.csv`（沿用群组筛选条件导出 CSV，最多 10,000 条）
 - `POST /api/v1/groups/import.csv`（tenant_admin 导入 CSV 纠错建议，最多 1,000 行；只进入待审核队列）
+- `POST /api/v1/groups/catalogue/import.csv`（tenant_admin 导入共享群组总库；最多 10,000 行；仅插入新 Telegram 群组标识，已存在记录只跳过、不覆盖；成功新增记录写入租户贡献统计）
 - `GET /api/v1/groups` 支持 `chat_type`、`q`、`verified`、`min_members`、`max_members`、`min_sources`、`min_contributors`、`sort=recent|title|members|sources|contributors`；结果包含内部 `id` 与 Telegram `chat_id`、群组默认发言权限 JSON 和采集时间。
 - `GET /api/v1/groups/{id}/sources`（仅返回当前租户贡献的发现来源、账号信息及该账号在该群的权限快照，不泄露其他租户的账号数据）
 - `POST /api/v1/groups/{id}/corrections`、`GET /api/v1/groups/corrections`（租户提交/查询自身的群组资料纠错建议）
