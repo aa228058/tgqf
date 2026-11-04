@@ -148,7 +148,6 @@ export default function Home() {
   }
   const selectedTasks = useMemo(() => tasks.filter(t => selected.includes(t.id)), [tasks, selected]);
   const selectedTypes = [...new Set(selectedTasks.map(t => t.type))];
-  const selectedType = selectedTypes.length ? "selected" : "";
   async function bulk(action: "pause" | "resume" | "retry" | "cancel") {
     if (selectedTasks.length === 0 || actionLock.current) return;
     if (action === "cancel" && !window.confirm("确定取消选中的 " + selectedTasks.length + " 条任务吗？")) return;
