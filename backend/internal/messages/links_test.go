@@ -39,3 +39,10 @@ func TestExtractTelegramLinksPreservesInviteCase(t *testing.T) {
 	if len(a)!=1||len(b)!=1 { t.Fatalf("expected one invite each: %d %d",len(a),len(b)) }
 	if string(a[0].InviteHash)==string(b[0].InviteHash) { t.Fatal("case-sensitive invite hashes unexpectedly match") }
 }
+
+func TestExtractTelegramLinksSkipsPreviewAndReservedRoutes(t *testing.T) {
+    got := ExtractTelegramLinks("https://t.me/s/PublicGroup/123 t.me/c/123456/789 t.me/share/url")
+    if len(got) != 0 {
+        t.Fatalf("reserved Telegram routes must not be treated as public usernames: %#v", got)
+    }
+}
