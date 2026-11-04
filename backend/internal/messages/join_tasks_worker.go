@@ -236,6 +236,23 @@ func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,l
  return out,err
 }
 
+
+func (s *Service) DeferJoinApprovalCheck(ctx context.Context,job JoinApprovalJob,wait time.Duration) error {
+ seconds:=joinTaskCooldownSeconds(wait)
+ if seconds<=0 { return errors.New("positive approval check delay is required") }
+ return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+  if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
+  res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts
+   SET approval_check_lease_until=GREATEST(approval_check_lease_until,NOW()+($1*INTERVAL '1 second'))
+   WHERE tenant_id=$2 AND task_id=$3 AND id=$4 AND status='request_pending' AND approval_check_lease_until=$5`,
+   seconds,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
+  if err!=nil{return err}
+  n,_:=res.RowsAffected()
+  if n==0{return errors.New("approval check lease expired or was superseded")}
+  return nil
+ })
+}
+
 func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,memberStatus string)error {
 	status:="request_pending";application:="request_pending"
 	switch memberStatus {
