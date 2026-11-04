@@ -58,6 +58,7 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
 		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
 		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
+		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
 	}
 	for _, joinAccount := range joinAccounts {
 		if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',$3)`, tenantID, joinAccount, []byte{1}); err != nil {
@@ -66,6 +67,10 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status) VALUES
 		($1,$2,$3,'queued'),($1,$4,$5,'joined'),($1,$4,$6,'already_member'),($1,$4,$7,'skipped')`, tenantID, joinTaskID, accountID, joinTaskID, joinAccounts[0], joinAccounts[1], joinAccounts[2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status,approval_check_lease_until)
+		VALUES($1,$2,$3,'request_pending',NOW()-INTERVAL '1 minute')`, tenantID, joinTaskID, joinAccounts[3]); err != nil {
 		t.Fatal(err)
 	}
 	// A second tenant has its own pending task; it must never leak into this
@@ -102,14 +107,17 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pageTotal != 6 || len(page) != 1 {
-		t.Fatalf("paginated task list returned %d rows (total %d), want 1 row from a tenant total of 6", len(page), pageTotal)
+	if pageTotal != 7 || len(page) != 1 {
+		t.Fatalf("paginated task list returned %d rows (total %d), want 1 row from a tenant total of 7", len(page), pageTotal)
 	}
 	summary, err := service.GetUnifiedTaskSummary(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Total != 6 {
-		t.Fatalf("tenant task summary total=%d, want 6; cross-tenant task leaked or queue omitted", summary.Total)
+	if summary.Total != 7 {
+		t.Fatalf("tenant task summary total=%d, want 7; cross-tenant task leaked or queue omitted", summary.Total)
+	}
+	if summary.ExpiredLeases != 1 {
+		t.Fatalf("expired lease summary=%d, want the overdue join approval check lease to be included", summary.ExpiredLeases)
 	}
 }
