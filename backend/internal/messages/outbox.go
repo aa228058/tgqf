@@ -84,3 +84,29 @@ func (s *Service) PublishPendingMessageEvents(ctx context.Context, limit int) (i
 	}
 	return published, nil
 }
+
+
+// PrunePublishedMessageEvents bounds the PostgreSQL delivery outbox while
+// retaining recent delivery history. Pending rows are never eligible.
+func (s *Service) PrunePublishedMessageEvents(ctx context.Context, retention time.Duration, limit int) (int64, error) {
+	if retention < 24*time.Hour {
+		return 0, errors.New("message event outbox retention must be at least 24 hours")
+	}
+	if limit < 1 || limit > 5000 {
+		limit = 1000
+	}
+	result, err := s.db.ExecContext(ctx, `WITH expired AS (
+		SELECT id FROM message_event_outbox
+		WHERE published_at IS NOT NULL
+		  AND published_at < NOW() - ($1 * INTERVAL '1 second')
+		ORDER BY id
+		LIMIT $2
+		FOR UPDATE SKIP LOCKED
+	)
+	DELETE FROM message_event_outbox o USING expired e
+	WHERE o.id=e.id`, int64(retention/time.Second), limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
