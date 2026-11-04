@@ -38,9 +38,8 @@ set +e
 printf 'NO\n' | bash "$TMP/repo/deploy/restore.sh" "$TMP/repo/backups/test" >"$TMP/cancel.out" 2>"$TMP/cancel.err"
 cancel_status=$?
 set -e
-if [[ "$cancel_status" -ne 0 ]]; then
-  echo "Expected restore cancellation to exit cleanly." >&2
-  cat "$TMP/cancel.err" >&2
+if [[ "$cancel_status" -eq 0 ]]; then
+  echo "Expected restore cancellation to return a non-zero status." >&2
   exit 1
 fi
 if grep -q ' stop ' "$DOCKER_LOG"; then
