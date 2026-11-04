@@ -15,6 +15,7 @@ export function GroupsPage({token,canImport,isSuperAdmin=false}:{token:string;ca
  const [savingSettings,setSavingSettings]=useState(false);
  const [linkType,setLinkType]=useState(""),[linkStatus,setLinkStatus]=useState(""),[settings,setSettings]=useState<Settings>({enabled:true,from_private_messages:true,from_groups:true,from_channels:true});
  const [detail,setDetail]=useState<Group|null>(null),[sources,setSources]=useState<Source[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[file,setFile]=useState<File|null>(null),[importFormat,setImportFormat]=useState<"csv"|"txt"|"xlsx">("csv");
+ const [importTenants,setImportTenants]=useState<ImportTenant[]>([]),[targetTenantID,setTargetTenantID]=useState("");
  const [minMembers,setMinMembers]=useState(""),[minSources,setMinSources]=useState(""),[minContributors,setMinContributors]=useState("");
  useEffect(()=>{const timer=window.setTimeout(()=>setDebouncedQ(q),280);return()=>window.clearTimeout(timer)},[q]);
  useEffect(()=>{if(!isSuperAdmin)return;let active=true;request<{tenants:ImportTenant[]}>("/api/v1/admin/tenants?limit=500",token).then(r=>{if(active){const rows=r.tenants||[];setImportTenants(rows);setTargetTenantID(current=>current||rows.find(t=>t.status==="active")?.id||"")}}).catch(e=>{if(active)setError(e instanceof Error?e.message:"租户列表加载失败")});return()=>{active=false}},[isSuperAdmin,token]);
