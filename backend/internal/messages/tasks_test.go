@@ -1,6 +1,9 @@
 package messages
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeUnifiedTaskFilter(t *testing.T) {
 	filter, err := normalizeUnifiedTaskFilter(UnifiedTaskFilter{Type: " PROFILE_UPDATE ", Limit: 500, Offset: -1})
@@ -49,5 +52,19 @@ func TestUnifiedTaskActionsMatchQueueTransitions(t *testing.T) {
 			t.Errorf("%s/%s: got pause=%v resume=%v retry=%v cancel=%v",
 				test.taskType, test.status, pause, resume, retry, cancel)
 		}
+	}
+}
+
+
+func TestNormalizeUnifiedTaskFilterSearchQuery(t *testing.T) {
+	filter, err := normalizeUnifiedTaskFilter(UnifiedTaskFilter{Query: "  @Example Group  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.Query != "@Example Group" {
+		t.Fatalf("query was not trimmed: %q", filter.Query)
+	}
+	if _, err := normalizeUnifiedTaskFilter(UnifiedTaskFilter{Query: strings.Repeat("x", 121)}); err == nil {
+		t.Fatal("expected oversized task search query to be rejected")
 	}
 }
