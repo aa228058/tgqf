@@ -105,7 +105,7 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 
 	// Telegram's phone.requestCall requires SHA-256(g_a) exactly.
 	// Do not append messages.getDhConfig random bytes or a local nonce here.
-	gaHash := sha256.Sum256(gA)
+	gaHash := voiceCallGAHash(gA)
 
 	var randomIDBytes [4]byte
 	if _, err := rand.Read(randomIDBytes[:]); err != nil {
@@ -185,4 +185,9 @@ func (m *Manager) registerVoiceCallHandler(accountID string, client *telegram.Cl
 			handler(accountID, callID, state)
 		}
 	})
+}
+
+// voiceCallGAHash follows Telegram's phone.requestCall contract: SHA-256(g_a).
+func voiceCallGAHash(gA []byte) [32]byte {
+	return sha256.Sum256(gA)
 }
