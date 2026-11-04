@@ -182,37 +182,58 @@ func refreshJoinTaskStatus(ctx context.Context,tx *sql.Tx,tenantID,taskID string
 }
 
 type JoinApprovalJob struct {
-	TenantID string
-	TaskID string
-	AccountRowID int64
-	AccountID string
-	ChatID int64
-	InviteHash string
+ TenantID string
+ TaskID string
+ AccountRowID int64
+ AccountID string
+ ChatID int64
+ InviteHash string
+ CheckError string
+ LeaseUntil time.Time
 }
 
 func (s *Service) ListPendingJoinApprovals(ctx context.Context,tenantID string,limit int)([]JoinApprovalJob,error) {
-	if limit<1||limit>100 {limit=50}
-	out:=[]JoinApprovalJob{}
-	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		rows,err:=tx.QueryContext(ctx,`
-			SELECT a.tenant_id::text,a.task_id::text,a.id,a.telegram_account_id::text,COALESCE(g.telegram_chat_id,0),t.private_invite_hash_ciphertext
-			FROM tenant_join_task_accounts a
-			JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
-			LEFT JOIN public_group_links l ON l.id=t.target_link_id
-			LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
-			JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
-			WHERE a.tenant_id=$1 AND a.status='request_pending'
-			  AND (g.telegram_chat_id IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
-			  AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
-			  AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
-			ORDER BY a.updated_at LIMIT $2
-		`,tenantID,limit)
-		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job JoinApprovalJob;var ciphertext []byte;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&ciphertext);err!=nil{return err};if len(ciphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(ciphertext);if decryptErr!=nil{return decryptErr};job.InviteHash=hash }
-			out=append(out,job)}
-		return rows.Err()
-	})
-	return out,err
+ if limit<1||limit>100 {limit=50}
+ out:=[]JoinApprovalJob{}
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  rows,err:=tx.QueryContext(ctx,`WITH due AS (
+    SELECT a.id,a.tenant_id,a.task_id,a.telegram_account_id,
+           COALESCE(g.telegram_chat_id,0) AS chat_id,t.private_invite_hash_ciphertext
+    FROM tenant_join_task_accounts a
+    JOIN tenant_join_tasks t ON t.tenant_id=a.tenant_id AND t.id=a.task_id
+    LEFT JOIN public_group_links l ON l.id=t.target_link_id
+    LEFT JOIN public_groups g ON g.id=COALESCE(t.target_group_id,l.group_id)
+    JOIN telegram_accounts acc ON acc.tenant_id=a.tenant_id AND acc.id=a.telegram_account_id
+    WHERE a.tenant_id=$1 AND a.status='request_pending'
+      AND (a.approval_check_lease_until IS NULL OR a.approval_check_lease_until<=NOW())
+      AND (g.telegram_chat_id IS NOT NULL OR t.private_invite_hash_ciphertext IS NOT NULL)
+      AND acc.status='authorized' AND acc.session_ciphertext IS NOT NULL
+      AND EXISTS(SELECT 1 FROM tenants ten WHERE ten.id=a.tenant_id AND ten.status='active' AND ten.expires_at>NOW())
+    ORDER BY a.updated_at,a.id
+    LIMIT $2 FOR UPDATE OF a SKIP LOCKED
+   ), claimed AS (
+    UPDATE tenant_join_task_accounts a
+    SET approval_check_lease_until=NOW()+INTERVAL '2 minutes',updated_at=NOW()
+    FROM due p WHERE a.id=p.id AND a.tenant_id=p.tenant_id
+    RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,p.chat_id,p.private_invite_hash_ciphertext,a.approval_check_lease_until
+   )
+   SELECT tenant_id::text,task_id::text,id,telegram_account_id::text,chat_id,private_invite_hash_ciphertext,approval_check_lease_until
+   FROM claimed ORDER BY id`,tenantID,limit)
+  if err!=nil{return err}
+  defer rows.Close()
+  for rows.Next(){
+   var job JoinApprovalJob
+   var ciphertext []byte
+   if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.ChatID,&ciphertext,&job.LeaseUntil);err!=nil{return err}
+   if len(ciphertext)>0 {
+    hash,decryptErr:=decryptJoinInviteHash(ciphertext)
+    if decryptErr!=nil {job.CheckError="decrypt private invite for approval sync failed: "+decryptErr.Error()} else {job.InviteHash=hash}
+   }
+   out=append(out,job)
+  }
+  return rows.Err()
+ })
+ return out,err
 }
 
 func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,memberStatus string)error {
@@ -227,8 +248,8 @@ func (s *Service) SyncJoinApproval(ctx context.Context,job JoinApprovalJob,membe
 	}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
-		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,last_error='',updated_at=NOW()
-			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending'`,status,application,job.TenantID,job.TaskID,job.AccountRowID)
+		res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts SET status=$1,application_status=$2,approval_check_lease_until=NULL,last_error='',updated_at=NOW()
+			WHERE tenant_id=$3 AND task_id=$4 AND id=$5 AND status='request_pending' AND approval_check_lease_until=$6`,status,application,job.TenantID,job.TaskID,job.AccountRowID,job.LeaseUntil)
 		if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return nil}
 		return refreshJoinTaskStatus(ctx,tx,job.TenantID,job.TaskID)
 	})
