@@ -20,6 +20,13 @@ func TestNormalizeJoinTaskInputValidatesTargetsAndAccounts(t *testing.T) {
     if _,err:=normalizeJoinTaskInput(base);err==nil{t.Fatal("invalid account id accepted")}
 }
 
+func TestNormalizeJoinTaskInputCollectedLinkIsExclusiveTarget(t *testing.T) {
+    base:=JoinTaskInput{Name:"collected invite",TargetLinkID:42,AccountIDs:[]string{"11111111-1111-4111-8111-111111111111"},AuthorizationConfirmed:true}
+    if _,err:=normalizeJoinTaskInput(base);err!=nil { t.Fatalf("collected link target should be accepted: %v",err) }
+    base.PrivateInviteLink="https://t.me/+AbCdEfGh123"
+    if _,err:=normalizeJoinTaskInput(base);err==nil { t.Fatal("collected link and pasted invite must not be combined") }
+}
+
 func TestNormalizePrivateInviteLink(t *testing.T) {
 	cases:=[]struct{input,want string;ok bool}{
 		{"https://t.me/+AbCdEfGh_123","AbCdEfGh_123",true},
