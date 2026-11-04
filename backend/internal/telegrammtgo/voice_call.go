@@ -58,8 +58,27 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 		return VoiceCallRequestResult{}, fmt.Errorf("Telegram returned unsupported DH configuration %T", dh)
 	}
 	p := new(big.Int).SetBytes(params.P)
-	if p.Sign() <= 0 {
-		return VoiceCallRequestResult{}, errors.New("Telegram returned invalid DH prime")
+	if p.BitLen() < 2048 || !p.ProbablyPrime(20) {
+		return VoiceCallRequestResult{}, errors.New("Telegram returned an invalid or undersized DH prime")
+	}
+	generatorOK := false
+	mod := func(n int64) int64 { return new(big.Int).Mod(p, big.NewInt(n)).Int64() }
+	switch params.G {
+	case 2:
+		generatorOK = mod(8) == 7
+	case 3:
+		generatorOK = mod(3) == 2
+	case 4:
+		generatorOK = true
+	case 5:
+		generatorOK = mod(5) == 1 || mod(5) == 4
+	case 6:
+		generatorOK = mod(24) == 19 || mod(24) == 23
+	case 7:
+		generatorOK = mod(7) == 3 || mod(7) == 5 || mod(7) == 6
+	}
+	if !generatorOK {
+		return VoiceCallRequestResult{}, errors.New("Telegram returned an invalid DH generator")
 	}
 
 	// Generate a fresh ephemeral exponent and the corresponding g_a value.
@@ -74,10 +93,16 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 		a.SetInt64(1)
 	}
 	g := big.NewInt(int64(params.G))
-	gA := new(big.Int).Exp(g, a, p).Bytes()
-	if len(gA) == 0 || new(big.Int).SetBytes(gA).Cmp(big.NewInt(1)) <= 0 {
+	gAValue := new(big.Int).Exp(g, a, p)
+	if gAValue.Cmp(big.NewInt(1)) <= 0 || gAValue.Cmp(new(big.Int).Sub(p, big.NewInt(1))) >= 0 {
 		return VoiceCallRequestResult{}, errors.New("generated invalid Telegram call DH value")
 	}
+	gABytes := gAValue.Bytes()
+	if len(gABytes) > 256 {
+		return VoiceCallRequestResult{}, errors.New("generated Telegram call DH value is oversized")
+	}
+	gA := make([]byte, 256)
+	copy(gA[256-len(gABytes):], gABytes)
 
 	nonce := make([]byte, 256)
 	if _, err := rand.Read(nonce); err != nil {
