@@ -146,3 +146,47 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 		return VoiceCallRequestResult{}, fmt.Errorf("Telegram returned unexpected outgoing call state %T", call)
 	}
 }
+
+
+// SetVoiceCallUpdateHandler installs the worker-owned callback for native
+// Telegram call state updates. Call payloads and DH material are never logged.
+func (m *Manager) SetVoiceCallUpdateHandler(handler func(accountID string, callID int64, state string)) {
+	m.mu.Lock()
+	m.voiceCallUpdateHandler = handler
+	m.mu.Unlock()
+}
+
+func (m *Manager) registerVoiceCallHandler(accountID string, client *telegram.Client) {
+	client.OnRawUpdate(func(update *tg.UpdatePhoneCall) {
+		if update == nil || update.PhoneCall == nil {
+			return
+		}
+		var callID int64
+		state := "unknown"
+		switch call := update.PhoneCall.(type) {
+		case *tg.PhoneCallRequested:
+			callID, state = call.ID, "ringing"
+		case *tg.PhoneCallWaiting:
+			callID, state = call.ID, "ringing"
+		case *tg.PhoneCallAccepted:
+			callID, state = call.ID, "accepted"
+		case *tg.PhoneCall:
+			callID, state = call.ID, "accepted"
+		case *tg.PhoneCallDiscarded:
+			callID, state = call.ID, "discarded"
+		case *tg.PhoneCallEmpty:
+			callID, state = call.ID, "unknown"
+		default:
+			return
+		}
+		if callID <= 0 {
+			return
+		}
+		m.mu.RLock()
+		handler := m.voiceCallUpdateHandler
+		m.mu.RUnlock()
+		if handler != nil {
+			handler(accountID, callID, state)
+		}
+	})
+}
