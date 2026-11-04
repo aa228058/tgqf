@@ -78,17 +78,17 @@ func (h *Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 type systemConfigUpdateRequest struct { Value json.RawMessage `json:"value"` }
 
 func (h *Handler) listSystemConfigs(w http.ResponseWriter, r *http.Request) {
-    items, err := h.service.ListSystemConfigs(r.Context())
-    if err != nil { writeJSON(w, http.StatusInternalServerError, map[string]string{"error":"failed to load system configuration"}); return }
-    writeJSON(w, http.StatusOK, map[string]any{"configs":items})
+	items, err := h.service.ListSystemConfigs(r.Context())
+	if err != nil { writeJSON(w, http.StatusInternalServerError, map[string]string{"error":"failed to load system configuration"}); return }
+	writeJSON(w, http.StatusOK, map[string]any{"configs":items})
 }
 
 func (h *Handler) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
-    var q systemConfigUpdateRequest
-    if !decode(w, r, &q) { return }
-    if len(q.Value) == 0 { writeJSON(w, http.StatusBadRequest, map[string]string{"error":"value is required"}); return }
-    actor := UserFromContext(r.Context())
-    item, err := h.service.UpdateSystemConfig(r.Context(), actor.ID, r.PathValue("key"), q.Value)
-    if err != nil { writeError(w, err); return }
-    writeJSON(w, http.StatusOK, map[string]any{"config":item, "effective":"immediate"})
+	var q systemConfigUpdateRequest
+	if !decode(w, r, &q) { return }
+	if len(q.Value) == 0 { writeJSON(w, http.StatusBadRequest, map[string]string{"error":"value is required"}); return }
+	actor := UserFromContext(r.Context())
+	item, err := h.service.UpdateSystemConfig(r.Context(), actor.ID, r.PathValue("key"), q.Value)
+	if err != nil { writeError(w, err); return }
+	writeJSON(w, http.StatusOK, map[string]any{"config":item, "effective":"immediate"})
 }
