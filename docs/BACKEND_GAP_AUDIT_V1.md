@@ -64,7 +64,7 @@
 ### P1 — 基础能力补齐
 - P1-01 代码已实现：MTGo 手机验证码/2FA 单账号及批量登录 API；challenge 在 Manager 内存保存并设置 10 分钟过期，超时自动拒绝并断开待登录客户端。批量 Session 文件导入支持 JSON/CSV/TXT 与 Telethon/Pyrogram SQLite `.session` 转换。进程重启后 challenge 不恢复，需重新发起登录；真实账号验收仍待完成。
 - P1-02 完成设备 profile repository：读取、创建、校验、迁移补齐、测试重启/重连一致性。
-- [x] P1-03 第一阶段：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定代理仍可覆盖。检测目前只证明 TCP 可达，代理协议握手/认证和 Telegram 实际连通检测仍待补齐。
+- [x] P1-03：新增租户默认代理设置/清除 API；新建账号与 QR 登录账号自动继承默认代理；账号单独绑定及批量绑定可覆盖。SOCKS4/5、HTTP/HTTPS 检测已执行协议协商/认证并尝试建立 Telegram DC TCP 隧道；最近状态/耗时及最多 100 条检测历史已持久化。此检测不等同于 MTGo 账号完成 Telegram 授权连接；真实账号连接状态仍由账号运行状态体现。
 - [x] P1-04 第一阶段：账号搜索/分页/CSV 导出、批量 Session 文件导入、分组、标签、批量代理绑定、批量断开/重连状态控制、批量手机号登录均已有代码实现；实际客户端停止/重连由 Worker reconcile 执行。待 Go CI、PostgreSQL 集成及真实账号验收。
 - [x] P1-05 第一阶段：姓名/简介/头像/随机用户名资料修改已进入逐账号任务队列，Worker 调用 MTGo UpdateProfile、UploadFile/SetProfilePhoto、UpdateUsername，记录逐账号结果并遵守 FloodWait；租户停用/到期时暂停，恢复后需人工显式恢复。待 CI 与真实账号上传/资料修改验收。
 
