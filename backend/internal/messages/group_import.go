@@ -57,6 +57,9 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 	}
 	inserted, skipped := 0, 0
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		var tenantActive bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`, tenantID).Scan(&tenantActive); err != nil { return err }
+		if !tenantActive { return errors.New("target tenant is inactive or expired") }
 		for _, item := range normalized {
 			var groupID int64
 			var wasInserted bool
