@@ -215,7 +215,6 @@ func TestActivationAfterExpiryFreezesOldWorkBeforeRenewal(t *testing.T) {
 	}
 }
 
-
 func TestListAuditLogsFiltersAndIncludesActorAndTenant(t *testing.T) {
 	db, cleanup := openTenantLifecycleIntegrationDB(t)
 	defer cleanup()

@@ -18,9 +18,9 @@ import (
 // outgoing native voice call. It deliberately does not claim that audio is
 // connected: this operation only starts the native ringing flow.
 type VoiceCallRequestResult struct {
-	CallID int64
+	CallID     int64
 	AccessHash int64
-	State string
+	State      string
 }
 
 // RequestVoiceCall asks Telegram to place a native one-to-one voice call.
@@ -117,16 +117,16 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 	}
 
 	protocol := &tg.PhoneCallProtocol{
-		UDPP2p: true,
-		UDPReflector: true,
-		MinLayer: 65,
-		MaxLayer: 92,
+		UDPP2p:          true,
+		UDPReflector:    true,
+		MinLayer:        65,
+		MaxLayer:        92,
 		LibraryVersions: []string{"2.4.4"},
 	}
 	call, err := client.Raw().PhoneRequestCall(ctx, &tg.PhoneRequestCallRequest{
-		UserID: &tg.InputUser{UserID: userPeer.UserID, AccessHash: userPeer.AccessHash},
+		UserID:   &tg.InputUser{UserID: userPeer.UserID, AccessHash: userPeer.AccessHash},
 		RandomID: randomID,
-		GAHash: gaHash[:],
+		GAHash:   gaHash[:],
 		Protocol: protocol,
 	})
 	if err != nil {
@@ -142,7 +142,6 @@ func (m *Manager) RequestVoiceCall(ctx context.Context, accountID string, target
 		return VoiceCallRequestResult{}, fmt.Errorf("Telegram returned unexpected outgoing call state %T", call)
 	}
 }
-
 
 // SetVoiceCallUpdateHandler installs the worker-owned callback for native
 // Telegram call state updates. Call payloads and DH material are never logged.

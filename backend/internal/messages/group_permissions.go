@@ -12,13 +12,13 @@ import (
 var ErrGroupPermissionLeaseLost = errors.New("group permission refresh lease expired or was superseded")
 
 type GroupPermissionRefresh struct {
-	GroupID int64
-	ChatID int64
-	LeaseUntil time.Time
-	Title string
-	Username string
+	GroupID     int64
+	ChatID      int64
+	LeaseUntil  time.Time
+	Title       string
+	Username    string
 	MemberCount int
-	IsVerified bool
+	IsVerified  bool
 }
 
 // ListGroupPermissionRefreshes claims due permission snapshots for this
@@ -51,12 +51,16 @@ func (s *Service) ListGroupPermissionRefreshes(ctx context.Context, tenantID, ac
 		SELECT claimed.group_id,g.telegram_chat_id,claimed.rights_check_lease_until
 		FROM claimed JOIN public_groups g ON g.id=claimed.group_id
 		ORDER BY claimed.group_id`, tenantID, accountID, limit)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		defer rows.Close()
 		for rows.Next() {
 			var item GroupPermissionRefresh
-			if err := rows.Scan(&item.GroupID,&item.ChatID,&item.LeaseUntil); err != nil { return err }
-			out = append(out,item)
+			if err := rows.Scan(&item.GroupID, &item.ChatID, &item.LeaseUntil); err != nil {
+				return err
+			}
+			out = append(out, item)
 		}
 		return rows.Err()
 	})
@@ -78,7 +82,9 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 	errText := ""
 	if refreshErr != nil {
 		errText = refreshErr.Error()
-		if len(errText) > 500 { errText = errText[:500] }
+		if len(errText) > 500 {
+			errText = errText[:500]
+		}
 	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		if refreshErr != nil {
@@ -88,10 +94,14 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 				    rights_next_check_at=NOW()+LEAST(INTERVAL '24 hours',INTERVAL '30 minutes' * POWER(2,LEAST(rights_check_attempts,5))),
 				    rights_check_lease_until=NULL
 				WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND rights_check_lease_until=$4`,
-				item.GroupID,tenantID,accountID,item.LeaseUntil,errText)
-			if err != nil { return err }
+				item.GroupID, tenantID, accountID, item.LeaseUntil, errText)
+			if err != nil {
+				return err
+			}
 			n, _ := result.RowsAffected()
-			if n == 0 { return ErrGroupPermissionLeaseLost }
+			if n == 0 {
+				return ErrGroupPermissionLeaseLost
+			}
 			return nil
 		}
 
@@ -101,10 +111,14 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 			    rights_check_attempts=0,rights_check_error=NULL,rights_next_check_at=NOW()+INTERVAL '24 hours',
 			    rights_check_lease_until=NULL
 			WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND rights_check_lease_until=$4`,
-			item.GroupID,tenantID,accountID,item.LeaseUntil,nullJSON(accountRights))
-		if err != nil { return err }
+			item.GroupID, tenantID, accountID, item.LeaseUntil, nullJSON(accountRights))
+		if err != nil {
+			return err
+		}
 		n, _ := result.RowsAffected()
-		if n == 0 { return ErrGroupPermissionLeaseLost }
+		if n == 0 {
+			return ErrGroupPermissionLeaseLost
+		}
 
 		_, err = tx.ExecContext(ctx, `UPDATE public_groups
 			SET default_permissions=COALESCE(NULLIF($2::jsonb,'null'::jsonb),default_permissions),
@@ -115,8 +129,10 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 			    is_verified=is_verified OR $6,
 			    last_seen_at=GREATEST(last_seen_at,NOW()),updated_at=NOW()
 			WHERE id=$1 AND telegram_chat_id=$7`,
-			item.GroupID,nullJSON(defaultPermissions),max(0,item.MemberCount),item.Title,item.Username,item.IsVerified,item.ChatID)
-		if err != nil { return fmt.Errorf("update shared group permission snapshot: %w",err) }
+			item.GroupID, nullJSON(defaultPermissions), max(0, item.MemberCount), item.Title, item.Username, item.IsVerified, item.ChatID)
+		if err != nil {
+			return fmt.Errorf("update shared group permission snapshot: %w", err)
+		}
 		return nil
 	})
 }

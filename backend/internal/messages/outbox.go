@@ -37,9 +37,9 @@ func (s *Service) PublishPendingMessageEvents(ctx context.Context, limit int) (i
 		return 0, err
 	}
 	type pendingEvent struct {
-		id int64
+		id       int64
 		tenantID string
-		payload string
+		payload  string
 	}
 	pending := make([]pendingEvent, 0, limit)
 	for rows.Next() {
@@ -84,7 +84,6 @@ func (s *Service) PublishPendingMessageEvents(ctx context.Context, limit int) (i
 	}
 	return published, nil
 }
-
 
 // PrunePublishedMessageEvents bounds the PostgreSQL delivery outbox while
 // retaining recent delivery history. Pending rows are never eligible.

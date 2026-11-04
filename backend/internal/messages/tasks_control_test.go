@@ -24,12 +24,11 @@ func TestUnifiedTaskControlRejectsInvalidInputBeforeDatabaseAccess(t *testing.T)
 	}
 }
 
-
 func TestDeriveJoinTaskParentStatus(t *testing.T) {
 	tests := []struct {
-		name string
+		name     string
 		children []string
-		want string
+		want     string
 	}{
 		{"active child keeps parent queued", []string{"joined", "queued"}, "queued"},
 		{"approval remains active", []string{"request_pending", "joined"}, "queued"},

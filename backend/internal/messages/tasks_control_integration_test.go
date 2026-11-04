@@ -70,4 +70,3 @@ func TestUnifiedJoinTaskControlsOnlySelectedAccountRow(t *testing.T) {
 		t.Fatalf("in-flight pause changed lease: before=%s after=%s", leaseUntil, afterLease)
 	}
 }
-

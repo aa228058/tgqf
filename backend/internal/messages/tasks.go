@@ -9,31 +9,31 @@ import (
 )
 
 type UnifiedTask struct {
-	ID string `json:"id"`
-	GroupID string `json:"group_id,omitempty"`
-	Type string `json:"type"`
-	Title string `json:"title"`
-	Status string `json:"status"`
-	AccountID string `json:"account_id"`
-	AccountName string `json:"account_name"`
-	Attempts int `json:"attempts"`
-	ScheduledAt time.Time `json:"scheduled_at"`
-	LeaseUntil *time.Time `json:"lease_until,omitempty"`
-	LastError string `json:"last_error,omitempty"`
-	CanPause bool `json:"can_pause"`
-	CanResume bool `json:"can_resume"`
-	CanRetry bool `json:"can_retry"`
-	CanCancel bool `json:"can_cancel"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string     `json:"id"`
+	GroupID     string     `json:"group_id,omitempty"`
+	Type        string     `json:"type"`
+	Title       string     `json:"title"`
+	Status      string     `json:"status"`
+	AccountID   string     `json:"account_id"`
+	AccountName string     `json:"account_name"`
+	Attempts    int        `json:"attempts"`
+	ScheduledAt time.Time  `json:"scheduled_at"`
+	LeaseUntil  *time.Time `json:"lease_until,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+	CanPause    bool       `json:"can_pause"`
+	CanResume   bool       `json:"can_resume"`
+	CanRetry    bool       `json:"can_retry"`
+	CanCancel   bool       `json:"can_cancel"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type UnifiedTaskFilter struct {
-	Status string
-	Type string
+	Status    string
+	Type      string
 	AccountID string
-	Limit int
-	Offset int
+	Limit     int
+	Offset    int
 }
 
 func normalizeUnifiedTaskFilter(filter UnifiedTaskFilter) (UnifiedTaskFilter, error) {
@@ -146,7 +146,6 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 	})
 	return items, total, err
 }
-
 
 // unifiedTaskActions mirrors the state transitions accepted by
 // ChangeUnifiedTaskStatus. It lets clients render only actions that can

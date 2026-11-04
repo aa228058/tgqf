@@ -3,24 +3,24 @@ package messages
 import (
 	"context"
 	"errors"
-	"testing"
 	"strings"
+	"testing"
 	"time"
 )
 
 func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
-	db,cleanup:=openGroupIntegrationDB(t)
+	db, cleanup := openGroupIntegrationDB(t)
 	defer cleanup()
-	ctx:=context.Background()
-	activeTenant:="11111111-1111-4111-8111-111111111111"
-	inactiveTenant:="22222222-2222-4222-8222-222222222222"
-	accountA:="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	accountB:="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	accountRevoked:="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-	inactivePendingAccount:="dddddddd-dddd-4ddd-8ddd-dddddddddddd"
-	inactiveExpiredAccount:="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
-	inactiveLiveAccount:="ffffffff-ffff-4fff-8fff-ffffffffffff"
-	ddl:=[]string{
+	ctx := context.Background()
+	activeTenant := "11111111-1111-4111-8111-111111111111"
+	inactiveTenant := "22222222-2222-4222-8222-222222222222"
+	accountA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	accountB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	accountRevoked := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	inactivePendingAccount := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	inactiveExpiredAccount := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	inactiveLiveAccount := "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	ddl := []string{
 		`CREATE TABLE message_reply_jobs (tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE account_profile_update_jobs (tenant_id UUID,account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE IF NOT EXISTS tenant_message_chats (
@@ -49,94 +49,181 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 			telegram_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 	}
-	for _,statement:=range ddl{if _,err:=db.ExecContext(ctx,statement);err!=nil{t.Fatal(err)}}
-	for _,tenant:=range []struct{id,status string;expires string}{
-		{activeTenant,"active","30 days"},{inactiveTenant,"expired","-1 hour"},
-	}{if _,err:=db.ExecContext(ctx,`INSERT INTO tenants(id,status,expires_at) VALUES($1,$2,NOW()+$3::interval)`,tenant.id,tenant.status,tenant.expires);err!=nil{t.Fatal(err)}}
-	accounts:=[]struct{tenant,id,status string;session bool}{
-		{activeTenant,accountA,"authorized",true},{activeTenant,accountB,"authorized",true},{activeTenant,accountRevoked,"revoked",false},
-		{inactiveTenant,inactivePendingAccount,"authorized",true},{inactiveTenant,inactiveExpiredAccount,"authorized",true},{inactiveTenant,inactiveLiveAccount,"authorized",true},
+	for _, statement := range ddl {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _,a:=range accounts{
+	for _, tenant := range []struct {
+		id, status string
+		expires    string
+	}{
+		{activeTenant, "active", "30 days"}, {inactiveTenant, "expired", "-1 hour"},
+	} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,$2,NOW()+$3::interval)`, tenant.id, tenant.status, tenant.expires); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accounts := []struct {
+		tenant, id, status string
+		session            bool
+	}{
+		{activeTenant, accountA, "authorized", true}, {activeTenant, accountB, "authorized", true}, {activeTenant, accountRevoked, "revoked", false},
+		{inactiveTenant, inactivePendingAccount, "authorized", true}, {inactiveTenant, inactiveExpiredAccount, "authorized", true}, {inactiveTenant, inactiveLiveAccount, "authorized", true},
+	}
+	for _, a := range accounts {
 		var session any
-		if a.session{session=[]byte{1}}
-		if _,err:=db.ExecContext(ctx,`INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,$3,$4)`,a.tenant,a.id,a.status,session);err!=nil{t.Fatal(err)}
+		if a.session {
+			session = []byte{1}
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,$3,$4)`, a.tenant, a.id, a.status, session); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _,chat:=range []struct{tenant,account string;id int64}{{activeTenant,accountA,101},{activeTenant,accountB,102}} {
-		if _,err:=db.ExecContext(ctx,`INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_type,chat_title)
-			VALUES($1,$2,$3,'private','test chat')`,chat.tenant,chat.account,chat.id);err!=nil{t.Fatal(err)}
+	for _, chat := range []struct {
+		tenant, account string
+		id              int64
+	}{{activeTenant, accountA, 101}, {activeTenant, accountB, 102}} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO tenant_message_chats(tenant_id,telegram_account_id,chat_id,chat_type,chat_title)
+			VALUES($1,$2,$3,'private','test chat')`, chat.tenant, chat.account, chat.id); err != nil {
+			t.Fatal(err)
+		}
 	}
-	insertJob:=func(id,tenant,account,status string,lease time.Time){
+	insertJob := func(id, tenant, account, status string, lease time.Time) {
 		t.Helper()
 		var leaseValue any
-		if !lease.IsZero(){leaseValue=lease}
-		if _,err:=db.ExecContext(ctx,`INSERT INTO keyword_action_jobs(id,tenant_id,telegram_account_id,status,lease_until,message_text)
-			VALUES($1,$2,$3,$4,$5,'hello')`,id,tenant,account,status,leaseValue);err!=nil{t.Fatal(err)}
+		if !lease.IsZero() {
+			leaseValue = lease
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO keyword_action_jobs(id,tenant_id,telegram_account_id,status,lease_until,message_text)
+			VALUES($1,$2,$3,$4,$5,'hello')`, id, tenant, account, status, leaseValue); err != nil {
+			t.Fatal(err)
+		}
 	}
-	jobA:="10000000-0000-4000-8000-000000000001"
-	jobB:="10000000-0000-4000-8000-000000000002"
-	jobRevoked:="10000000-0000-4000-8000-000000000003"
-	jobInactivePending:="20000000-0000-4000-8000-000000000001"
-	jobInactiveExpired:="20000000-0000-4000-8000-000000000002"
-	jobInactiveLive:="20000000-0000-4000-8000-000000000003"
-	jobUncertain:="10000000-0000-4000-8000-000000000004"
-	insertJob(jobA,activeTenant,accountA,"pending",time.Time{})
-	insertJob(jobB,activeTenant,accountB,"pending",time.Time{})
-	if _,err:=db.ExecContext(ctx,`UPDATE keyword_action_jobs SET chat_id=CASE WHEN telegram_account_id=$1 THEN 101 ELSE 102 END WHERE id IN ($2,$3)`,accountA,jobA,jobB);err!=nil{t.Fatal(err)}
-	insertJob(jobUncertain,activeTenant,accountA,"processing",time.Now().Add(-time.Minute))
-	insertJob(jobRevoked,activeTenant,accountRevoked,"pending",time.Time{})
-	insertJob(jobInactivePending,inactiveTenant,inactivePendingAccount,"pending",time.Time{})
-	insertJob(jobInactiveExpired,inactiveTenant,inactiveExpiredAccount,"processing",time.Now().Add(-time.Minute))
-	liveLease:=time.Now().Add(2*time.Minute)
-	insertJob(jobInactiveLive,inactiveTenant,inactiveLiveAccount,"processing",liveLease)
+	jobA := "10000000-0000-4000-8000-000000000001"
+	jobB := "10000000-0000-4000-8000-000000000002"
+	jobRevoked := "10000000-0000-4000-8000-000000000003"
+	jobInactivePending := "20000000-0000-4000-8000-000000000001"
+	jobInactiveExpired := "20000000-0000-4000-8000-000000000002"
+	jobInactiveLive := "20000000-0000-4000-8000-000000000003"
+	jobUncertain := "10000000-0000-4000-8000-000000000004"
+	insertJob(jobA, activeTenant, accountA, "pending", time.Time{})
+	insertJob(jobB, activeTenant, accountB, "pending", time.Time{})
+	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET chat_id=CASE WHEN telegram_account_id=$1 THEN 101 ELSE 102 END WHERE id IN ($2,$3)`, accountA, jobA, jobB); err != nil {
+		t.Fatal(err)
+	}
+	insertJob(jobUncertain, activeTenant, accountA, "processing", time.Now().Add(-time.Minute))
+	insertJob(jobRevoked, activeTenant, accountRevoked, "pending", time.Time{})
+	insertJob(jobInactivePending, inactiveTenant, inactivePendingAccount, "pending", time.Time{})
+	insertJob(jobInactiveExpired, inactiveTenant, inactiveExpiredAccount, "processing", time.Now().Add(-time.Minute))
+	liveLease := time.Now().Add(2 * time.Minute)
+	insertJob(jobInactiveLive, inactiveTenant, inactiveLiveAccount, "processing", liveLease)
 
-	service:=New(db)
-	ambiguousActionID:="10000000-0000-4000-8000-000000000005"
-	ambiguousLease:=time.Now().UTC().Truncate(time.Microsecond).Add(2*time.Minute)
-	insertJob(ambiguousActionID,activeTenant,accountA,"processing",ambiguousLease)
-	ambiguousAction:=KeywordActionJob{ID:ambiguousActionID,TenantID:activeTenant,AccountID:accountA,LeaseUntil:ambiguousLease}
-	if err:=service.FinishKeywordAction(ctx,ambiguousAction,0,context.DeadlineExceeded,0);err!=nil{t.Fatalf("quarantine ambiguous keyword action result: %v",err)}
-	var ambiguousStatus,ambiguousReason string
-	if err:=db.QueryRowContext(ctx,`SELECT status,last_error FROM keyword_action_jobs WHERE id=$1`,ambiguousActionID).Scan(&ambiguousStatus,&ambiguousReason);err!=nil{t.Fatal(err)}
-	if ambiguousStatus!="paused"||!strings.Contains(ambiguousReason,"outcome uncertain"){t.Fatalf("ambiguous keyword action status=%q reason=%q, want paused/uncertain",ambiguousStatus,ambiguousReason)}
-	jobs,err:=service.ClaimKeywordActionJobs(ctx,10)
-	if err!=nil{t.Fatal(err)}
-	if len(jobs)!=2{details:=make([]string,0,len(jobs));for _,job:=range jobs{details=append(details,job.ID+"/"+job.TenantID+"/"+job.AccountID)};var tenantRows string;_ = db.QueryRowContext(ctx,`SELECT string_agg(id::text||':'||status||':'||expires_at::text,',') FROM tenants`).Scan(&tenantRows);t.Fatalf("claimed %d jobs (%v), tenants=%s, want only the 2 authorized active-tenant accounts",len(jobs),details,tenantRows)}
-	claimed:=map[string]KeywordActionJob{}
-	for _,job:=range jobs{claimed[job.ID]=job}
-	if _,ok:=claimed[jobA];!ok{t.Fatal("authorized account A job was not claimed")}
-	if _,ok:=claimed[jobB];!ok{t.Fatal("authorized account B job was not claimed")}
-	for _,id:=range []string{jobRevoked,jobInactivePending,jobInactiveExpired,jobInactiveLive,jobUncertain}{
+	service := New(db)
+	ambiguousActionID := "10000000-0000-4000-8000-000000000005"
+	ambiguousLease := time.Now().UTC().Truncate(time.Microsecond).Add(2 * time.Minute)
+	insertJob(ambiguousActionID, activeTenant, accountA, "processing", ambiguousLease)
+	ambiguousAction := KeywordActionJob{ID: ambiguousActionID, TenantID: activeTenant, AccountID: accountA, LeaseUntil: ambiguousLease}
+	if err := service.FinishKeywordAction(ctx, ambiguousAction, 0, context.DeadlineExceeded, 0); err != nil {
+		t.Fatalf("quarantine ambiguous keyword action result: %v", err)
+	}
+	var ambiguousStatus, ambiguousReason string
+	if err := db.QueryRowContext(ctx, `SELECT status,last_error FROM keyword_action_jobs WHERE id=$1`, ambiguousActionID).Scan(&ambiguousStatus, &ambiguousReason); err != nil {
+		t.Fatal(err)
+	}
+	if ambiguousStatus != "paused" || !strings.Contains(ambiguousReason, "outcome uncertain") {
+		t.Fatalf("ambiguous keyword action status=%q reason=%q, want paused/uncertain", ambiguousStatus, ambiguousReason)
+	}
+	jobs, err := service.ClaimKeywordActionJobs(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		details := make([]string, 0, len(jobs))
+		for _, job := range jobs {
+			details = append(details, job.ID+"/"+job.TenantID+"/"+job.AccountID)
+		}
+		var tenantRows string
+		_ = db.QueryRowContext(ctx, `SELECT string_agg(id::text||':'||status||':'||expires_at::text,',') FROM tenants`).Scan(&tenantRows)
+		t.Fatalf("claimed %d jobs (%v), tenants=%s, want only the 2 authorized active-tenant accounts", len(jobs), details, tenantRows)
+	}
+	claimed := map[string]KeywordActionJob{}
+	for _, job := range jobs {
+		claimed[job.ID] = job
+	}
+	if _, ok := claimed[jobA]; !ok {
+		t.Fatal("authorized account A job was not claimed")
+	}
+	if _, ok := claimed[jobB]; !ok {
+		t.Fatal("authorized account B job was not claimed")
+	}
+	for _, id := range []string{jobRevoked, jobInactivePending, jobInactiveExpired, jobInactiveLive, jobUncertain} {
 		var status string
-		if err:=db.QueryRowContext(ctx,`SELECT status FROM keyword_action_jobs WHERE id=$1`,id).Scan(&status);err!=nil{t.Fatal(err)}
-		want:="pending"
-		if id==jobInactivePending||id==jobInactiveExpired{want="paused"}
-		if id==jobInactiveLive{want="processing"}
-		if id==jobUncertain{want="paused"}
-		if status!=want{t.Fatalf("job %s status=%q, want %q",id,status,want)}
-		if id==jobUncertain {
+		if err := db.QueryRowContext(ctx, `SELECT status FROM keyword_action_jobs WHERE id=$1`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		want := "pending"
+		if id == jobInactivePending || id == jobInactiveExpired {
+			want = "paused"
+		}
+		if id == jobInactiveLive {
+			want = "processing"
+		}
+		if id == jobUncertain {
+			want = "paused"
+		}
+		if status != want {
+			t.Fatalf("job %s status=%q, want %q", id, status, want)
+		}
+		if id == jobUncertain {
 			var reason string
-			if err:=db.QueryRowContext(ctx,`SELECT last_error FROM keyword_action_jobs WHERE id=$1`,id).Scan(&reason);err!=nil{t.Fatal(err)}
-			if !strings.Contains(reason,"outcome uncertain"){t.Fatalf("expired keyword action lease reason=%q, want uncertain outcome",reason)}
+			if err := db.QueryRowContext(ctx, `SELECT last_error FROM keyword_action_jobs WHERE id=$1`, id).Scan(&reason); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(reason, "outcome uncertain") {
+				t.Fatalf("expired keyword action lease reason=%q, want uncertain outcome", reason)
+			}
 		}
 	}
 	var savedLease time.Time
-	if err:=db.QueryRowContext(ctx,`SELECT lease_until FROM keyword_action_jobs WHERE id=$1`,jobInactiveLive).Scan(&savedLease);err!=nil{t.Fatal(err)}
-	if delta:=savedLease.Sub(liveLease); delta < -time.Microsecond || delta > time.Microsecond {t.Fatalf("inactive tenant sweep changed live lease beyond database timestamp precision: %s != %s (delta %s)",savedLease,liveLease,delta)}
+	if err := db.QueryRowContext(ctx, `SELECT lease_until FROM keyword_action_jobs WHERE id=$1`, jobInactiveLive).Scan(&savedLease); err != nil {
+		t.Fatal(err)
+	}
+	if delta := savedLease.Sub(liveLease); delta < -time.Microsecond || delta > time.Microsecond {
+		t.Fatalf("inactive tenant sweep changed live lease beyond database timestamp precision: %s != %s (delta %s)", savedLease, liveLease, delta)
+	}
 
 	// Subscription expiry after Telegram has accepted the send must not erase
 	// the successful result, while an in-flight failure is paused, not retried.
-	if _,err:=db.ExecContext(ctx,`UPDATE tenants SET status='expired',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`,activeTenant);err!=nil{t.Fatal(err)}
-	if err:=service.FinishKeywordAction(ctx,claimed[jobA],501,nil,0,[]int64{501});err!=nil{t.Fatalf("persist successful send after tenant expiry: %v",err)}
-	if err:=service.FinishKeywordAction(ctx,claimed[jobB],0,errors.New("temporary Telegram failure"),0);err!=nil{t.Fatalf("pause failed send after tenant expiry: %v",err)}
-	for id,want:=range map[string]string{jobA:"sent",jobB:"paused"}{
-		var status string
-		if err:=db.QueryRowContext(ctx,`SELECT status FROM keyword_action_jobs WHERE id=$1`,id).Scan(&status);err!=nil{t.Fatal(err)}
-		if status!=want{t.Fatalf("job %s status=%q, want %q",id,status,want)}
+	if _, err := db.ExecContext(ctx, `UPDATE tenants SET status='expired',expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`, activeTenant); err != nil {
+		t.Fatal(err)
 	}
-	var outgoingCount,outboxCount int
-	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM unified_messages WHERE telegram_account_id=$1 AND chat_id=101 AND message_id=501 AND is_outgoing=TRUE`,accountA).Scan(&outgoingCount);err!=nil{t.Fatal(err)}
-	if outgoingCount!=1{t.Fatalf("persisted keyword action message rows=%d, want 1",outgoingCount)}
-	if err:=db.QueryRowContext(ctx,`SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`,activeTenant).Scan(&outboxCount);err!=nil{t.Fatal(err)}
-	if outboxCount!=1{t.Fatalf("keyword action realtime outbox rows=%d, want 1",outboxCount)}
+	if err := service.FinishKeywordAction(ctx, claimed[jobA], 501, nil, 0, []int64{501}); err != nil {
+		t.Fatalf("persist successful send after tenant expiry: %v", err)
+	}
+	if err := service.FinishKeywordAction(ctx, claimed[jobB], 0, errors.New("temporary Telegram failure"), 0); err != nil {
+		t.Fatalf("pause failed send after tenant expiry: %v", err)
+	}
+	for id, want := range map[string]string{jobA: "sent", jobB: "paused"} {
+		var status string
+		if err := db.QueryRowContext(ctx, `SELECT status FROM keyword_action_jobs WHERE id=$1`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != want {
+			t.Fatalf("job %s status=%q, want %q", id, status, want)
+		}
+	}
+	var outgoingCount, outboxCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM unified_messages WHERE telegram_account_id=$1 AND chat_id=101 AND message_id=501 AND is_outgoing=TRUE`, accountA).Scan(&outgoingCount); err != nil {
+		t.Fatal(err)
+	}
+	if outgoingCount != 1 {
+		t.Fatalf("persisted keyword action message rows=%d, want 1", outgoingCount)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_event_outbox WHERE tenant_id=$1 AND event_type='message.created'`, activeTenant).Scan(&outboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if outboxCount != 1 {
+		t.Fatalf("keyword action realtime outbox rows=%d, want 1", outboxCount)
+	}
 }

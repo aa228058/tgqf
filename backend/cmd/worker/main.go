@@ -1,40 +1,46 @@
 package main
 
 import (
-	cryptorand "crypto/rand"
-	"errors"
 	"context"
-	"encoding/hex"
+	cryptorand "crypto/rand"
 	"database/sql"
-	"fmt"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/accounts"
 	"github.com/aa228058/tgqf/backend/internal/config"
+	"github.com/aa228058/tgqf/backend/internal/messages"
 	"github.com/aa228058/tgqf/backend/internal/storage"
 	"github.com/aa228058/tgqf/backend/internal/telegrammtgo"
-	"github.com/aa228058/tgqf/backend/internal/messages"
 	"github.com/mtgo-labs/mtgo/telegram/types"
 	"github.com/mtgo-labs/mtgo/tgerr"
 )
 
 type reconnectState struct {
- attempts int
- nextTry time.Time
+	attempts int
+	nextTry  time.Time
 }
 
 func reconnectDelay(attempt int) time.Duration {
-	if attempt < 1 { attempt = 1 }
+	if attempt < 1 {
+		attempt = 1
+	}
 	delay := 30 * time.Second
-	for i := 1; i < attempt && delay < 15*time.Minute; i++ { delay *= 2 }
-	if delay > 15*time.Minute { return 15*time.Minute }
+	for i := 1; i < attempt && delay < 15*time.Minute; i++ {
+		delay *= 2
+	}
+	if delay > 15*time.Minute {
+		return 15 * time.Minute
+	}
 	return delay
 }
 
@@ -49,20 +55,32 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	cfg, err := config.Load()
-	if err != nil { logger.Error("load configuration", "error", err); os.Exit(1) }
-	if cfg.DatabaseURL == "" || cfg.RedisURL == "" { logger.Error("worker requires DATABASE_URL and REDIS_URL"); os.Exit(1) }
-	if cfg.TelegramAPIID <= 0 || cfg.TelegramAPIHash == "" { logger.Error("worker requires TELEGRAM_API_ID and TELEGRAM_API_HASH"); os.Exit(1) }
+	if err != nil {
+		logger.Error("load configuration", "error", err)
+		os.Exit(1)
+	}
+	if cfg.DatabaseURL == "" || cfg.RedisURL == "" {
+		logger.Error("worker requires DATABASE_URL and REDIS_URL")
+		os.Exit(1)
+	}
+	if cfg.TelegramAPIID <= 0 || cfg.TelegramAPIHash == "" {
+		logger.Error("worker requires TELEGRAM_API_ID and TELEGRAM_API_HASH")
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	store, err := storage.Open(ctx, cfg.DatabaseURL, cfg.RedisURL)
-	if err != nil { logger.Error("initialize worker storage", "error", err); os.Exit(1) }
+	if err != nil {
+		logger.Error("initialize worker storage", "error", err)
+		os.Exit(1)
+	}
 	defer store.Close()
 
 	accountService := accounts.New(store.DB)
 	messageService := messages.New(store.DB, store.Redis)
 	var accountTenants sync.Map
-	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID:cfg.TelegramAPIID, APIHash:cfg.TelegramAPIHash, ConnectTimeout:45*time.Second})
+	manager := telegrammtgo.NewManager(telegrammtgo.RuntimeConfig{APIID: cfg.TelegramAPIID, APIHash: cfg.TelegramAPIHash, ConnectTimeout: 45 * time.Second})
 	manager.SetVoiceCallUpdateHandler(func(accountID string, callID int64, state string) {
 		tenantValue, ok := accountTenants.Load(accountID)
 		if !ok {
@@ -99,7 +117,11 @@ func main() {
 			logger.Debug("ignored Telegram call update without a matching tenant action", "account_id", accountID, "call_id", callID, "state", state)
 		}()
 	})
-	defer func(){ if err := manager.Close(); err != nil { logger.Error("close Telegram clients", "error", err) } }()
+	defer func() {
+		if err := manager.Close(); err != nil {
+			logger.Error("close Telegram clients", "error", err)
+		}
+	}()
 	manager.SetMessageHandler(func(accountID string, message *types.Message, _ int64, replyToOwn bool) {
 		if message == nil || message.Chat == nil {
 			return
@@ -155,8 +177,18 @@ func main() {
 			ChatMemberCount: message.Chat.MembersCount, ChatVerified: message.Chat.IsVerified,
 			DefaultPermissionsJSON: defaultPermissionsJSON, AccountRightsJSON: accountRightsJSON,
 			SenderID: message.FromID,
-			SenderUsername: func() string { if message.Sender != nil { return message.Sender.Username }; return "" }(),
-			SenderName: func() string { if message.Sender != nil { return message.Sender.FullName() }; return "" }(),
+			SenderUsername: func() string {
+				if message.Sender != nil {
+					return message.Sender.Username
+				}
+				return ""
+			}(),
+			SenderName: func() string {
+				if message.Sender != nil {
+					return message.Sender.FullName()
+				}
+				return ""
+			}(),
 			ReplyToMessageID: int64(message.ReplyToID), ReplyToOwnMessage: replyToOwn,
 			IsOutgoing: message.Out || message.Outgoing, Text: textBody, MediaType: mediaType, MediaMetadataJSON: mediaMetadataJSON, GroupedID: message.GroupedID, MessageDate: message.Date,
 		}
@@ -193,12 +225,12 @@ func main() {
 	lastAppliedProxies := make(map[string]string)
 	reconnects := make(map[string]reconnectState)
 	statusSynced := make(map[string]bool)
-	ticker := time.NewTicker(30*time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	lastProxySweep:=time.Time{}
-	lastPrivateInviteSweep:=time.Time{}
-	lastGroupPermissionSweep:=time.Time{}
-	lastMediaCacheSweep:=time.Time{}
+	lastProxySweep := time.Time{}
+	lastPrivateInviteSweep := time.Time{}
+	lastGroupPermissionSweep := time.Time{}
+	lastMediaCacheSweep := time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
 	if err := recordWorkerHeartbeat(ctx, store.DB, workerID, hostname, os.Getpid(), true); err != nil {
@@ -235,65 +267,88 @@ func main() {
 		}
 	}()
 	for {
-		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, lastAppliedProxies, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
+		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, lastAppliedProxies, reconnects, statusSynced, &accountTenants, time.Now()); err != nil {
+			logger.Error("reconcile Telegram accounts", "error", err)
+		}
 		processReplyJobs(ctx, messageService, manager, logger)
 		processKeywordActionJobs(ctx, messageService, manager, logger)
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
-		if time.Since(lastProxySweep)>=10*time.Minute {
-			lastProxySweep=time.Now()
-			go func(){
-				sweepCtx,cancelSweep:=context.WithTimeout(ctx,3*time.Minute);defer cancelSweep()
-				if err:=accountService.CheckActiveProxies(sweepCtx);err!=nil{logger.Warn("scheduled proxy health sweep completed with failures","error",err)}
+		if time.Since(lastProxySweep) >= 10*time.Minute {
+			lastProxySweep = time.Now()
+			go func() {
+				sweepCtx, cancelSweep := context.WithTimeout(ctx, 3*time.Minute)
+				defer cancelSweep()
+				if err := accountService.CheckActiveProxies(sweepCtx); err != nil {
+					logger.Warn("scheduled proxy health sweep completed with failures", "error", err)
+				}
 			}()
 		}
-		if time.Since(lastGroupPermissionSweep)>=30*time.Minute {
-			lastGroupPermissionSweep=time.Now()
-			go func(){
-				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
-				accountTenants.Range(func(key,value any)bool {
-					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
-					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
-					if err:=refreshGroupPermissions(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
-						logger.Warn("refresh Telegram group permissions","account_id",accountID,"error",err)
+		if time.Since(lastGroupPermissionSweep) >= 30*time.Minute {
+			lastGroupPermissionSweep = time.Now()
+			go func() {
+				sweepCtx, cancelSweep := context.WithTimeout(ctx, 10*time.Minute)
+				defer cancelSweep()
+				accountTenants.Range(func(key, value any) bool {
+					accountID, okID := key.(string)
+					tenantID, okTenant := value.(string)
+					if !okID || !okTenant || !manager.IsConnected(accountID) {
+						return true
 					}
-					return sweepCtx.Err()==nil
+					if err := refreshGroupPermissions(sweepCtx, messageService, manager, accountID, tenantID, logger); err != nil {
+						logger.Warn("refresh Telegram group permissions", "account_id", accountID, "error", err)
+					}
+					return sweepCtx.Err() == nil
 				})
 			}()
 		}
-		if time.Since(lastMediaCacheSweep)>=24*time.Hour {
-			lastMediaCacheSweep=time.Now()
-			go func(){
-				sweepCtx,cancelSweep:=context.WithTimeout(ctx,10*time.Minute);defer cancelSweep()
-				seenTenants:=make(map[string]struct{})
-				accountTenants.Range(func(_,value any)bool {
-					tenantID,ok:=value.(string)
-					if !ok||tenantID=="" { return true }
-					if _,exists:=seenTenants[tenantID];exists{return true}
-					seenTenants[tenantID]=struct{}{}
-					removed,err:=messageService.PruneMessageMediaCache(sweepCtx,tenantID,90*24*time.Hour)
-					if err!=nil { logger.Warn("prune expired Telegram media cache links","tenant_id",tenantID,"error",err) } else if removed>0 { logger.Info("pruned expired Telegram media cache links","tenant_id",tenantID,"removed",removed) }
-					return sweepCtx.Err()==nil
+		if time.Since(lastMediaCacheSweep) >= 24*time.Hour {
+			lastMediaCacheSweep = time.Now()
+			go func() {
+				sweepCtx, cancelSweep := context.WithTimeout(ctx, 10*time.Minute)
+				defer cancelSweep()
+				seenTenants := make(map[string]struct{})
+				accountTenants.Range(func(_, value any) bool {
+					tenantID, ok := value.(string)
+					if !ok || tenantID == "" {
+						return true
+					}
+					if _, exists := seenTenants[tenantID]; exists {
+						return true
+					}
+					seenTenants[tenantID] = struct{}{}
+					removed, err := messageService.PruneMessageMediaCache(sweepCtx, tenantID, 90*24*time.Hour)
+					if err != nil {
+						logger.Warn("prune expired Telegram media cache links", "tenant_id", tenantID, "error", err)
+					} else if removed > 0 {
+						logger.Info("pruned expired Telegram media cache links", "tenant_id", tenantID, "removed", removed)
+					}
+					return sweepCtx.Err() == nil
 				})
 			}()
 		}
-		if time.Since(lastPrivateInviteSweep)>=15*time.Minute {
-			lastPrivateInviteSweep=time.Now()
-			go func(){
-				sweepCtx,cancelSweep:=context.WithTimeout(ctx,5*time.Minute);defer cancelSweep()
-				accountTenants.Range(func(key,value any)bool {
-					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
-					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
-					if err:=refreshPrivateInviteLinks(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
-						logger.Warn("refresh Telegram group links","account_id",accountID,"error",err)
+		if time.Since(lastPrivateInviteSweep) >= 15*time.Minute {
+			lastPrivateInviteSweep = time.Now()
+			go func() {
+				sweepCtx, cancelSweep := context.WithTimeout(ctx, 5*time.Minute)
+				defer cancelSweep()
+				accountTenants.Range(func(key, value any) bool {
+					accountID, okID := key.(string)
+					tenantID, okTenant := value.(string)
+					if !okID || !okTenant || !manager.IsConnected(accountID) {
+						return true
 					}
-					return sweepCtx.Err()==nil
+					if err := refreshPrivateInviteLinks(sweepCtx, messageService, manager, accountID, tenantID, logger); err != nil {
+						logger.Warn("refresh Telegram group links", "account_id", accountID, "error", err)
+					}
+					return sweepCtx.Err() == nil
 				})
 			}()
 		}
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
 		}
 	}
@@ -305,14 +360,26 @@ func runtimeConfigChanged(currentSession, currentProxy, desiredSession, desiredP
 
 func reconcile(ctx context.Context, accountsService *accounts.Service, manager *telegrammtgo.Manager, logger *slog.Logger, lastSavedSessions map[string]string, lastAppliedProxies map[string]string, reconnects map[string]reconnectState, statusSynced map[string]bool, accountTenants *sync.Map, now time.Time) error {
 	accountsList, err := accountsService.LoadAuthorizedRuntimeAccounts(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	allowed := make(map[string]accounts.RuntimeAccount, len(accountsList))
-	for _, account := range accountsList { allowed[account.ID] = account; accountTenants.Store(account.ID, account.TenantID) }
-	accountTenants.Range(func(key, value any) bool { if _, ok := allowed[key.(string)]; !ok { accountTenants.Delete(key) }; return true })
+	for _, account := range accountsList {
+		allowed[account.ID] = account
+		accountTenants.Store(account.ID, account.TenantID)
+	}
+	accountTenants.Range(func(key, value any) bool {
+		if _, ok := allowed[key.(string)]; !ok {
+			accountTenants.Delete(key)
+		}
+		return true
+	})
 
 	for _, id := range manager.ManagedAccountIDs() {
 		if _, ok := allowed[id]; !ok {
-			if err := manager.Stop(id); err != nil { logger.Warn("stop inactive Telegram account", "account_id", id, "error", err) }
+			if err := manager.Stop(id); err != nil {
+				logger.Warn("stop inactive Telegram account", "account_id", id, "error", err)
+			}
 			delete(lastSavedSessions, id)
 			delete(lastAppliedProxies, id)
 			delete(reconnects, id)
@@ -342,7 +409,9 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 				state = reconnectState{attempts: account.ReconnectAttempts, nextTry: account.ReconnectAt}
 				reconnects[id] = state
 			}
-			if now.Before(state.nextTry) { continue }
+			if now.Before(state.nextTry) {
+				continue
+			}
 			_ = manager.Stop(id)
 			if err := manager.Start(id, account.Session, account.ProxyJSON, account.DeviceProfile); err != nil {
 				delay := scheduleReconnect(&state, now)
@@ -383,7 +452,9 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 			logger.Warn("export Telegram session", "account_id", id, "error", exportErr)
 			continue
 		}
-		if session == "" || session == lastSavedSessions[id] { continue }
+		if session == "" || session == lastSavedSessions[id] {
+			continue
+		}
 		if err := accountsService.SaveRuntimeSession(ctx, account.TenantID, id, session); err != nil {
 			logger.Error("persist refreshed Telegram session", "account_id", id, "error", err)
 			continue
@@ -395,336 +466,443 @@ func reconcile(ctx context.Context, accountsService *accounts.Service, manager *
 }
 
 func processReplyJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-	jobs,err:=service.ClaimPendingReplies(ctx,1)
-	if err!=nil { logger.Error("claim Telegram reply jobs","error",err);return }
-	for _,job:=range jobs {
-		if ctx.Err()!=nil{return}
+	jobs, err := service.ClaimPendingReplies(ctx, 1)
+	if err != nil {
+		logger.Error("claim Telegram reply jobs", "error", err)
+		return
+	}
+	for _, job := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
 		// A tenant may expire or be disabled after a job was claimed. Recheck
 		// immediately before any Telegram side effect and freeze the job.
-		if !service.TenantCanOperate(ctx,job.TenantID) {
-			if err:=service.PauseReply(ctx,job,"tenant inactive; manual review required");err!=nil { logger.Error("pause reply for inactive tenant","job_id",job.ID,"error",err) }
+		if !service.TenantCanOperate(ctx, job.TenantID) {
+			if err := service.PauseReply(ctx, job, "tenant inactive; manual review required"); err != nil {
+				logger.Error("pause reply for inactive tenant", "job_id", job.ID, "error", err)
+			}
 			continue
 		}
 		if !manager.IsConnected(job.AccountID) {
-			if err:=service.ReleaseReply(ctx,job,30*time.Second);err!=nil { logger.Error("release reply for offline Telegram account","job_id",job.ID,"error",err) }
+			if err := service.ReleaseReply(ctx, job, 30*time.Second); err != nil {
+				logger.Error("release reply for offline Telegram account", "job_id", job.ID, "error", err)
+			}
 			continue
 		}
-		sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
+		sendCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		var telegramMessageID int64
 		var sendErr error
-		if job.MessageType=="contact" {
-			telegramMessageID,sendErr=manager.SendContactReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.ContactPhone,job.ContactFirstName,job.ContactLastName)
+		if job.MessageType == "contact" {
+			telegramMessageID, sendErr = manager.SendContactReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, job.ContactPhone, job.ContactFirstName, job.ContactLastName)
 		} else {
-			telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
+			telegramMessageID, sendErr = manager.SendReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, job.Text)
 		}
 		cancel()
-		if sendErr!=nil {
-			floodWait,_:=tgerr.AsFloodWait(sendErr)
-			if floodWait>0 {
-				logger.Warn("Telegram imposed FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
+		if sendErr != nil {
+			floodWait, _ := tgerr.AsFloodWait(sendErr)
+			if floodWait > 0 {
+				logger.Warn("Telegram imposed FloodWait; preserving server cooldown", "job_id", job.ID, "account_id", job.AccountID, "wait", floodWait.String())
 			}
-			if err:=service.FailReplyWithFloodWait(ctx,job,sendErr,floodWait);err!=nil { logger.Error("reschedule failed Telegram reply","job_id",job.ID,"error",err) }
-			logger.Warn("Telegram reply failed","job_id",job.ID,"account_id",job.AccountID,"attempt",job.Attempts,"error",sendErr)
+			if err := service.FailReplyWithFloodWait(ctx, job, sendErr, floodWait); err != nil {
+				logger.Error("reschedule failed Telegram reply", "job_id", job.ID, "error", err)
+			}
+			logger.Warn("Telegram reply failed", "job_id", job.ID, "account_id", job.AccountID, "attempt", job.Attempts, "error", sendErr)
 			continue
 		}
-		if err:=service.CompleteReply(ctx,job,telegramMessageID);err!=nil {
-			logger.Error("persist sent Telegram reply","job_id",job.ID,"telegram_message_id",telegramMessageID,"error",err)
+		if err := service.CompleteReply(ctx, job, telegramMessageID); err != nil {
+			logger.Error("persist sent Telegram reply", "job_id", job.ID, "telegram_message_id", telegramMessageID, "error", err)
 			continue
 		}
-		logger.Info("Telegram reply sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
+		logger.Info("Telegram reply sent", "job_id", job.ID, "account_id", job.AccountID, "telegram_message_id", telegramMessageID)
 	}
 }
 
-
 func processKeywordActionJobs(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger) {
-    jobs,err:=service.ClaimKeywordActionJobs(ctx,10)
-    if err!=nil {logger.Error("claim keyword action jobs","error",err);return}
-    for _,job:=range jobs {
-        if ctx.Err()!=nil{return}
-        if !service.TenantCanOperate(ctx,job.TenantID) {
-            if err:=service.PauseKeywordAction(ctx,job,"tenant inactive; manual review required");err!=nil{logger.Error("pause keyword action for inactive tenant","job_id",job.ID,"error",err)}
-            continue
-        }
-        if !manager.IsConnected(job.AccountID) {
-            if err:=service.ReleaseKeywordAction(ctx,job,30*time.Second,"Telegram account temporarily disconnected");err!=nil {
-                logger.Error("release keyword action for offline account","job_id",job.ID,"error",err)
-            }
-            continue
-        }
-        sendCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
-        var telegramMessageID int64
-        var telegramMessageIDs []int64
-        var sendErr error
-        var voiceCallResult telegrammtgo.VoiceCallRequestResult
-        switch job.ActionType {
-        case "", "text":
-            telegramMessageID,sendErr=manager.SendReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.Text)
-        case "contact":
-            telegramMessageID,sendErr=manager.SendContactReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.ContactPhone,job.ContactFirstName,job.ContactLastName)
-        case "media":
-            var asset messages.MediaAssetContent
-            asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,job.MediaAssetID)
-            if sendErr==nil { telegramMessageID,sendErr=manager.SendMediaReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.MediaType,asset.FileName,asset.MIMEType,job.MediaCaption,asset.Content) }
-        case "voice_call":
-            voiceCallResult,sendErr=manager.RequestVoiceCall(sendCtx,job.AccountID,job.TargetUserID)
-        case "media_album":
-            album:=make([]telegrammtgo.MediaAlbumItem,0,len(job.MediaAlbumItems))
-            for _,item:=range job.MediaAlbumItems {
-                var asset messages.MediaAssetContent
-                asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,item.AssetID)
-                if sendErr!=nil { break }
-                album=append(album,telegrammtgo.MediaAlbumItem{MediaType:item.MediaType,FileName:asset.FileName,MIMEType:asset.MIMEType,Caption:item.Caption,Content:asset.Content})
-            }
-            if sendErr==nil {
-                var ids []int64
-                ids,sendErr=manager.SendMediaAlbumReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,album)
-                if sendErr==nil && len(ids)>0 { telegramMessageIDs=ids; telegramMessageID=ids[0] }
-            }
-        default:
-            sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
-        }
-        cancel()
-        floodWait,_:=tgerr.AsFloodWait(sendErr)
-        if job.ActionType=="voice_call" {
-            if sendErr==nil {
-                if err:=service.FinishKeywordVoiceCall(ctx,job,voiceCallResult);err!=nil {
-                    logger.Error("persist Telegram voice call ringing result","job_id",job.ID,"error",err)
-                    continue
-                }
-                logger.Info("Telegram native voice call is ringing","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"call_id",voiceCallResult.CallID)
-            } else {
-                if err:=service.FinishKeywordAction(ctx,job,0,sendErr,floodWait);err!=nil {
-                    logger.Error("persist Telegram voice call failure","job_id",job.ID,"error",err)
-                    continue
-                }
-                logger.Warn("Telegram voice call request failed","job_id",job.ID,"account_id",job.AccountID,"target_user_id",job.TargetUserID,"error",sendErr)
-            }
-            continue
-        }
-        if sendErr==nil && telegramMessageID>0 && len(telegramMessageIDs)==0 { telegramMessageIDs=[]int64{telegramMessageID} }
-        if err:=service.FinishKeywordAction(ctx,job,telegramMessageID,sendErr,floodWait,telegramMessageIDs);err!=nil {
-            logger.Error("persist keyword action result","job_id",job.ID,"error",err)
-            continue
-        }
-        if sendErr!=nil {logger.Warn("keyword action send failed","job_id",job.ID,"account_id",job.AccountID,"error",sendErr)} else {
-            logger.Info("keyword action sent","job_id",job.ID,"account_id",job.AccountID,"telegram_message_id",telegramMessageID)
-        }
-    }
+	jobs, err := service.ClaimKeywordActionJobs(ctx, 10)
+	if err != nil {
+		logger.Error("claim keyword action jobs", "error", err)
+		return
+	}
+	for _, job := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		if !service.TenantCanOperate(ctx, job.TenantID) {
+			if err := service.PauseKeywordAction(ctx, job, "tenant inactive; manual review required"); err != nil {
+				logger.Error("pause keyword action for inactive tenant", "job_id", job.ID, "error", err)
+			}
+			continue
+		}
+		if !manager.IsConnected(job.AccountID) {
+			if err := service.ReleaseKeywordAction(ctx, job, 30*time.Second, "Telegram account temporarily disconnected"); err != nil {
+				logger.Error("release keyword action for offline account", "job_id", job.ID, "error", err)
+			}
+			continue
+		}
+		sendCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		var telegramMessageID int64
+		var telegramMessageIDs []int64
+		var sendErr error
+		var voiceCallResult telegrammtgo.VoiceCallRequestResult
+		switch job.ActionType {
+		case "", "text":
+			telegramMessageID, sendErr = manager.SendReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, job.Text)
+		case "contact":
+			telegramMessageID, sendErr = manager.SendContactReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, job.ContactPhone, job.ContactFirstName, job.ContactLastName)
+		case "media":
+			var asset messages.MediaAssetContent
+			asset, sendErr = service.GetMediaAsset(sendCtx, job.TenantID, job.MediaAssetID)
+			if sendErr == nil {
+				telegramMessageID, sendErr = manager.SendMediaReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, job.MediaType, asset.FileName, asset.MIMEType, job.MediaCaption, asset.Content)
+			}
+		case "voice_call":
+			voiceCallResult, sendErr = manager.RequestVoiceCall(sendCtx, job.AccountID, job.TargetUserID)
+		case "media_album":
+			album := make([]telegrammtgo.MediaAlbumItem, 0, len(job.MediaAlbumItems))
+			for _, item := range job.MediaAlbumItems {
+				var asset messages.MediaAssetContent
+				asset, sendErr = service.GetMediaAsset(sendCtx, job.TenantID, item.AssetID)
+				if sendErr != nil {
+					break
+				}
+				album = append(album, telegrammtgo.MediaAlbumItem{MediaType: item.MediaType, FileName: asset.FileName, MIMEType: asset.MIMEType, Caption: item.Caption, Content: asset.Content})
+			}
+			if sendErr == nil {
+				var ids []int64
+				ids, sendErr = manager.SendMediaAlbumReply(sendCtx, job.AccountID, job.ChatID, job.ReplyToMessageID, album)
+				if sendErr == nil && len(ids) > 0 {
+					telegramMessageIDs = ids
+					telegramMessageID = ids[0]
+				}
+			}
+		default:
+			sendErr = fmt.Errorf("unsupported keyword action type %q", job.ActionType)
+		}
+		cancel()
+		floodWait, _ := tgerr.AsFloodWait(sendErr)
+		if job.ActionType == "voice_call" {
+			if sendErr == nil {
+				if err := service.FinishKeywordVoiceCall(ctx, job, voiceCallResult); err != nil {
+					logger.Error("persist Telegram voice call ringing result", "job_id", job.ID, "error", err)
+					continue
+				}
+				logger.Info("Telegram native voice call is ringing", "job_id", job.ID, "account_id", job.AccountID, "target_user_id", job.TargetUserID, "call_id", voiceCallResult.CallID)
+			} else {
+				if err := service.FinishKeywordAction(ctx, job, 0, sendErr, floodWait); err != nil {
+					logger.Error("persist Telegram voice call failure", "job_id", job.ID, "error", err)
+					continue
+				}
+				logger.Warn("Telegram voice call request failed", "job_id", job.ID, "account_id", job.AccountID, "target_user_id", job.TargetUserID, "error", sendErr)
+			}
+			continue
+		}
+		if sendErr == nil && telegramMessageID > 0 && len(telegramMessageIDs) == 0 {
+			telegramMessageIDs = []int64{telegramMessageID}
+		}
+		if err := service.FinishKeywordAction(ctx, job, telegramMessageID, sendErr, floodWait, telegramMessageIDs); err != nil {
+			logger.Error("persist keyword action result", "job_id", job.ID, "error", err)
+			continue
+		}
+		if sendErr != nil {
+			logger.Warn("keyword action send failed", "job_id", job.ID, "account_id", job.AccountID, "error", sendErr)
+		} else {
+			logger.Info("keyword action sent", "job_id", job.ID, "account_id", job.AccountID, "telegram_message_id", telegramMessageID)
+		}
+	}
 }
 
-
 func isPermanentJoinFailure(err error) bool {
-    if err == nil { return false }
-    upper := strings.ToUpper(err.Error())
-    permanent := []string{
-        "INVITE_HASH_EXPIRED", "INVITE_HASH_INVALID", "INVITE_HASH_EMPTY",
-        "USERNAME_NOT_OCCUPIED", "USERNAME_INVALID", "CHANNEL_PRIVATE",
-        "USER_BANNED_IN_CHANNEL",
-        "CHAT_WRITE_FORBIDDEN",
-        "PEER_ID_INVALID",
-    }
-    for _, marker := range permanent {
-        if strings.Contains(upper, marker) { return true }
-    }
-    return false
+	if err == nil {
+		return false
+	}
+	upper := strings.ToUpper(err.Error())
+	permanent := []string{
+		"INVITE_HASH_EXPIRED", "INVITE_HASH_INVALID", "INVITE_HASH_EMPTY",
+		"USERNAME_NOT_OCCUPIED", "USERNAME_INVALID", "CHANNEL_PRIVATE",
+		"USER_BANNED_IN_CHANNEL",
+		"CHAT_WRITE_FORBIDDEN",
+		"PEER_ID_INVALID",
+	}
+	for _, marker := range permanent {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func processJoinTasks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
-    tenantSet:=map[string]bool{}
-    accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
-    for tenantID:=range tenantSet {
-        jobs,err:=service.ClaimJoinTaskAccounts(ctx,tenantID,1)
-        if err!=nil {logger.Error("claim Telegram join tasks","tenant_id",tenantID,"error",err);continue}
-        blockedTasks:=map[string]bool{}
-        blockedAccounts:=map[string]bool{}
-        for _,job:=range jobs {
-            if ctx.Err()!=nil{return}
-            if blockedTasks[job.TaskID]||blockedAccounts[job.AccountID]{continue}
-            if !service.TenantCanOperate(ctx,job.TenantID) {
-                if err:=service.FailJoinTaskAccount(ctx,job,"tenant subscription inactive; task requires manual review");err!=nil{logger.Error("close join task for inactive tenant","task_id",job.TaskID,"error",err)}
-                continue
-            }
-            if !manager.IsConnected(job.AccountID) {
-                if err:=service.RescheduleJoinTaskAccount(ctx,job,30*time.Second,"Telegram account is temporarily disconnected");err!=nil{logger.Error("reschedule join task for offline account","task_id",job.TaskID,"error",err)}
-                blockedTasks[job.TaskID]=true;blockedAccounts[job.AccountID]=true
-                continue
-            }
-            joinCtx,cancel:=context.WithTimeout(ctx,60*time.Second)
-            chatID,joinErr:=manager.JoinChat(joinCtx,job.AccountID,job.TargetURL)
-            cancel()
-            if joinErr!=nil {
-                if wait,ok:=tgerr.AsFloodWait(joinErr);ok {
-                    logger.Warn("Telegram join FloodWait; preserving server cooldown","task_id",job.TaskID,"account_id",job.AccountID,"wait",wait.String())
-                    if err:=service.RescheduleJoinTaskAccount(ctx,job,wait,joinErr.Error());err!=nil{logger.Error("reschedule join task after FloodWait","task_id",job.TaskID,"error",err)}
-                    blockedTasks[job.TaskID]=true;blockedAccounts[job.AccountID]=true
-                    continue
-                }
-                upper:=strings.ToUpper(joinErr.Error())
-                if tgerr.IsInviteRequestSent(joinErr) || strings.Contains(upper,"INVITE_REQUEST_SENT") || strings.Contains(upper,"INVITEREQUESTSENT") {
-                    if err:=service.CompleteJoinTaskAccount(ctx,job,0,"request_pending");err!=nil{logger.Error("record pending Telegram join request","task_id",job.TaskID,"error",err)}
-                    continue
-                }
-                if strings.Contains(upper,"USER_ALREADY_PARTICIPANT")||strings.Contains(upper,"ALREADY_PARTICIPANT") {
-                    if err:=service.CompleteJoinTaskAccount(ctx,job,0,"already_member");err!=nil{logger.Error("record existing Telegram membership","task_id",job.TaskID,"error",err)}
-                    continue
-                }
-                if isPermanentJoinFailure(joinErr) {
-                    if err:=service.FailJoinTaskAccount(ctx,job,joinErr.Error());err!=nil{logger.Error("record failed Telegram join","task_id",job.TaskID,"error",err)}
-                } else {
-                    if err:=service.RescheduleJoinTaskRetry(ctx,job,joinErr.Error());err!=nil{logger.Error("retry transient Telegram join failure","task_id",job.TaskID,"error",err)}
-                }
-                logger.Warn("Telegram group join failed","task_id",job.TaskID,"account_id",job.AccountID,"attempt",job.Attempts,"permanent",isPermanentJoinFailure(joinErr),"error",joinErr)
-                continue
-            }
-            if err:=service.CompleteJoinTaskAccount(ctx,job,chatID,"not_required");err!=nil{logger.Error("persist Telegram group join","task_id",job.TaskID,"chat_id",chatID,"error",err);continue}
-            logger.Info("Telegram group joined","task_id",job.TaskID,"account_id",job.AccountID,"chat_id",chatID)
-        }
-    }
+	tenantSet := map[string]bool{}
+	accountTenants.Range(func(_, value any) bool {
+		if tenantID, ok := value.(string); ok && tenantID != "" {
+			tenantSet[tenantID] = true
+		}
+		return true
+	})
+	for tenantID := range tenantSet {
+		jobs, err := service.ClaimJoinTaskAccounts(ctx, tenantID, 1)
+		if err != nil {
+			logger.Error("claim Telegram join tasks", "tenant_id", tenantID, "error", err)
+			continue
+		}
+		blockedTasks := map[string]bool{}
+		blockedAccounts := map[string]bool{}
+		for _, job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+			if blockedTasks[job.TaskID] || blockedAccounts[job.AccountID] {
+				continue
+			}
+			if !service.TenantCanOperate(ctx, job.TenantID) {
+				if err := service.FailJoinTaskAccount(ctx, job, "tenant subscription inactive; task requires manual review"); err != nil {
+					logger.Error("close join task for inactive tenant", "task_id", job.TaskID, "error", err)
+				}
+				continue
+			}
+			if !manager.IsConnected(job.AccountID) {
+				if err := service.RescheduleJoinTaskAccount(ctx, job, 30*time.Second, "Telegram account is temporarily disconnected"); err != nil {
+					logger.Error("reschedule join task for offline account", "task_id", job.TaskID, "error", err)
+				}
+				blockedTasks[job.TaskID] = true
+				blockedAccounts[job.AccountID] = true
+				continue
+			}
+			joinCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			chatID, joinErr := manager.JoinChat(joinCtx, job.AccountID, job.TargetURL)
+			cancel()
+			if joinErr != nil {
+				if wait, ok := tgerr.AsFloodWait(joinErr); ok {
+					logger.Warn("Telegram join FloodWait; preserving server cooldown", "task_id", job.TaskID, "account_id", job.AccountID, "wait", wait.String())
+					if err := service.RescheduleJoinTaskAccount(ctx, job, wait, joinErr.Error()); err != nil {
+						logger.Error("reschedule join task after FloodWait", "task_id", job.TaskID, "error", err)
+					}
+					blockedTasks[job.TaskID] = true
+					blockedAccounts[job.AccountID] = true
+					continue
+				}
+				upper := strings.ToUpper(joinErr.Error())
+				if tgerr.IsInviteRequestSent(joinErr) || strings.Contains(upper, "INVITE_REQUEST_SENT") || strings.Contains(upper, "INVITEREQUESTSENT") {
+					if err := service.CompleteJoinTaskAccount(ctx, job, 0, "request_pending"); err != nil {
+						logger.Error("record pending Telegram join request", "task_id", job.TaskID, "error", err)
+					}
+					continue
+				}
+				if strings.Contains(upper, "USER_ALREADY_PARTICIPANT") || strings.Contains(upper, "ALREADY_PARTICIPANT") {
+					if err := service.CompleteJoinTaskAccount(ctx, job, 0, "already_member"); err != nil {
+						logger.Error("record existing Telegram membership", "task_id", job.TaskID, "error", err)
+					}
+					continue
+				}
+				if isPermanentJoinFailure(joinErr) {
+					if err := service.FailJoinTaskAccount(ctx, job, joinErr.Error()); err != nil {
+						logger.Error("record failed Telegram join", "task_id", job.TaskID, "error", err)
+					}
+				} else {
+					if err := service.RescheduleJoinTaskRetry(ctx, job, joinErr.Error()); err != nil {
+						logger.Error("retry transient Telegram join failure", "task_id", job.TaskID, "error", err)
+					}
+				}
+				logger.Warn("Telegram group join failed", "task_id", job.TaskID, "account_id", job.AccountID, "attempt", job.Attempts, "permanent", isPermanentJoinFailure(joinErr), "error", joinErr)
+				continue
+			}
+			if err := service.CompleteJoinTaskAccount(ctx, job, chatID, "not_required"); err != nil {
+				logger.Error("persist Telegram group join", "task_id", job.TaskID, "chat_id", chatID, "error", err)
+				continue
+			}
+			logger.Info("Telegram group joined", "task_id", job.TaskID, "account_id", job.AccountID, "chat_id", chatID)
+		}
+	}
 }
 
 func processJoinApprovalSync(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
-	tenantSet:=map[string]bool{}
-	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
-	for tenantID:=range tenantSet {
-		jobs,err:=service.ListPendingJoinApprovals(ctx,tenantID,4)
-		if err!=nil {logger.Error("list pending Telegram join approvals","tenant_id",tenantID,"error",err);continue}
-		for _,job:=range jobs {
-			if ctx.Err()!=nil{return}
-			if !manager.IsConnected(job.AccountID) {continue}
-			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+	tenantSet := map[string]bool{}
+	accountTenants.Range(func(_, value any) bool {
+		if tenantID, ok := value.(string); ok && tenantID != "" {
+			tenantSet[tenantID] = true
+		}
+		return true
+	})
+	for tenantID := range tenantSet {
+		jobs, err := service.ListPendingJoinApprovals(ctx, tenantID, 4)
+		if err != nil {
+			logger.Error("list pending Telegram join approvals", "tenant_id", tenantID, "error", err)
+			continue
+		}
+		for _, job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+			if !manager.IsConnected(job.AccountID) {
+				continue
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			var memberStatus string
 			var checkErr error
-			if job.ChatID>0 {
-				memberStatus,checkErr=manager.CheckOwnChatMembership(checkCtx,job.AccountID,job.ChatID)
-			} else if job.InviteHash!="" {
-				memberStatus,checkErr=manager.CheckPrivateInviteApproval(checkCtx,job.AccountID,job.InviteHash)
+			if job.ChatID > 0 {
+				memberStatus, checkErr = manager.CheckOwnChatMembership(checkCtx, job.AccountID, job.ChatID)
+			} else if job.InviteHash != "" {
+				memberStatus, checkErr = manager.CheckPrivateInviteApproval(checkCtx, job.AccountID, job.InviteHash)
 			} else {
 				cancel()
-				logger.Warn("pending Telegram join approval has neither chat ID nor private invite hash","task_id",job.TaskID,"account_id",job.AccountID)
+				logger.Warn("pending Telegram join approval has neither chat ID nor private invite hash", "task_id", job.TaskID, "account_id", job.AccountID)
 				continue
 			}
 			cancel()
-			if checkErr!=nil {
-				if wait,ok:=tgerr.AsFloodWait(checkErr);ok {
-					logger.Warn("Telegram approval sync FloodWait; deferring checks","account_id",job.AccountID,"wait",wait.String())
-					if deferErr:=service.DeferJoinApprovalCheck(ctx,job,wait);deferErr!=nil {logger.Warn("defer Telegram approval check","task_id",job.TaskID,"error",deferErr)}
+			if checkErr != nil {
+				if wait, ok := tgerr.AsFloodWait(checkErr); ok {
+					logger.Warn("Telegram approval sync FloodWait; deferring checks", "account_id", job.AccountID, "wait", wait.String())
+					if deferErr := service.DeferJoinApprovalCheck(ctx, job, wait); deferErr != nil {
+						logger.Warn("defer Telegram approval check", "task_id", job.TaskID, "error", deferErr)
+					}
 					continue
 				}
-				upper:=strings.ToUpper(checkErr.Error())
-				if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY") {
-					memberStatus="invalid"
+				upper := strings.ToUpper(checkErr.Error())
+				if strings.Contains(upper, "INVITE_HASH_EXPIRED") || strings.Contains(upper, "INVITE_HASH_INVALID") || strings.Contains(upper, "INVITE_HASH_EMPTY") {
+					memberStatus = "invalid"
 				} else {
-					logger.Warn("check Telegram join approval","task_id",job.TaskID,"account_id",job.AccountID,"error",checkErr)
+					logger.Warn("check Telegram join approval", "task_id", job.TaskID, "account_id", job.AccountID, "error", checkErr)
 					continue
 				}
 			}
-			if err:=service.SyncJoinApproval(ctx,job,strings.ToLower(memberStatus));err!=nil {logger.Error("persist Telegram join approval status","task_id",job.TaskID,"account_id",job.AccountID,"error",err)}
+			if err := service.SyncJoinApproval(ctx, job, strings.ToLower(memberStatus)); err != nil {
+				logger.Error("persist Telegram join approval status", "task_id", job.TaskID, "account_id", job.AccountID, "error", err)
+			}
 		}
 	}
 }
 
 func processProfileUpdateJobs(ctx context.Context, accountService *accounts.Service, messageService *messages.Service, manager *telegrammtgo.Manager, logger *slog.Logger, accountTenants *sync.Map) {
-	if err:=accountService.PauseInactiveProfileUpdateJobs(ctx);err!=nil { logger.Error("pause profile jobs for inactive tenants","error",err) }
-	tenantSet:=map[string]bool{}
-	accountTenants.Range(func(_,value any)bool{if tenantID,ok:=value.(string);ok&&tenantID!=""{tenantSet[tenantID]=true};return true})
-	for tenantID:=range tenantSet {
-		jobs,err:=accountService.ClaimProfileUpdateJobs(ctx,tenantID,1)
-		if err!=nil { logger.Error("claim Telegram profile update jobs","tenant_id",tenantID,"error",err);continue }
-		blockedAccounts:=map[string]bool{}
-		for _,job:=range jobs {
-			if ctx.Err()!=nil{return}
-			if blockedAccounts[job.AccountID] { continue }
-			if !messageService.TenantCanOperate(ctx,job.TenantID) {
-				if err:=accountService.PauseProfileUpdate(ctx,job,"tenant subscription inactive; manual review required");err!=nil {
-					logger.Error("pause profile update for inactive tenant","job_id",job.ID,"error",err)
+	if err := accountService.PauseInactiveProfileUpdateJobs(ctx); err != nil {
+		logger.Error("pause profile jobs for inactive tenants", "error", err)
+	}
+	tenantSet := map[string]bool{}
+	accountTenants.Range(func(_, value any) bool {
+		if tenantID, ok := value.(string); ok && tenantID != "" {
+			tenantSet[tenantID] = true
+		}
+		return true
+	})
+	for tenantID := range tenantSet {
+		jobs, err := accountService.ClaimProfileUpdateJobs(ctx, tenantID, 1)
+		if err != nil {
+			logger.Error("claim Telegram profile update jobs", "tenant_id", tenantID, "error", err)
+			continue
+		}
+		blockedAccounts := map[string]bool{}
+		for _, job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+			if blockedAccounts[job.AccountID] {
+				continue
+			}
+			if !messageService.TenantCanOperate(ctx, job.TenantID) {
+				if err := accountService.PauseProfileUpdate(ctx, job, "tenant subscription inactive; manual review required"); err != nil {
+					logger.Error("pause profile update for inactive tenant", "job_id", job.ID, "error", err)
 				}
 				continue
 			}
 			if !manager.IsConnected(job.AccountID) {
-				if err:=accountService.RescheduleProfileUpdate(ctx,job,30*time.Second,errors.New("Telegram account is temporarily disconnected"));err!=nil {
-					logger.Error("reschedule profile update for offline account","job_id",job.ID,"error",err)
+				if err := accountService.RescheduleProfileUpdate(ctx, job, 30*time.Second, errors.New("Telegram account is temporarily disconnected")); err != nil {
+					logger.Error("reschedule profile update for offline account", "job_id", job.ID, "error", err)
 				}
-				blockedAccounts[job.AccountID]=true
+				blockedAccounts[job.AccountID] = true
 				continue
 			}
-			updateCtx,cancel:=context.WithTimeout(ctx,45*time.Second)
+			updateCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			var updateErr error
-			if job.FirstName!="" || job.LastName!="" || job.About!="" {
-				updateErr=manager.UpdateProfile(updateCtx,job.AccountID,job.FirstName,job.LastName,job.About)
+			if job.FirstName != "" || job.LastName != "" || job.About != "" {
+				updateErr = manager.UpdateProfile(updateCtx, job.AccountID, job.FirstName, job.LastName, job.About)
 			}
-			if updateErr==nil && len(job.PhotoData)>0 {
-				fileName:="profile.jpg"
-				if len(job.PhotoData)>=8 && string(job.PhotoData[:8])=="\x89PNG\r\n\x1a\n" { fileName="profile.png" }
-				updateErr=manager.UpdateProfilePhoto(updateCtx,job.AccountID,job.PhotoData,fileName)
+			if updateErr == nil && len(job.PhotoData) > 0 {
+				fileName := "profile.jpg"
+				if len(job.PhotoData) >= 8 && string(job.PhotoData[:8]) == "\x89PNG\r\n\x1a\n" {
+					fileName = "profile.png"
+				}
+				updateErr = manager.UpdateProfilePhoto(updateCtx, job.AccountID, job.PhotoData, fileName)
 			}
 			usernameResultUncertain := false
-			if updateErr==nil && job.GenerateUsername && job.AppliedUsername=="" {
+			if updateErr == nil && job.GenerateUsername && job.AppliedUsername == "" {
 				var username string
-				for attempt:=0;attempt<8;attempt++ {
-					username,updateErr=generateRandomTelegramUsername(accounts.UsernameGenerationSettings{Prefix:job.UsernamePrefix,RandomLength:job.UsernameRandomLength,Charset:job.UsernameCharset})
-					if updateErr!=nil { break }
-					updateErr=manager.UpdateUsername(updateCtx,job.AccountID,username)
-					if updateErr==nil {
-						job.AppliedUsername=username
-						if persistErr:=accountService.RecordProfileUpdateUsername(updateCtx,job,username);persistErr!=nil {
-							usernameResultUncertain=true
-							updateErr=fmt.Errorf("Telegram username may have changed but its result could not be persisted: %w",persistErr)
+				for attempt := 0; attempt < 8; attempt++ {
+					username, updateErr = generateRandomTelegramUsername(accounts.UsernameGenerationSettings{Prefix: job.UsernamePrefix, RandomLength: job.UsernameRandomLength, Charset: job.UsernameCharset})
+					if updateErr != nil {
+						break
+					}
+					updateErr = manager.UpdateUsername(updateCtx, job.AccountID, username)
+					if updateErr == nil {
+						job.AppliedUsername = username
+						if persistErr := accountService.RecordProfileUpdateUsername(updateCtx, job, username); persistErr != nil {
+							usernameResultUncertain = true
+							updateErr = fmt.Errorf("Telegram username may have changed but its result could not be persisted: %w", persistErr)
 						}
 						break
 					}
-					if tgerr.IsUsernameOccupied(updateErr) { continue }
+					if tgerr.IsUsernameOccupied(updateErr) {
+						continue
+					}
 					break
 				}
-				if updateErr!=nil && tgerr.IsUsernameOccupied(updateErr) {
-					updateErr=errors.New("Telegram username remained occupied after 8 random candidates")
+				if updateErr != nil && tgerr.IsUsernameOccupied(updateErr) {
+					updateErr = errors.New("Telegram username remained occupied after 8 random candidates")
 				}
 			}
 			cancel()
-			if updateErr!=nil {
+			if updateErr != nil {
 				if usernameResultUncertain {
-					if pauseErr:=accountService.PauseProfileUpdate(ctx,job,updateErr.Error());pauseErr!=nil {
-						logger.Error("pause profile job after uncertain username update", "job_id",job.ID,"error",pauseErr)
+					if pauseErr := accountService.PauseProfileUpdate(ctx, job, updateErr.Error()); pauseErr != nil {
+						logger.Error("pause profile job after uncertain username update", "job_id", job.ID, "error", pauseErr)
 					}
-					logger.Warn("profile update paused because Telegram username outcome is uncertain","job_id",job.ID,"account_id",job.AccountID,"error",updateErr)
+					logger.Warn("profile update paused because Telegram username outcome is uncertain", "job_id", job.ID, "account_id", job.AccountID, "error", updateErr)
 					continue
 				}
-				floodWait,_:=tgerr.AsFloodWait(updateErr)
-				if floodWait>0 {
-					logger.Warn("Telegram profile update FloodWait; preserving server cooldown","job_id",job.ID,"account_id",job.AccountID,"wait",floodWait.String())
-					blockedAccounts[job.AccountID]=true
+				floodWait, _ := tgerr.AsFloodWait(updateErr)
+				if floodWait > 0 {
+					logger.Warn("Telegram profile update FloodWait; preserving server cooldown", "job_id", job.ID, "account_id", job.AccountID, "wait", floodWait.String())
+					blockedAccounts[job.AccountID] = true
 				}
-				if err:=accountService.FailProfileUpdate(ctx,job,updateErr,floodWait);err!=nil {
-					logger.Error("reschedule failed Telegram profile update","job_id",job.ID,"error",err)
+				if err := accountService.FailProfileUpdate(ctx, job, updateErr, floodWait); err != nil {
+					logger.Error("reschedule failed Telegram profile update", "job_id", job.ID, "error", err)
 				}
-				logger.Warn("Telegram profile update failed","job_id",job.ID,"account_id",job.AccountID,"attempt",job.Attempts+1,"error",updateErr)
+				logger.Warn("Telegram profile update failed", "job_id", job.ID, "account_id", job.AccountID, "attempt", job.Attempts+1, "error", updateErr)
 				continue
 			}
-			if err:=accountService.CompleteProfileUpdate(ctx,job);err!=nil {
-				logger.Error("persist Telegram profile update result","job_id",job.ID,"error",err)
+			if err := accountService.CompleteProfileUpdate(ctx, job); err != nil {
+				logger.Error("persist Telegram profile update result", "job_id", job.ID, "error", err)
 				continue
 			}
-			logger.Info("Telegram profile updated","job_id",job.ID,"account_id",job.AccountID)
+			logger.Info("Telegram profile updated", "job_id", job.ID, "account_id", job.AccountID)
 		}
 	}
 }
 
-func generateRandomTelegramUsername(settings accounts.UsernameGenerationSettings) (string,error) {
-	const letters="abcdefghijklmnopqrstuvwxyz"
-	const alphanumeric="abcdefghijklmnopqrstuvwxyz0123456789"
-	settings,err:=accounts.NormalizeUsernameGenerationSettingsForWorker(settings)
-	if err!=nil{return "",err}
-	alphabet:=alphanumeric
-	if settings.Charset=="letters" { alphabet=letters }
-	randomLength:=settings.RandomLength
-	random:=make([]byte,randomLength)
-	if _,err:=cryptorand.Read(random);err!=nil{return "",err}
-	suffix:=make([]byte,randomLength)
-	for i,value:=range random { suffix[i]=alphabet[int(value)%len(alphabet)] }
-	username:=settings.Prefix+string(suffix)
-	if settings.Prefix=="" && username[0]>='0' && username[0]<='9' { username=string(letters[int(random[0])%len(letters)])+username[1:] }
-	return username,nil
+func generateRandomTelegramUsername(settings accounts.UsernameGenerationSettings) (string, error) {
+	const letters = "abcdefghijklmnopqrstuvwxyz"
+	const alphanumeric = "abcdefghijklmnopqrstuvwxyz0123456789"
+	settings, err := accounts.NormalizeUsernameGenerationSettingsForWorker(settings)
+	if err != nil {
+		return "", err
+	}
+	alphabet := alphanumeric
+	if settings.Charset == "letters" {
+		alphabet = letters
+	}
+	randomLength := settings.RandomLength
+	random := make([]byte, randomLength)
+	if _, err := cryptorand.Read(random); err != nil {
+		return "", err
+	}
+	suffix := make([]byte, randomLength)
+	for i, value := range random {
+		suffix[i] = alphabet[int(value)%len(alphabet)]
+	}
+	username := settings.Prefix + string(suffix)
+	if settings.Prefix == "" && username[0] >= '0' && username[0] <= '9' {
+		username = string(letters[int(random[0])%len(letters)]) + username[1:]
+	}
+	return username, nil
 }
-
 
 func newWorkerInstanceID() string {
 	var raw [16]byte
@@ -736,7 +914,9 @@ func newWorkerInstanceID() string {
 
 func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname string, processID int, running bool) error {
 	status := "running"
-	if !running { status = "stopped" }
+	if !running {
+		status = "stopped"
+	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO worker_instances(instance_id,hostname,process_id,status,started_at,heartbeat_at,stopped_at)
 		VALUES($1,$2,$3,$4,NOW(),NOW(),CASE WHEN $4='stopped' THEN NOW() ELSE NULL END)
@@ -747,100 +927,125 @@ func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname
 	return err
 }
 
-
 func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
-	links,err:=service.ListPrivateInviteChecks(ctx,tenantID,accountID,7)
-	if err!=nil{return err}
-	publicLinks,publicErr:=service.ListPublicLinkChecks(ctx,tenantID,accountID,7)
-	if publicErr!=nil{return publicErr}
-	for _,link:=range publicLinks {
-		if ctx.Err()!=nil{return ctx.Err()}
-		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-		valid,checkErr:=manager.CheckPublicUsername(checkCtx,accountID,link.Username)
+	links, err := service.ListPrivateInviteChecks(ctx, tenantID, accountID, 7)
+	if err != nil {
+		return err
+	}
+	publicLinks, publicErr := service.ListPublicLinkChecks(ctx, tenantID, accountID, 7)
+	if publicErr != nil {
+		return publicErr
+	}
+	for _, link := range publicLinks {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		valid, checkErr := manager.CheckPublicUsername(checkCtx, accountID, link.Username)
 		cancel()
-		status:="unknown"
-		errorText:=""
-		if checkErr!=nil {
-			errorText=checkErr.Error()
-			upper:=strings.ToUpper(errorText)
-			if strings.Contains(upper,"USERNAME_NOT_OCCUPIED")||strings.Contains(upper,"USERNAME_INVALID")||strings.Contains(upper,"USERNAME_PURCHASE_AVAILABLE") {
-				status="invalid"
+		status := "unknown"
+		errorText := ""
+		if checkErr != nil {
+			errorText = checkErr.Error()
+			upper := strings.ToUpper(errorText)
+			if strings.Contains(upper, "USERNAME_NOT_OCCUPIED") || strings.Contains(upper, "USERNAME_INVALID") || strings.Contains(upper, "USERNAME_PURCHASE_AVAILABLE") {
+				status = "invalid"
 			}
-		} else if valid { status="valid" } else { status="invalid" }
+		} else if valid {
+			status = "valid"
+		} else {
+			status = "invalid"
+		}
 		var retryAfter time.Duration
-		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
-		if err:=service.RecordPublicLinkCheck(ctx,tenantID,accountID,link.LinkID,status,errorText,link.LeaseUntil,retryAfter);err!=nil {
-			logger.Warn("persist public link check result","link_id",link.LinkID,"error",err)
+		if checkErr != nil {
+			retryAfter, _ = tgerr.AsFloodWait(checkErr)
+		}
+		if err := service.RecordPublicLinkCheck(ctx, tenantID, accountID, link.LinkID, status, errorText, link.LeaseUntil, retryAfter); err != nil {
+			logger.Warn("persist public link check result", "link_id", link.LinkID, "error", err)
 		}
 	}
-	for _,link:=range links {
-		if ctx.Err()!=nil{return ctx.Err()}
-		status:="unknown"
-		errorText:=link.CheckError
+	for _, link := range links {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		status := "unknown"
+		errorText := link.CheckError
 		var checkErr error
-		if link.CheckError=="" {
-			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-			result,err:=manager.CheckPrivateInviteApproval(checkCtx,accountID,link.Hash)
+		if link.CheckError == "" {
+			checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			result, err := manager.CheckPrivateInviteApproval(checkCtx, accountID, link.Hash)
 			cancel()
-			checkErr=err
-			if err==nil {
-				if result=="request_pending" { status="approval_required" } else if result=="member"||result=="valid" { status="valid" }
+			checkErr = err
+			if err == nil {
+				if result == "request_pending" {
+					status = "approval_required"
+				} else if result == "member" || result == "valid" {
+					status = "valid"
+				}
 			}
 		}
-		if checkErr!=nil {
-			errorText=checkErr.Error()
-			upper:=strings.ToUpper(errorText)
-			if strings.Contains(upper,"INVITE_REQUEST_SENT") {
-				status="approval_required"
-			} else if strings.Contains(upper,"INVITE_HASH_EXPIRED")||strings.Contains(upper,"INVITE_HASH_INVALID")||strings.Contains(upper,"INVITE_HASH_EMPTY") {
-				status="invalid"
+		if checkErr != nil {
+			errorText = checkErr.Error()
+			upper := strings.ToUpper(errorText)
+			if strings.Contains(upper, "INVITE_REQUEST_SENT") {
+				status = "approval_required"
+			} else if strings.Contains(upper, "INVITE_HASH_EXPIRED") || strings.Contains(upper, "INVITE_HASH_INVALID") || strings.Contains(upper, "INVITE_HASH_EMPTY") {
+				status = "invalid"
 			}
-}
+		}
 		var retryAfter time.Duration
-		if checkErr!=nil { retryAfter,_=tgerr.AsFloodWait(checkErr) }
-		if err:=service.RecordPrivateInviteCheck(ctx,tenantID,accountID,link.LinkID,status,errorText,link.LeaseUntil,retryAfter);err!=nil {
-			logger.Warn("persist private invite check result","link_id",link.LinkID,"error",err)
+		if checkErr != nil {
+			retryAfter, _ = tgerr.AsFloodWait(checkErr)
+		}
+		if err := service.RecordPrivateInviteCheck(ctx, tenantID, accountID, link.LinkID, status, errorText, link.LeaseUntil, retryAfter); err != nil {
+			logger.Warn("persist private invite check result", "link_id", link.LinkID, "error", err)
 		}
 	}
 	return nil
 }
 
-
 func refreshGroupPermissions(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
 	for {
-		if ctx.Err()!=nil{return ctx.Err()}
-		items,err:=service.ListGroupPermissionRefreshes(ctx,tenantID,accountID,5)
-		if err!=nil{return err}
-		if len(items)==0{return nil}
-		for _,item:=range items {
-			if ctx.Err()!=nil{return ctx.Err()}
-			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-			chat,checkErr:=manager.GetChatMetadata(checkCtx,accountID,item.ChatID)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		items, err := service.ListGroupPermissionRefreshes(ctx, tenantID, accountID, 5)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		for _, item := range items {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			chat, checkErr := manager.GetChatMetadata(checkCtx, accountID, item.ChatID)
 			cancel()
-			var defaultPermissions,accountRights []byte
-			if checkErr==nil {
-				if chat.Permissions!=nil {
-					defaultPermissions,checkErr=json.Marshal(chat.Permissions)
+			var defaultPermissions, accountRights []byte
+			if checkErr == nil {
+				if chat.Permissions != nil {
+					defaultPermissions, checkErr = json.Marshal(chat.Permissions)
 				}
-				if checkErr==nil {
-					accountRights,checkErr=json.Marshal(map[string]any{
-						"is_admin":chat.IsAdmin,"is_creator":chat.IsCreator,
-						"admin_rights":chat.AdminRights,"banned_rights":chat.BannedRights,
-						"channel_admin_rights":chat.ChannelAdminRights,"chat_admin_rights":chat.ChatAdminRights,
+				if checkErr == nil {
+					accountRights, checkErr = json.Marshal(map[string]any{
+						"is_admin": chat.IsAdmin, "is_creator": chat.IsCreator,
+						"admin_rights": chat.AdminRights, "banned_rights": chat.BannedRights,
+						"channel_admin_rights": chat.ChannelAdminRights, "chat_admin_rights": chat.ChatAdminRights,
 					})
 				}
-				item.Title=chat.FullName()
-				item.Username=chat.Username
-				item.MemberCount=chat.MembersCount
-				item.IsVerified=chat.IsVerified
+				item.Title = chat.FullName()
+				item.Username = chat.Username
+				item.MemberCount = chat.MembersCount
+				item.IsVerified = chat.IsVerified
 			}
-			if persistErr:=service.RecordGroupPermissionRefresh(ctx,tenantID,accountID,item,defaultPermissions,accountRights,checkErr);persistErr!=nil {
-				logger.Warn("persist Telegram group permission snapshot","group_id",item.GroupID,"error",persistErr)
+			if persistErr := service.RecordGroupPermissionRefresh(ctx, tenantID, accountID, item, defaultPermissions, accountRights, checkErr); persistErr != nil {
+				logger.Warn("persist Telegram group permission snapshot", "group_id", item.GroupID, "error", persistErr)
 			}
 		}
 	}
 }
-
 
 // processIncomingUpdates commits queued Telegram updates to PostgreSQL before
 // acknowledging their Redis Stream deliveries. Failed writes remain pending and
@@ -880,7 +1085,6 @@ func processIncomingUpdates(ctx context.Context, service *messages.Service, cons
 		cancelAck()
 	}
 }
-
 
 func runIncomingUpdateLoop(ctx context.Context, service *messages.Service, consumer string, logger *slog.Logger) {
 	ticker := time.NewTicker(250 * time.Millisecond)

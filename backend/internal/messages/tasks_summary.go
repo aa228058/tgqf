@@ -7,17 +7,17 @@ import (
 )
 
 type UnifiedTaskCount struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
 	Status string `json:"status"`
-	Count int `json:"count"`
+	Count  int    `json:"count"`
 }
 
 type UnifiedTaskSummary struct {
-	Total int `json:"total"`
-	Processing int `json:"processing"`
-	ExpiredLeases int `json:"expired_leases"`
-	Counts []UnifiedTaskCount `json:"counts"`
-	GeneratedAt time.Time `json:"generated_at"`
+	Total         int                `json:"total"`
+	Processing    int                `json:"processing"`
+	ExpiredLeases int                `json:"expired_leases"`
+	Counts        []UnifiedTaskCount `json:"counts"`
+	GeneratedAt   time.Time          `json:"generated_at"`
 }
 
 // GetUnifiedTaskSummary aggregates the existing queue tables. It does not
@@ -35,19 +35,27 @@ func (s *Service) GetUnifiedTaskSummary(ctx context.Context, tenantID string) (U
 			"UNION ALL SELECT 'group_join'::text, status, CASE WHEN status='request_pending' THEN approval_check_lease_until ELSE lease_until END FROM tenant_join_task_accounts WHERE tenant_id=$1 " +
 			") task_rows GROUP BY task_type, status ORDER BY task_type, status"
 		rows, err := tx.QueryContext(ctx, query, tenantID)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		defer rows.Close()
 		for rows.Next() {
 			var item UnifiedTaskCount
 			var processing, expired int
-			if err := rows.Scan(&item.Type, &item.Status, &item.Count, &processing, &expired); err != nil { return err }
+			if err := rows.Scan(&item.Type, &item.Status, &item.Count, &processing, &expired); err != nil {
+				return err
+			}
 			summary.Counts = append(summary.Counts, item)
 			summary.Total += item.Count
 			summary.Processing += processing
 			summary.ExpiredLeases += expired
 		}
-		if err := rows.Err(); err != nil { return err }
-		if err := rows.Close(); err != nil { return err }
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
 		return tx.QueryRowContext(ctx, "SELECT NOW()").Scan(&summary.GeneratedAt)
 	})
 	return summary, err

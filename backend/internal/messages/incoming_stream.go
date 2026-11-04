@@ -67,23 +67,23 @@ func (s *Service) ReadIncomingUpdates(ctx context.Context, consumer string, coun
 	}
 
 	messages, _, err := s.redis.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream: incomingUpdateStream,
-		Group: incomingUpdateGroup,
+		Stream:   incomingUpdateStream,
+		Group:    incomingUpdateGroup,
 		Consumer: consumer,
-		MinIdle: 30 * time.Second,
-		Start: "0-0",
-		Count: count,
+		MinIdle:  30 * time.Second,
+		Start:    "0-0",
+		Count:    count,
 	}).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 	if len(messages) == 0 {
 		streams, readErr := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group: incomingUpdateGroup,
+			Group:    incomingUpdateGroup,
 			Consumer: consumer,
-			Streams: []string{incomingUpdateStream, ">"},
-			Count: count,
-			Block: time.Millisecond,
+			Streams:  []string{incomingUpdateStream, ">"},
+			Count:    count,
+			Block:    time.Millisecond,
 		}).Result()
 		if readErr != nil {
 			if errors.Is(readErr, redis.Nil) {

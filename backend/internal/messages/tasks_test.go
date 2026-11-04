@@ -21,10 +21,9 @@ func TestNormalizeUnifiedTaskFilter(t *testing.T) {
 	}
 }
 
-
 func TestUnifiedTaskActionsMatchQueueTransitions(t *testing.T) {
 	tests := []struct {
-		taskType, status string
+		taskType, status             string
 		pause, resume, retry, cancel bool
 	}{
 		{"message_reply", "pending", true, false, false, true},

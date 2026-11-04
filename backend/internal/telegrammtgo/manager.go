@@ -1,33 +1,33 @@
 package telegrammtgo
 
 import (
-	"encoding/base64"
-	cryptorand "crypto/rand"
-	"encoding/binary"
 	"bytes"
+	"context"
+	cryptorand "crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"context"
 	"strings"
 	"sync"
 	"time"
 
+	device "github.com/mtgo-labs/device-manager"
 	"github.com/mtgo-labs/mtgo/telegram"
- "github.com/mtgo-labs/mtgo/telegram/types"
- "github.com/mtgo-labs/mtgo/telegram/params"
- "github.com/mtgo-labs/mtgo/tg"
- device "github.com/mtgo-labs/device-manager"
+	"github.com/mtgo-labs/mtgo/telegram/params"
+	"github.com/mtgo-labs/mtgo/telegram/types"
+	"github.com/mtgo-labs/mtgo/tg"
 )
 
 type RuntimeConfig struct {
-	APIID int32
-	APIHash string
+	APIID          int32
+	APIHash        string
 	ConnectTimeout time.Duration
 }
 
 type proxyConfig struct {
-	Addr string `json:"addr"`
+	Addr     string `json:"addr"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Protocol string `json:"protocol"`
@@ -36,42 +36,73 @@ type proxyConfig struct {
 // Manager owns one independent MTGo client per account. It deliberately has
 // no HTTP dependencies; a dedicated worker can own this manager's lifecycle.
 type Manager struct {
-	mu sync.RWMutex
-	cfg RuntimeConfig
-	clients map[string]*telegram.Client
-	pendingQR map[string]*pendingQR
- pendingPhone map[string]*pendingPhone
- messageHandler func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
+	mu                     sync.RWMutex
+	cfg                    RuntimeConfig
+	clients                map[string]*telegram.Client
+	pendingQR              map[string]*pendingQR
+	pendingPhone           map[string]*pendingPhone
+	messageHandler         func(accountID string, message *types.Message, ownUserID int64, replyToOwn bool)
 	voiceCallUpdateHandler func(accountID string, callID int64, state string)
 }
 
 // mu serializes QR polling/token refresh against cancellation and shutdown.
 // The manager mutex is never held while waiting for this per-entry mutex.
-type pendingPhone struct { mu sync.Mutex; client *telegram.Client; phone string; phoneCodeHash string; expiresAt time.Time }
-type PhoneCodeResult struct { NeedsPassword bool; Timeout int; DeliveryType string }
-type PhoneAuthResult struct { UserID int64; Username string; FirstName string; Phone string; SessionString string }
+type pendingPhone struct {
+	mu            sync.Mutex
+	client        *telegram.Client
+	phone         string
+	phoneCodeHash string
+	expiresAt     time.Time
+}
+type PhoneCodeResult struct {
+	NeedsPassword bool
+	Timeout       int
+	DeliveryType  string
+}
+type PhoneAuthResult struct {
+	UserID        int64
+	Username      string
+	FirstName     string
+	Phone         string
+	SessionString string
+}
 type pendingQR struct {
-	mu sync.Mutex
-	client *telegram.Client
-	token []byte
-	expires int64
+	mu        sync.Mutex
+	client    *telegram.Client
+	token     []byte
+	expires   int64
 	expiresAt time.Time
 }
-type QRChallenge struct { URL string; Expires int64 }
-type QRAuthResult struct { Pending bool; Challenge *QRChallenge; SessionString string; UserID int64; Username string; FirstName string; Phone string }
+type QRChallenge struct {
+	URL     string
+	Expires int64
+}
+type QRAuthResult struct {
+	Pending       bool
+	Challenge     *QRChallenge
+	SessionString string
+	UserID        int64
+	Username      string
+	FirstName     string
+	Phone         string
+}
 
 // selectDeviceProfile requires the database-persisted identity from the caller.
 func selectDeviceProfile(profiles []device.Profile) (device.Profile, error) {
-    if len(profiles) != 1 { return device.Profile{}, errors.New("exactly one persisted device profile is required") }
-    profile := profiles[0]
-    if strings.TrimSpace(profile.DeviceModel)=="" || strings.TrimSpace(profile.SystemVersion)=="" || strings.TrimSpace(profile.AppVersion)=="" {
-        return device.Profile{}, errors.New("persisted device profile is incomplete")
-    }
-    return profile, nil
+	if len(profiles) != 1 {
+		return device.Profile{}, errors.New("exactly one persisted device profile is required")
+	}
+	profile := profiles[0]
+	if strings.TrimSpace(profile.DeviceModel) == "" || strings.TrimSpace(profile.SystemVersion) == "" || strings.TrimSpace(profile.AppVersion) == "" {
+		return device.Profile{}, errors.New("persisted device profile is incomplete")
+	}
+	return profile, nil
 }
 
 func NewManager(cfg RuntimeConfig) *Manager {
-	if cfg.ConnectTimeout <= 0 { cfg.ConnectTimeout = 45 * time.Second }
+	if cfg.ConnectTimeout <= 0 {
+		cfg.ConnectTimeout = 45 * time.Second
+	}
 	return &Manager{cfg: cfg, clients: make(map[string]*telegram.Client), pendingQR: make(map[string]*pendingQR), pendingPhone: make(map[string]*pendingPhone)}
 }
 
@@ -86,11 +117,17 @@ func (m *Manager) registerMessageHandler(accountID string, client *telegram.Clie
 	m.mu.RLock()
 	handler := m.messageHandler
 	m.mu.RUnlock()
-	if handler == nil { return }
+	if handler == nil {
+		return
+	}
 	client.OnMessage(func(ctx *telegram.Context, message *types.Message) {
-		if message == nil { return }
+		if message == nil {
+			return
+		}
 		me := client.Me()
-		if me == nil { return }
+		if me == nil {
+			return
+		}
 		replyToOwn := false
 		if message.ReplyToID > 0 && message.ChatID != 0 {
 			lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -109,26 +146,42 @@ func (m *Manager) registerMessageHandler(accountID string, client *telegram.Clie
 func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...device.Profile) error {
 	accountID = strings.TrimSpace(accountID)
 	sessionString = strings.TrimSpace(sessionString)
-	if accountID == "" { return errors.New("account ID is required") }
-	if sessionString == "" { return errors.New("session string is required") }
+	if accountID == "" {
+		return errors.New("account ID is required")
+	}
+	if sessionString == "" {
+		return errors.New("session string is required")
+	}
 
 	var proxy *telegram.Proxy
 	if strings.TrimSpace(proxyJSON) != "" && strings.TrimSpace(proxyJSON) != "null" && strings.TrimSpace(proxyJSON) != "{}" {
 		var p proxyConfig
-		if err := json.Unmarshal([]byte(proxyJSON), &p); err != nil { return errors.New("invalid proxy configuration") }
+		if err := json.Unmarshal([]byte(proxyJSON), &p); err != nil {
+			return errors.New("invalid proxy configuration")
+		}
 		p.Addr = strings.TrimSpace(p.Addr)
-		if p.Addr == "" { return errors.New("proxy address is required") }
+		if p.Addr == "" {
+			return errors.New("proxy address is required")
+		}
 		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
-		switch protocol { case "", "socks5", "socks4", "http", "https": default: return fmt.Errorf("unsupported proxy protocol %q", protocol) }
-		proxy = &telegram.Proxy{Addr:p.Addr, Username:p.Username, Password:p.Password, Protocol:protocol}
+		switch protocol {
+		case "", "socks5", "socks4", "http", "https":
+		default:
+			return fmt.Errorf("unsupported proxy protocol %q", protocol)
+		}
+		proxy = &telegram.Proxy{Addr: p.Addr, Username: p.Username, Password: p.Password, Protocol: protocol}
 	}
 
 	profile, err := selectDeviceProfile(profiles)
-	if err != nil { return err }
-	cfg := telegram.Config{SessionString:sessionString, SessionName:"tgqf-"+accountID, InMemory:true, Proxy:proxy}
+	if err != nil {
+		return err
+	}
+	cfg := telegram.Config{SessionString: sessionString, SessionName: "tgqf-" + accountID, InMemory: true, Proxy: proxy}
 	ApplyDeviceProfile(&cfg, profile)
 	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
-	if err != nil { return fmt.Errorf("create MTGo client: %w", err) }
+	if err != nil {
+		return fmt.Errorf("create MTGo client: %w", err)
+	}
 
 	m.mu.Lock()
 	if _, exists := m.clients[accountID]; exists {
@@ -153,14 +206,18 @@ func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...
 
 	if err := client.Connect(m.cfg.ConnectTimeout); err != nil {
 		m.mu.Lock()
-		if m.clients[accountID] == client { delete(m.clients, accountID) }
+		if m.clients[accountID] == client {
+			delete(m.clients, accountID)
+		}
 		m.mu.Unlock()
 		_ = client.Disconnect()
 		return fmt.Errorf("connect Telegram account: %w", err)
 	}
 	if client.Me() == nil {
 		m.mu.Lock()
-		if m.clients[accountID] == client { delete(m.clients, accountID) }
+		if m.clients[accountID] == client {
+			delete(m.clients, accountID)
+		}
 		m.mu.Unlock()
 		_ = client.Disconnect()
 		return errors.New("Telegram session connected but is not authorized")
@@ -181,18 +238,28 @@ func (m *Manager) ExportSession(accountID string) (string, error) {
 	m.mu.RLock()
 	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client == nil { return "", errors.New("account client is not managed") }
-	if !client.IsConnected() { return "", errors.New("account client is disconnected") }
+	if client == nil {
+		return "", errors.New("account client is not managed")
+	}
+	if !client.IsConnected() {
+		return "", errors.New("account client is disconnected")
+	}
 	value, err := client.ExportSessionString()
-	if err != nil { return "", fmt.Errorf("export Telegram session: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("export Telegram session: %w", err)
+	}
 	return value, nil
 }
 
 func disconnectPending(entry *pendingQR) error {
-	if entry == nil { return nil }
+	if entry == nil {
+		return nil
+	}
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	if entry.client == nil { return nil }
+	if entry.client == nil {
+		return nil
+	}
 	if err := entry.client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) {
 		return fmt.Errorf("disconnect pending QR client: %w", err)
 	}
@@ -208,9 +275,20 @@ func (m *Manager) Stop(accountID string) error {
 	delete(m.pendingQR, accountID)
 	delete(m.pendingPhone, accountID)
 	m.mu.Unlock()
-	if err := disconnectPending(pending); err != nil { return err }
-	if phonePending != nil { phonePending.mu.Lock(); err := phonePending.client.Disconnect(); phonePending.mu.Unlock(); if err != nil && !errors.Is(err, telegram.ErrNotConnected) { return fmt.Errorf("disconnect pending phone login: %w", err) } }
-	if client == nil { return nil }
+	if err := disconnectPending(pending); err != nil {
+		return err
+	}
+	if phonePending != nil {
+		phonePending.mu.Lock()
+		err := phonePending.client.Disconnect()
+		phonePending.mu.Unlock()
+		if err != nil && !errors.Is(err, telegram.ErrNotConnected) {
+			return fmt.Errorf("disconnect pending phone login: %w", err)
+		}
+	}
+	if client == nil {
+		return nil
+	}
 	if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) {
 		return fmt.Errorf("disconnect Telegram account: %w", err)
 	}
@@ -228,13 +306,17 @@ func (m *Manager) Close() error {
 	m.mu.Unlock()
 	var firstErr error
 	for id, entry := range pending {
-		if err := disconnectPending(entry); err != nil && firstErr == nil { firstErr = fmt.Errorf("disconnect pending QR account %s: %w", id, err) }
+		if err := disconnectPending(entry); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("disconnect pending QR account %s: %w", id, err)
+		}
 	}
 	for id, entry := range phonePending {
 		entry.mu.Lock()
 		err := entry.client.Disconnect()
 		entry.mu.Unlock()
-		if err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil { firstErr = fmt.Errorf("disconnect pending phone account %s: %w", id, err) }
+		if err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil {
+			firstErr = fmt.Errorf("disconnect pending phone account %s: %w", id, err)
+		}
 	}
 	for id, client := range clients {
 		if err := client.Disconnect(); err != nil && !errors.Is(err, telegram.ErrNotConnected) && firstErr == nil {
@@ -246,53 +328,92 @@ func (m *Manager) Close() error {
 
 func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string, profiles ...device.Profile) (QRAuthResult, error) {
 	accountID = strings.TrimSpace(accountID)
-	if accountID == "" { return QRAuthResult{}, errors.New("account ID is required") }
+	if accountID == "" {
+		return QRAuthResult{}, errors.New("account ID is required")
+	}
 	m.mu.RLock()
 	_, active := m.clients[accountID]
 	_, pending := m.pendingQR[accountID]
 	_, phonePending := m.pendingPhone[accountID]
 	m.mu.RUnlock()
-	if active || pending || phonePending { return QRAuthResult{}, errors.New("account already has an active or pending client") }
+	if active || pending || phonePending {
+		return QRAuthResult{}, errors.New("account already has an active or pending client")
+	}
 	var proxy *telegram.Proxy
 	if strings.TrimSpace(proxyJSON) != "" && strings.TrimSpace(proxyJSON) != "null" && strings.TrimSpace(proxyJSON) != "{}" {
 		var p proxyConfig
-		if err := json.Unmarshal([]byte(proxyJSON), &p); err != nil { return QRAuthResult{}, errors.New("invalid proxy configuration") }
+		if err := json.Unmarshal([]byte(proxyJSON), &p); err != nil {
+			return QRAuthResult{}, errors.New("invalid proxy configuration")
+		}
 		p.Addr = strings.TrimSpace(p.Addr)
-		if p.Addr == "" { return QRAuthResult{}, errors.New("proxy address is required") }
+		if p.Addr == "" {
+			return QRAuthResult{}, errors.New("proxy address is required")
+		}
 		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
-		switch protocol { case "", "socks5", "socks4", "http", "https": default: return QRAuthResult{}, fmt.Errorf("unsupported proxy protocol %q", protocol) }
-		proxy = &telegram.Proxy{Addr:p.Addr, Username:p.Username, Password:p.Password, Protocol:protocol}
+		switch protocol {
+		case "", "socks5", "socks4", "http", "https":
+		default:
+			return QRAuthResult{}, fmt.Errorf("unsupported proxy protocol %q", protocol)
+		}
+		proxy = &telegram.Proxy{Addr: p.Addr, Username: p.Username, Password: p.Password, Protocol: protocol}
 	}
 	profile, err := selectDeviceProfile(profiles)
-	if err != nil { return QRAuthResult{}, err }
-	cfg := telegram.Config{SessionName:"tgqf-"+accountID, InMemory:true, Proxy:proxy}
+	if err != nil {
+		return QRAuthResult{}, err
+	}
+	cfg := telegram.Config{SessionName: "tgqf-" + accountID, InMemory: true, Proxy: proxy}
 	ApplyDeviceProfile(&cfg, profile)
 	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
-	if err != nil { return QRAuthResult{}, fmt.Errorf("create MTGo QR client: %w", err) }
-	if err := client.Connect(m.cfg.ConnectTimeout); err != nil { _ = client.Disconnect(); return QRAuthResult{}, fmt.Errorf("connect MTGo QR client: %w", err) }
+	if err != nil {
+		return QRAuthResult{}, fmt.Errorf("create MTGo QR client: %w", err)
+	}
+	if err := client.Connect(m.cfg.ConnectTimeout); err != nil {
+		_ = client.Disconnect()
+		return QRAuthResult{}, fmt.Errorf("connect MTGo QR client: %w", err)
+	}
 	token, err := client.GetQRCodeLoginToken(ctx)
-	if err != nil { _ = client.Disconnect(); return QRAuthResult{}, fmt.Errorf("request Telegram QR token: %w", err) }
+	if err != nil {
+		_ = client.Disconnect()
+		return QRAuthResult{}, fmt.Errorf("request Telegram QR token: %w", err)
+	}
 	if token.User != nil {
 		sessionString, exportErr := client.ExportSessionString()
-		if exportErr != nil { _ = client.Disconnect(); return QRAuthResult{}, fmt.Errorf("export immediately authorized QR session: %w", exportErr) }
+		if exportErr != nil {
+			_ = client.Disconnect()
+			return QRAuthResult{}, fmt.Errorf("export immediately authorized QR session: %w", exportErr)
+		}
 		m.mu.Lock()
-		if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account client is already managed") }
-		if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account QR login is already pending") }
+		if _, exists := m.clients[accountID]; exists {
+			m.mu.Unlock()
+			_ = client.Disconnect()
+			return QRAuthResult{}, errors.New("account client is already managed")
+		}
+		if _, exists := m.pendingQR[accountID]; exists {
+			m.mu.Unlock()
+			_ = client.Disconnect()
+			return QRAuthResult{}, errors.New("account QR login is already pending")
+		}
 		m.clients[accountID] = client
 		m.mu.Unlock()
-		return QRAuthResult{SessionString:sessionString, UserID:token.User.ID, Username:token.User.Username, FirstName:token.User.FirstName, Phone:token.User.Phone}, nil
+		return QRAuthResult{SessionString: sessionString, UserID: token.User.ID, Username: token.User.Username, FirstName: token.User.FirstName, Phone: token.User.Phone}, nil
 	}
-	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires), expiresAt:time.Now().Add(10*time.Minute)}
+	entry := &pendingQR{client: client, token: append([]byte(nil), token.Token...), expires: int64(token.Expires), expiresAt: time.Now().Add(10 * time.Minute)}
 	m.mu.Lock()
-	if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account client is already managed") }
-	if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account QR login is already pending") }
+	if _, exists := m.clients[accountID]; exists {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return QRAuthResult{}, errors.New("account client is already managed")
+	}
+	if _, exists := m.pendingQR[accountID]; exists {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return QRAuthResult{}, errors.New("account QR login is already pending")
+	}
 	m.pendingQR[accountID] = entry
 	m.mu.Unlock()
 	go m.expireQRLogin(accountID, entry)
-	return QRAuthResult{Pending:true,Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(token.Token),Expires:int64(token.Expires)}},nil
+	return QRAuthResult{Pending: true, Challenge: &QRChallenge{URL: "tg://login?token=" + base64.RawURLEncoding.EncodeToString(token.Token), Expires: int64(token.Expires)}}, nil
 }
-
-
 
 // expireQRLogin bounds the lifetime of an abandoned QR authorization client.
 // Token refreshes do not extend this overall challenge lifetime.
@@ -320,7 +441,9 @@ func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, e
 	m.mu.RLock()
 	entry := m.pendingQR[accountID]
 	m.mu.RUnlock()
-	if entry == nil { return QRAuthResult{}, errors.New("no pending QR login for account") }
+	if entry == nil {
+		return QRAuthResult{}, errors.New("no pending QR login for account")
+	}
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
@@ -329,7 +452,9 @@ func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, e
 	m.mu.RLock()
 	current := m.pendingQR[accountID]
 	m.mu.RUnlock()
-	if current != entry { return QRAuthResult{}, errors.New("QR login was cancelled") }
+	if current != entry {
+		return QRAuthResult{}, errors.New("QR login was cancelled")
+	}
 
 	user, err := entry.client.CheckQRCodeLoginToken(ctx, entry.token)
 	if err != nil {
@@ -337,27 +462,40 @@ func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, e
 		if strings.Contains(message, "not yet scanned") {
 			if time.Now().Unix() >= entry.expires {
 				refreshed, refreshErr := entry.client.GetQRCodeLoginToken(ctx)
-				if refreshErr != nil { return QRAuthResult{}, fmt.Errorf("refresh expired QR token: %w", refreshErr) }
-				if refreshed.User != nil { user = refreshed.User } else {
+				if refreshErr != nil {
+					return QRAuthResult{}, fmt.Errorf("refresh expired QR token: %w", refreshErr)
+				}
+				if refreshed.User != nil {
+					user = refreshed.User
+				} else {
 					entry.token = append(entry.token[:0], refreshed.Token...)
 					entry.expires = int64(refreshed.Expires)
-					return QRAuthResult{Pending:true,Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(refreshed.Token),Expires:int64(refreshed.Expires)}},nil
+					return QRAuthResult{Pending: true, Challenge: &QRChallenge{URL: "tg://login?token=" + base64.RawURLEncoding.EncodeToString(refreshed.Token), Expires: int64(refreshed.Expires)}}, nil
 				}
 			} else {
-				return QRAuthResult{Pending:true,Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(entry.token),Expires:entry.expires}},nil
+				return QRAuthResult{Pending: true, Challenge: &QRChallenge{URL: "tg://login?token=" + base64.RawURLEncoding.EncodeToString(entry.token), Expires: entry.expires}}, nil
 			}
-		} else { return QRAuthResult{}, fmt.Errorf("check Telegram QR login: %w", err) }
+		} else {
+			return QRAuthResult{}, fmt.Errorf("check Telegram QR login: %w", err)
+		}
 	}
-	if user == nil { return QRAuthResult{}, errors.New("Telegram QR login returned no user") }
+	if user == nil {
+		return QRAuthResult{}, errors.New("Telegram QR login returned no user")
+	}
 	sessionString, err := entry.client.ExportSessionString()
-	if err != nil { return QRAuthResult{}, fmt.Errorf("export QR-authorized session: %w", err) }
+	if err != nil {
+		return QRAuthResult{}, fmt.Errorf("export QR-authorized session: %w", err)
+	}
 
 	m.mu.Lock()
-	if m.pendingQR[accountID] != entry { m.mu.Unlock(); return QRAuthResult{}, errors.New("QR login was cancelled") }
+	if m.pendingQR[accountID] != entry {
+		m.mu.Unlock()
+		return QRAuthResult{}, errors.New("QR login was cancelled")
+	}
 	delete(m.pendingQR, accountID)
 	m.clients[accountID] = entry.client
 	m.mu.Unlock()
-	return QRAuthResult{SessionString:sessionString,UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone},nil
+	return QRAuthResult{SessionString: sessionString, UserID: user.ID, Username: user.Username, FirstName: user.FirstName, Phone: user.Phone}, nil
 }
 
 func (m *Manager) CancelQR(accountID string) error {
@@ -373,25 +511,34 @@ func (m *Manager) ManagedAccountIDs() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	ids := make([]string, 0, len(m.clients))
-	for id := range m.clients { ids = append(ids, id) }
+	for id := range m.clients {
+		ids = append(ids, id)
+	}
 	return ids
 }
 
-
- // JoinChat is invoked only by a tenant's explicitly authorized join-task worker.
- // MTGo imports private invite hashes only on this execution path; link checks never call JoinChat.
- func (m *Manager) JoinChat(ctx context.Context,accountID,link string)(int64,error) {
-     link=strings.TrimSpace(link)
-     if link=="" { return 0,errors.New("Telegram join target is empty") }
-     m.mu.RLock()
-     client:=m.clients[accountID]
-     m.mu.RUnlock()
-     if client==nil||!client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
-     chat,err:=client.JoinChat(ctx,link)
-     if err!=nil{return 0,fmt.Errorf("join Telegram chat: %w",err)}
-     if chat==nil||chat.ID==0{return 0,errors.New("Telegram returned no joined chat identity")}
-     return chat.ID,nil
- }
+// JoinChat is invoked only by a tenant's explicitly authorized join-task worker.
+// MTGo imports private invite hashes only on this execution path; link checks never call JoinChat.
+func (m *Manager) JoinChat(ctx context.Context, accountID, link string) (int64, error) {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return 0, errors.New("Telegram join target is empty")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return 0, errors.New("Telegram account is not connected")
+	}
+	chat, err := client.JoinChat(ctx, link)
+	if err != nil {
+		return 0, fmt.Errorf("join Telegram chat: %w", err)
+	}
+	if chat == nil || chat.ID == 0 {
+		return 0, errors.New("Telegram returned no joined chat identity")
+	}
+	return chat.ID, nil
+}
 
 // GetChatMetadata performs a read-only MTGo chat lookup for an already-known chat.
 // It does not join, leave, or modify the chat.
@@ -418,17 +565,31 @@ func (m *Manager) GetChatMetadata(ctx context.Context, accountID string, chatID 
 // DownloadMessageMedia retrieves any supported message attachment through its
 // owning MTGo session. The authenticated API layer applies content disposition
 // and tenant authorization before returning the bytes.
-func (m *Manager) DownloadMessageMedia(ctx context.Context,accountID string,chatID,messageID int64)([]byte,error){
- if messageID<=0 || messageID>int64(^uint32(0)>>1){return nil,errors.New("invalid Telegram message ID")}
- m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
- if client==nil || !client.IsConnected(){return nil,errors.New("Telegram account is not connected")}
- messages,err:=client.GetMessages(ctx,chatID,[]int32{int32(messageID)})
- if err!=nil{return nil,fmt.Errorf("load Telegram message: %w",err)}
- if len(messages)==0 || messages[0]==nil{return nil,errors.New("Telegram message not found")}
- data,err:=messages[0].Download()
- if err!=nil{return nil,fmt.Errorf("download Telegram media: %w",err)}
- if len(data)==0 || len(data)>50<<20{return nil,errors.New("media is empty or exceeds 50 MiB")}
- return data,nil
+func (m *Manager) DownloadMessageMedia(ctx context.Context, accountID string, chatID, messageID int64) ([]byte, error) {
+	if messageID <= 0 || messageID > int64(^uint32(0)>>1) {
+		return nil, errors.New("invalid Telegram message ID")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return nil, errors.New("Telegram account is not connected")
+	}
+	messages, err := client.GetMessages(ctx, chatID, []int32{int32(messageID)})
+	if err != nil {
+		return nil, fmt.Errorf("load Telegram message: %w", err)
+	}
+	if len(messages) == 0 || messages[0] == nil {
+		return nil, errors.New("Telegram message not found")
+	}
+	data, err := messages[0].Download()
+	if err != nil {
+		return nil, fmt.Errorf("download Telegram media: %w", err)
+	}
+	if len(data) == 0 || len(data) > 50<<20 {
+		return nil, errors.New("media is empty or exceeds 50 MiB")
+	}
+	return data, nil
 }
 
 // CheckPublicUsername resolves a public Telegram username without joining the chat.
@@ -436,12 +597,20 @@ func (m *Manager) CheckPublicUsername(ctx context.Context, accountID, username s
 	m.mu.RLock()
 	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client == nil || !client.IsConnected() { return false, errors.New("Telegram account is not connected") }
+	if client == nil || !client.IsConnected() {
+		return false, errors.New("Telegram account is not connected")
+	}
 	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
-	if username == "" { return false, errors.New("public Telegram username is empty") }
+	if username == "" {
+		return false, errors.New("public Telegram username is empty")
+	}
 	resolved, err := client.Raw().ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: username})
-	if err != nil { return false, fmt.Errorf("resolve public Telegram username: %w", err) }
-	if resolved == nil { return false, errors.New("Telegram returned an empty username resolution") }
+	if err != nil {
+		return false, fmt.Errorf("resolve public Telegram username: %w", err)
+	}
+	if resolved == nil {
+		return false, errors.New("Telegram returned an empty username resolution")
+	}
 	switch resolved.Peer.(type) {
 	case *tg.PeerChannel, *tg.PeerChat:
 		return true, nil
@@ -451,48 +620,81 @@ func (m *Manager) CheckPublicUsername(ctx context.Context, accountID, username s
 }
 
 // CheckPrivateInviteApproval checks whether a private invite request has become an actual membership.
-func (m *Manager) CheckPrivateInviteApproval(ctx context.Context,accountID,inviteHash string)(string,error) {
-	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil || !client.IsConnected(){return "",errors.New("Telegram account is not connected")}
-	if strings.TrimSpace(inviteHash)=="" {return "",errors.New("private invite hash is empty")}
-	result,err:=client.Raw().MessagesCheckChatInvite(ctx,&tg.MessagesCheckChatInviteRequest{Hash:inviteHash})
-	if err!=nil{return "",fmt.Errorf("check private Telegram invite approval: %w",err)}
-	switch value:=result.(type) {
+func (m *Manager) CheckPrivateInviteApproval(ctx context.Context, accountID, inviteHash string) (string, error) {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return "", errors.New("Telegram account is not connected")
+	}
+	if strings.TrimSpace(inviteHash) == "" {
+		return "", errors.New("private invite hash is empty")
+	}
+	result, err := client.Raw().MessagesCheckChatInvite(ctx, &tg.MessagesCheckChatInviteRequest{Hash: inviteHash})
+	if err != nil {
+		return "", fmt.Errorf("check private Telegram invite approval: %w", err)
+	}
+	switch value := result.(type) {
 	case *tg.ChatInviteAlready:
-		return "member",nil
+		return "member", nil
 	case *tg.ChatInvite:
-		if value.RequestNeeded{return "request_pending",nil}
-		return "valid",nil
+		if value.RequestNeeded {
+			return "request_pending", nil
+		}
+		return "valid", nil
 	case *tg.ChatInvitePeek:
-		return "valid",nil
+		return "valid", nil
 	default:
-		return "unknown",fmt.Errorf("unexpected Telegram invite status %T",result)
+		return "unknown", fmt.Errorf("unexpected Telegram invite status %T", result)
 	}
 }
 
 // CheckOwnChatMembership checks the managed account's current membership state.
-func (m *Manager) CheckOwnChatMembership(ctx context.Context, accountID string, chatID int64) (string,error) {
-	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil || !client.IsConnected(){return "",errors.New("Telegram account is not connected")}
-	me:=client.Me();if me==nil{return "",errors.New("Telegram account identity is unavailable")}
-	member,err:=client.GetChatMember(ctx,chatID,me.ID)
-	if err!=nil{return "",err}
-	if member==nil{return "unknown",nil}
-	return string(member.Status),nil
+func (m *Manager) CheckOwnChatMembership(ctx context.Context, accountID string, chatID int64) (string, error) {
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return "", errors.New("Telegram account is not connected")
+	}
+	me := client.Me()
+	if me == nil {
+		return "", errors.New("Telegram account identity is unavailable")
+	}
+	member, err := client.GetChatMember(ctx, chatID, me.ID)
+	if err != nil {
+		return "", err
+	}
+	if member == nil {
+		return "unknown", nil
+	}
+	return string(member.Status), nil
 }
 
 // UpdateProfilePhoto uploads and sets an account's Telegram profile photo.
 func (m *Manager) UpdateProfilePhoto(ctx context.Context, accountID string, photo []byte, fileName string) error {
-	if len(photo)==0 { return errors.New("profile photo is empty") }
+	if len(photo) == 0 {
+		return errors.New("profile photo is empty")
+	}
 	m.mu.RLock()
-	client:=m.clients[accountID]
+	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client==nil || !client.IsConnected() { return errors.New("Telegram account is not connected") }
-	if fileName=="" { fileName="profile.jpg" }
-	uploaded,err:=client.UploadFile(ctx,bytes.NewReader(photo),fileName,int64(len(photo)),nil)
-	if err!=nil{return fmt.Errorf("upload Telegram profile photo: %w",err)}
-	if uploaded==nil || uploaded.File==nil { return errors.New("Telegram avatar upload returned no input file") }
-	if err:=client.SetProfilePhoto(ctx,uploaded.File);err!=nil{return fmt.Errorf("update Telegram profile photo: %w",err)}
+	if client == nil || !client.IsConnected() {
+		return errors.New("Telegram account is not connected")
+	}
+	if fileName == "" {
+		fileName = "profile.jpg"
+	}
+	uploaded, err := client.UploadFile(ctx, bytes.NewReader(photo), fileName, int64(len(photo)), nil)
+	if err != nil {
+		return fmt.Errorf("upload Telegram profile photo: %w", err)
+	}
+	if uploaded == nil || uploaded.File == nil {
+		return errors.New("Telegram avatar upload returned no input file")
+	}
+	if err := client.SetProfilePhoto(ctx, uploaded.File); err != nil {
+		return fmt.Errorf("update Telegram profile photo: %w", err)
+	}
 	return nil
 }
 
@@ -512,13 +714,26 @@ func (m *Manager) UpdateUsername(ctx context.Context, accountID, username string
 
 // AccountProfile returns the identity currently authenticated by this managed MTGo client.
 // It intentionally exposes only Telegram's public self fields, never session material.
-type AccountProfile struct { ID int64; Username string; FirstName string; LastName string; Phone string }
+type AccountProfile struct {
+	ID        int64
+	Username  string
+	FirstName string
+	LastName  string
+	Phone     string
+}
 
 func (m *Manager) AccountProfile(accountID string) (AccountProfile, error) {
- m.mu.RLock(); client:=m.clients[accountID]; m.mu.RUnlock()
- if client==nil || !client.IsConnected() { return AccountProfile{}, errors.New("Telegram account is not connected") }
- me:=client.Me(); if me==nil { return AccountProfile{}, errors.New("Telegram account identity is unavailable") }
- return AccountProfile{ID:me.ID,Username:me.Username,FirstName:me.FirstName,LastName:me.LastName,Phone:me.Phone},nil
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return AccountProfile{}, errors.New("Telegram account is not connected")
+	}
+	me := client.Me()
+	if me == nil {
+		return AccountProfile{}, errors.New("Telegram account identity is unavailable")
+	}
+	return AccountProfile{ID: me.ID, Username: me.Username, FirstName: me.FirstName, LastName: me.LastName, Phone: me.Phone}, nil
 }
 
 // UpdateProfile applies an explicitly queued first/last name and bio update.
@@ -537,143 +752,222 @@ func (m *Manager) UpdateProfile(ctx context.Context, accountID, firstName, lastN
 }
 
 // SendContactReply sends a native Telegram contact card as a reply.
-func (m *Manager) SendContactReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, phone, firstName, lastName string) (int64,error) {
-	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {return 0,errors.New("invalid Telegram reply message id")}
-	m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
-	if client==nil || !client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
-	sent,err:=client.SendContact(ctx,chatID,phone,firstName,lastName,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
-	if err!=nil{return 0,fmt.Errorf("send native Telegram contact card: %w",err)}
-	if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty contact message")}
-	return int64(sent.ID),nil
+func (m *Manager) SendContactReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, phone, firstName, lastName string) (int64, error) {
+	if replyToMessageID <= 0 || replyToMessageID > int64(^uint32(0)>>1) {
+		return 0, errors.New("invalid Telegram reply message id")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return 0, errors.New("Telegram account is not connected")
+	}
+	sent, err := client.SendContact(ctx, chatID, phone, firstName, lastName, &params.SendMessage{ReplyToMessageID: int32(replyToMessageID)})
+	if err != nil {
+		return 0, fmt.Errorf("send native Telegram contact card: %w", err)
+	}
+	if sent == nil || sent.ID <= 0 {
+		return 0, errors.New("Telegram returned an empty contact message")
+	}
+	return int64(sent.ID), nil
 }
 
-
-func (m *Manager) SendMediaReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, mediaType, fileName, mimeType, caption string, content []byte) (int64,error) {
-    if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) { return 0,errors.New("invalid Telegram reply message id") }
-    if len(content)==0 || len(content)>20<<20 { return 0,errors.New("media payload must be between 1 byte and 20 MiB") }
-    fileName=strings.TrimSpace(fileName);if fileName=="" {return 0,errors.New("media file name is required")}
-    m.mu.RLock();client:=m.clients[accountID];m.mu.RUnlock()
-    if client==nil || !client.IsConnected(){return 0,errors.New("Telegram account is not connected")}
-    file:=telegram.FromBytes(content,fileName)
-    var sent *types.Message
-    var err error
-    switch strings.ToLower(strings.TrimSpace(mediaType)) {
-    case "photo":
-        sent,err=client.SendPhoto(ctx,chatID,file,caption,&params.SendPhoto{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
-    case "video":
-        sent,err=client.SendVideo(ctx,chatID,file,caption,&params.SendVideo{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
-    case "document","file":
-        sent,err=client.SendDocument(ctx,chatID,file,caption,&params.SendDocument{ReplyToMessageID:int32(replyToMessageID),FileName:fileName,MimeType:mimeType})
-    case "audio":
-        sent,err=client.SendAudio(ctx,chatID,file,caption,&params.SendAudio{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
-    case "voice":
-        sent,err=client.SendVoice(ctx,chatID,file,caption,&params.SendVoice{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
-    case "video_note":
-        sent,err=client.SendVideoNote(ctx,chatID,file,&params.SendVideoNote{ReplyToMessageID:int32(replyToMessageID),FileName:fileName})
-    default:
-        return 0,fmt.Errorf("unsupported Telegram media type %q",mediaType)
-    }
-    if err!=nil{return 0,fmt.Errorf("send Telegram %s reply: %w",mediaType,err)}
-    if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty media message")}
-    return int64(sent.ID),nil
+func (m *Manager) SendMediaReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, mediaType, fileName, mimeType, caption string, content []byte) (int64, error) {
+	if replyToMessageID <= 0 || replyToMessageID > int64(^uint32(0)>>1) {
+		return 0, errors.New("invalid Telegram reply message id")
+	}
+	if len(content) == 0 || len(content) > 20<<20 {
+		return 0, errors.New("media payload must be between 1 byte and 20 MiB")
+	}
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return 0, errors.New("media file name is required")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return 0, errors.New("Telegram account is not connected")
+	}
+	file := telegram.FromBytes(content, fileName)
+	var sent *types.Message
+	var err error
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "photo":
+		sent, err = client.SendPhoto(ctx, chatID, file, caption, &params.SendPhoto{ReplyToMessageID: int32(replyToMessageID), FileName: fileName})
+	case "video":
+		sent, err = client.SendVideo(ctx, chatID, file, caption, &params.SendVideo{ReplyToMessageID: int32(replyToMessageID), FileName: fileName})
+	case "document", "file":
+		sent, err = client.SendDocument(ctx, chatID, file, caption, &params.SendDocument{ReplyToMessageID: int32(replyToMessageID), FileName: fileName, MimeType: mimeType})
+	case "audio":
+		sent, err = client.SendAudio(ctx, chatID, file, caption, &params.SendAudio{ReplyToMessageID: int32(replyToMessageID), FileName: fileName})
+	case "voice":
+		sent, err = client.SendVoice(ctx, chatID, file, caption, &params.SendVoice{ReplyToMessageID: int32(replyToMessageID), FileName: fileName})
+	case "video_note":
+		sent, err = client.SendVideoNote(ctx, chatID, file, &params.SendVideoNote{ReplyToMessageID: int32(replyToMessageID), FileName: fileName})
+	default:
+		return 0, fmt.Errorf("unsupported Telegram media type %q", mediaType)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("send Telegram %s reply: %w", mediaType, err)
+	}
+	if sent == nil || sent.ID <= 0 {
+		return 0, errors.New("Telegram returned an empty media message")
+	}
+	return int64(sent.ID), nil
 }
-
 
 type MediaAlbumItem struct {
-    MediaType string
-    FileName string
-    MIMEType string
-    Caption string
-    Content []byte
+	MediaType string
+	FileName  string
+	MIMEType  string
+	Caption   string
+	Content   []byte
 }
 
 // SendMediaAlbumReply uploads every item first and submits the album as one
 // Telegram multi-media request. A failed upload prevents any album from being sent.
-func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, items []MediaAlbumItem) ([]int64,error) {
-    if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) { return nil,errors.New("invalid Telegram reply message id") }
-    if len(items)<2 || len(items)>10 { return nil,errors.New("Telegram media albums require between 2 and 10 items") }
-    m.mu.RLock(); client:=m.clients[accountID]; m.mu.RUnlock()
-    if client==nil || !client.IsConnected() { return nil,errors.New("Telegram account is not connected") }
-    category:=""
-    totalBytes:=0
-    media:=make([]*tg.InputSingleMedia,0,len(items))
-    for _,item:=range items {
-        item.MediaType=strings.ToLower(strings.TrimSpace(item.MediaType))
-        item.FileName=strings.TrimSpace(item.FileName)
-        if item.MediaType!="photo" && item.MediaType!="video" && item.MediaType!="document" { return nil,fmt.Errorf("unsupported album media type %q",item.MediaType) }
-        if len([]rune(item.Caption))>1024 { return nil,errors.New("album item caption exceeds Telegram's 1024 character limit") }
-        currentCategory:="visual"; if item.MediaType=="document" { currentCategory="document" }
-        if category!="" && category!=currentCategory { return nil,errors.New("Telegram albums may mix photos and videos, or contain documents, but cannot mix documents with photos/videos") }
-        category=currentCategory
-        if item.FileName=="" || len(item.Content)==0 || len(item.Content)>20<<20 { return nil,errors.New("each album item requires a file name and payload up to 20 MiB") }
-        totalBytes+=len(item.Content)
-        if totalBytes>100<<20 { return nil,errors.New("album payload exceeds 100 MiB") }
-        uploaded,err:=client.UploadFile(ctx,bytes.NewReader(item.Content),item.FileName,int64(len(item.Content)),nil)
-        if err!=nil { return nil,fmt.Errorf("upload album item %q: %w",item.FileName,err) }
-        mimeType:=strings.TrimSpace(item.MIMEType)
-        if mimeType=="" { mimeType="application/octet-stream" }
-        var inputMedia tg.InputMediaClass
-        if item.MediaType=="photo" {
-            inputMedia=&tg.InputMediaUploadedPhoto{File:uploaded.File}
-        } else {
-            attributes:=[]tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName:item.FileName}}
-            if item.MediaType=="video" {
-                attributes=append([]tg.DocumentAttributeClass{&tg.DocumentAttributeVideo{SupportsStreaming:true}},attributes...)
-            }
-            inputMedia=&tg.InputMediaUploadedDocument{File:uploaded.File,MimeType:mimeType,Attributes:attributes}
-        }
-        randomBytes:=make([]byte,8)
-        if _,err:=cryptorand.Read(randomBytes);err!=nil{return nil,fmt.Errorf("generate album item id: %w",err)}
-        randomID:=int64(binary.LittleEndian.Uint64(randomBytes));if randomID==0{randomID=1}
-        media=append(media,&tg.InputSingleMedia{Media:inputMedia,Message:item.Caption,RandomID:randomID})
-    }
-    sent,err:=client.SendMediaGroup(ctx,chatID,media,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
-    if err!=nil{return nil,fmt.Errorf("send Telegram media album: %w",err)}
-    if len(sent)!=len(items){return nil,fmt.Errorf("Telegram send outcome uncertain: returned %d album messages for %d items",len(sent),len(items))}
-    ids:=make([]int64,0,len(sent))
-    for _,message:=range sent { if message==nil||message.ID<=0{return nil,errors.New("Telegram returned an empty album message")};ids=append(ids,int64(message.ID)) }
-    return ids,nil
-}
-
-func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64,error) {
-	if replyToMessageID<=0 || replyToMessageID>int64(^uint32(0)>>1) {
-		return 0,errors.New("invalid Telegram reply message id")
+func (m *Manager) SendMediaAlbumReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, items []MediaAlbumItem) ([]int64, error) {
+	if replyToMessageID <= 0 || replyToMessageID > int64(^uint32(0)>>1) {
+		return nil, errors.New("invalid Telegram reply message id")
+	}
+	if len(items) < 2 || len(items) > 10 {
+		return nil, errors.New("Telegram media albums require between 2 and 10 items")
 	}
 	m.mu.RLock()
-	client:=m.clients[accountID]
+	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client==nil || !client.IsConnected() {
-		return 0,errors.New("Telegram account is not connected")
+	if client == nil || !client.IsConnected() {
+		return nil, errors.New("Telegram account is not connected")
 	}
-	sent,err:=client.SendMessage(ctx,chatID,textBody,&params.SendMessage{ReplyToMessageID:int32(replyToMessageID)})
-	if err!=nil{return 0,fmt.Errorf("send Telegram reply: %w",err)}
-	if sent==nil || sent.ID<=0{return 0,errors.New("Telegram returned an empty sent message")}
-	return int64(sent.ID),nil
+	category := ""
+	totalBytes := 0
+	media := make([]*tg.InputSingleMedia, 0, len(items))
+	for _, item := range items {
+		item.MediaType = strings.ToLower(strings.TrimSpace(item.MediaType))
+		item.FileName = strings.TrimSpace(item.FileName)
+		if item.MediaType != "photo" && item.MediaType != "video" && item.MediaType != "document" {
+			return nil, fmt.Errorf("unsupported album media type %q", item.MediaType)
+		}
+		if len([]rune(item.Caption)) > 1024 {
+			return nil, errors.New("album item caption exceeds Telegram's 1024 character limit")
+		}
+		currentCategory := "visual"
+		if item.MediaType == "document" {
+			currentCategory = "document"
+		}
+		if category != "" && category != currentCategory {
+			return nil, errors.New("Telegram albums may mix photos and videos, or contain documents, but cannot mix documents with photos/videos")
+		}
+		category = currentCategory
+		if item.FileName == "" || len(item.Content) == 0 || len(item.Content) > 20<<20 {
+			return nil, errors.New("each album item requires a file name and payload up to 20 MiB")
+		}
+		totalBytes += len(item.Content)
+		if totalBytes > 100<<20 {
+			return nil, errors.New("album payload exceeds 100 MiB")
+		}
+		uploaded, err := client.UploadFile(ctx, bytes.NewReader(item.Content), item.FileName, int64(len(item.Content)), nil)
+		if err != nil {
+			return nil, fmt.Errorf("upload album item %q: %w", item.FileName, err)
+		}
+		mimeType := strings.TrimSpace(item.MIMEType)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		var inputMedia tg.InputMediaClass
+		if item.MediaType == "photo" {
+			inputMedia = &tg.InputMediaUploadedPhoto{File: uploaded.File}
+		} else {
+			attributes := []tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName: item.FileName}}
+			if item.MediaType == "video" {
+				attributes = append([]tg.DocumentAttributeClass{&tg.DocumentAttributeVideo{SupportsStreaming: true}}, attributes...)
+			}
+			inputMedia = &tg.InputMediaUploadedDocument{File: uploaded.File, MimeType: mimeType, Attributes: attributes}
+		}
+		randomBytes := make([]byte, 8)
+		if _, err := cryptorand.Read(randomBytes); err != nil {
+			return nil, fmt.Errorf("generate album item id: %w", err)
+		}
+		randomID := int64(binary.LittleEndian.Uint64(randomBytes))
+		if randomID == 0 {
+			randomID = 1
+		}
+		media = append(media, &tg.InputSingleMedia{Media: inputMedia, Message: item.Caption, RandomID: randomID})
+	}
+	sent, err := client.SendMediaGroup(ctx, chatID, media, &params.SendMessage{ReplyToMessageID: int32(replyToMessageID)})
+	if err != nil {
+		return nil, fmt.Errorf("send Telegram media album: %w", err)
+	}
+	if len(sent) != len(items) {
+		return nil, fmt.Errorf("Telegram send outcome uncertain: returned %d album messages for %d items", len(sent), len(items))
+	}
+	ids := make([]int64, 0, len(sent))
+	for _, message := range sent {
+		if message == nil || message.ID <= 0 {
+			return nil, errors.New("Telegram returned an empty album message")
+		}
+		ids = append(ids, int64(message.ID))
+	}
+	return ids, nil
 }
 
+func (m *Manager) SendReply(ctx context.Context, accountID string, chatID int64, replyToMessageID int64, textBody string) (int64, error) {
+	if replyToMessageID <= 0 || replyToMessageID > int64(^uint32(0)>>1) {
+		return 0, errors.New("invalid Telegram reply message id")
+	}
+	m.mu.RLock()
+	client := m.clients[accountID]
+	m.mu.RUnlock()
+	if client == nil || !client.IsConnected() {
+		return 0, errors.New("Telegram account is not connected")
+	}
+	sent, err := client.SendMessage(ctx, chatID, textBody, &params.SendMessage{ReplyToMessageID: int32(replyToMessageID)})
+	if err != nil {
+		return 0, fmt.Errorf("send Telegram reply: %w", err)
+	}
+	if sent == nil || sent.ID <= 0 {
+		return 0, errors.New("Telegram returned an empty sent message")
+	}
+	return int64(sent.ID), nil
+}
 
 // IsRepliesToOwnMessages verifies a batch of historical reply targets with one
 // Telegram lookup. Missing targets are intentionally treated as non-matches.
 func (m *Manager) IsRepliesToOwnMessages(ctx context.Context, accountID string, chatID int64, replyToIDs []int32) map[int32]bool {
 	matched := make(map[int32]bool)
-	if len(replyToIDs) == 0 { return matched }
+	if len(replyToIDs) == 0 {
+		return matched
+	}
 	m.mu.RLock()
 	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client == nil || !client.IsConnected() { return matched }
+	if client == nil || !client.IsConnected() {
+		return matched
+	}
 	me := client.Me()
-	if me == nil { return matched }
+	if me == nil {
+		return matched
+	}
 	unique := make([]int32, 0, len(replyToIDs))
 	seen := make(map[int32]struct{}, len(replyToIDs))
 	for _, id := range replyToIDs {
-		if id <= 0 { continue }
-		if _, ok := seen[id]; ok { continue }
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-	if len(unique) == 0 { return matched }
+	if len(unique) == 0 {
+		return matched
+	}
 	originals, err := client.GetMessages(ctx, chatID, unique)
-	if err != nil { return matched }
+	if err != nil {
+		return matched
+	}
 	for _, original := range originals {
 		if original != nil && original.ID > 0 && (original.Out || original.FromID == me.ID) {
 			matched[original.ID] = true
@@ -685,88 +979,186 @@ func (m *Manager) IsRepliesToOwnMessages(ctx context.Context, accountID string, 
 // IsReplyToOwnMessage verifies the historical reply target against the
 // authenticated account. A failed lookup is treated as not matching.
 func (m *Manager) IsReplyToOwnMessage(ctx context.Context, accountID string, chatID int64, replyToID int32) bool {
-	if replyToID <= 0 { return false }
+	if replyToID <= 0 {
+		return false
+	}
 	m.mu.RLock()
 	client := m.clients[accountID]
 	m.mu.RUnlock()
-	if client == nil || !client.IsConnected() { return false }
+	if client == nil || !client.IsConnected() {
+		return false
+	}
 	me := client.Me()
-	if me == nil { return false }
+	if me == nil {
+		return false
+	}
 	original, err := client.GetMessages(ctx, chatID, []int32{replyToID})
-	if err != nil || len(original) == 0 || original[0] == nil { return false }
+	if err != nil || len(original) == 0 || original[0] == nil {
+		return false
+	}
 	return original[0].Out || original[0].FromID == me.ID
 }
-
 
 // StartPhoneLogin opens a short-lived MTGo client and asks Telegram to deliver
 // an authentication code. Challenges are held only in process memory.
 func (m *Manager) StartPhoneLogin(ctx context.Context, accountID, phone, proxyJSON string, profiles ...device.Profile) (PhoneCodeResult, error) {
-	accountID=strings.TrimSpace(accountID); phone=strings.TrimSpace(phone)
-	if accountID=="" || len(phone)<5 || len(phone)>32 { return PhoneCodeResult{}, errors.New("valid account ID and phone number are required") }
-	profile,err:=selectDeviceProfile(profiles); if err!=nil{return PhoneCodeResult{},err}
-	var proxy *telegram.Proxy
-	if strings.TrimSpace(proxyJSON)!="" && strings.TrimSpace(proxyJSON)!="null" && strings.TrimSpace(proxyJSON)!="{}" {
-		var p proxyConfig; if err=json.Unmarshal([]byte(proxyJSON),&p);err!=nil{return PhoneCodeResult{},errors.New("invalid proxy configuration")}
-		p.Addr=strings.TrimSpace(p.Addr); protocol:=strings.ToLower(strings.TrimSpace(p.Protocol))
-		if p.Addr=="" {return PhoneCodeResult{},errors.New("proxy address is required")}
-		switch protocol {case "","socks5","socks4","http","https":default:return PhoneCodeResult{},errors.New("unsupported proxy protocol")}
-		proxy=&telegram.Proxy{Addr:p.Addr,Username:p.Username,Password:p.Password,Protocol:protocol}
+	accountID = strings.TrimSpace(accountID)
+	phone = strings.TrimSpace(phone)
+	if accountID == "" || len(phone) < 5 || len(phone) > 32 {
+		return PhoneCodeResult{}, errors.New("valid account ID and phone number are required")
 	}
-	m.mu.RLock(); _,active:=m.clients[accountID]; _,qr:=m.pendingQR[accountID]; _,phonePending:=m.pendingPhone[accountID]; m.mu.RUnlock()
-	if active||qr||phonePending{return PhoneCodeResult{},errors.New("account already has an active or pending login")}
-	cfg:=telegram.Config{SessionName:"tgqf-"+accountID,InMemory:true,Proxy:proxy}; ApplyDeviceProfile(&cfg,profile)
-	client,err:=telegram.NewClient(m.cfg.APIID,m.cfg.APIHash,&cfg);if err!=nil{return PhoneCodeResult{},fmt.Errorf("create MTGo phone client: %w",err)}
-	if err=client.Connect(m.cfg.ConnectTimeout);err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("connect MTGo phone client: %w",err)}
-	sent,err:=client.SendCode(ctx,phone);if err!=nil{_ = client.Disconnect();return PhoneCodeResult{},fmt.Errorf("request Telegram login code: %w",err)}
-	entry:=&pendingPhone{client:client,phone:phone,phoneCodeHash:sent.PhoneCodeHash,expiresAt:time.Now().Add(10*time.Minute)}
+	profile, err := selectDeviceProfile(profiles)
+	if err != nil {
+		return PhoneCodeResult{}, err
+	}
+	var proxy *telegram.Proxy
+	if strings.TrimSpace(proxyJSON) != "" && strings.TrimSpace(proxyJSON) != "null" && strings.TrimSpace(proxyJSON) != "{}" {
+		var p proxyConfig
+		if err = json.Unmarshal([]byte(proxyJSON), &p); err != nil {
+			return PhoneCodeResult{}, errors.New("invalid proxy configuration")
+		}
+		p.Addr = strings.TrimSpace(p.Addr)
+		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+		if p.Addr == "" {
+			return PhoneCodeResult{}, errors.New("proxy address is required")
+		}
+		switch protocol {
+		case "", "socks5", "socks4", "http", "https":
+		default:
+			return PhoneCodeResult{}, errors.New("unsupported proxy protocol")
+		}
+		proxy = &telegram.Proxy{Addr: p.Addr, Username: p.Username, Password: p.Password, Protocol: protocol}
+	}
+	m.mu.RLock()
+	_, active := m.clients[accountID]
+	_, qr := m.pendingQR[accountID]
+	_, phonePending := m.pendingPhone[accountID]
+	m.mu.RUnlock()
+	if active || qr || phonePending {
+		return PhoneCodeResult{}, errors.New("account already has an active or pending login")
+	}
+	cfg := telegram.Config{SessionName: "tgqf-" + accountID, InMemory: true, Proxy: proxy}
+	ApplyDeviceProfile(&cfg, profile)
+	client, err := telegram.NewClient(m.cfg.APIID, m.cfg.APIHash, &cfg)
+	if err != nil {
+		return PhoneCodeResult{}, fmt.Errorf("create MTGo phone client: %w", err)
+	}
+	if err = client.Connect(m.cfg.ConnectTimeout); err != nil {
+		_ = client.Disconnect()
+		return PhoneCodeResult{}, fmt.Errorf("connect MTGo phone client: %w", err)
+	}
+	sent, err := client.SendCode(ctx, phone)
+	if err != nil {
+		_ = client.Disconnect()
+		return PhoneCodeResult{}, fmt.Errorf("request Telegram login code: %w", err)
+	}
+	entry := &pendingPhone{client: client, phone: phone, phoneCodeHash: sent.PhoneCodeHash, expiresAt: time.Now().Add(10 * time.Minute)}
 	m.mu.Lock()
-	if _,ok:=m.clients[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account client is already managed")}
-	if _,ok:=m.pendingQR[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account QR login is already pending")}
-	if _,ok:=m.pendingPhone[accountID];ok {m.mu.Unlock();_ = client.Disconnect();return PhoneCodeResult{},errors.New("account phone login is already pending")}
-	m.pendingPhone[accountID]=entry;m.mu.Unlock()
+	if _, ok := m.clients[accountID]; ok {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return PhoneCodeResult{}, errors.New("account client is already managed")
+	}
+	if _, ok := m.pendingQR[accountID]; ok {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return PhoneCodeResult{}, errors.New("account QR login is already pending")
+	}
+	if _, ok := m.pendingPhone[accountID]; ok {
+		m.mu.Unlock()
+		_ = client.Disconnect()
+		return PhoneCodeResult{}, errors.New("account phone login is already pending")
+	}
+	m.pendingPhone[accountID] = entry
+	m.mu.Unlock()
 	go m.expirePhoneLogin(accountID, entry)
-	delivery:="telegram"
-	if sent.Type!=nil { delivery=fmt.Sprintf("%T",sent.Type) }
-	return PhoneCodeResult{Timeout:sent.Timeout,DeliveryType:delivery},nil
+	delivery := "telegram"
+	if sent.Type != nil {
+		delivery = fmt.Sprintf("%T", sent.Type)
+	}
+	return PhoneCodeResult{Timeout: sent.Timeout, DeliveryType: delivery}, nil
 }
 
 // VerifyPhoneCode verifies the OTP. Err2FARequired is represented as a
 // password-required state; no password is stored by this manager.
 func (m *Manager) VerifyPhoneCode(ctx context.Context, accountID, code string) (PhoneAuthResult, bool, error) {
-	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
-	if entry==nil{return PhoneAuthResult{},false,errors.New("no pending phone login")}
-	entry.mu.Lock();defer entry.mu.Unlock()
-	if time.Now().After(entry.expiresAt) { m.mu.Lock(); if m.pendingPhone[accountID]==entry { delete(m.pendingPhone,accountID) }; m.mu.Unlock(); _=entry.client.Disconnect(); return PhoneAuthResult{},false,errors.New("phone login challenge expired; start login again") }
-	if strings.TrimSpace(code)==""||len(code)>32{return PhoneAuthResult{},false,errors.New("invalid verification code")}
-	user,err:=entry.client.SignIn(ctx,entry.phone,entry.phoneCodeHash,strings.TrimSpace(code))
-	if errors.Is(err,telegram.Err2FARequired){return PhoneAuthResult{},true,nil}
-	if err!=nil{return PhoneAuthResult{},false,fmt.Errorf("verify Telegram login code: %w",err)}
-	return m.finishPhoneLogin(accountID,entry,user)
+	m.mu.RLock()
+	entry := m.pendingPhone[accountID]
+	m.mu.RUnlock()
+	if entry == nil {
+		return PhoneAuthResult{}, false, errors.New("no pending phone login")
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if time.Now().After(entry.expiresAt) {
+		m.mu.Lock()
+		if m.pendingPhone[accountID] == entry {
+			delete(m.pendingPhone, accountID)
+		}
+		m.mu.Unlock()
+		_ = entry.client.Disconnect()
+		return PhoneAuthResult{}, false, errors.New("phone login challenge expired; start login again")
+	}
+	if strings.TrimSpace(code) == "" || len(code) > 32 {
+		return PhoneAuthResult{}, false, errors.New("invalid verification code")
+	}
+	user, err := entry.client.SignIn(ctx, entry.phone, entry.phoneCodeHash, strings.TrimSpace(code))
+	if errors.Is(err, telegram.Err2FARequired) {
+		return PhoneAuthResult{}, true, nil
+	}
+	if err != nil {
+		return PhoneAuthResult{}, false, fmt.Errorf("verify Telegram login code: %w", err)
+	}
+	return m.finishPhoneLogin(accountID, entry, user)
 }
 
-func (m *Manager) VerifyPhonePassword(ctx context.Context, accountID, password string) (PhoneAuthResult,error) {
-	m.mu.RLock();entry:=m.pendingPhone[accountID];m.mu.RUnlock()
-	if entry==nil{return PhoneAuthResult{},errors.New("no pending phone login")}
-	entry.mu.Lock();defer entry.mu.Unlock()
-	if time.Now().After(entry.expiresAt) { m.mu.Lock(); if m.pendingPhone[accountID]==entry { delete(m.pendingPhone,accountID) }; m.mu.Unlock(); _=entry.client.Disconnect(); return PhoneAuthResult{},errors.New("phone login challenge expired; start login again") }
-	if strings.TrimSpace(password)==""||len(password)>1024{return PhoneAuthResult{},errors.New("invalid two-factor password")}
-	user,err:=entry.client.CheckPassword(ctx,password)
-	if err!=nil{return PhoneAuthResult{},fmt.Errorf("verify Telegram two-factor password: %w",err)}
-	result,_,err:=m.finishPhoneLogin(accountID,entry,user)
-	return result,err
+func (m *Manager) VerifyPhonePassword(ctx context.Context, accountID, password string) (PhoneAuthResult, error) {
+	m.mu.RLock()
+	entry := m.pendingPhone[accountID]
+	m.mu.RUnlock()
+	if entry == nil {
+		return PhoneAuthResult{}, errors.New("no pending phone login")
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if time.Now().After(entry.expiresAt) {
+		m.mu.Lock()
+		if m.pendingPhone[accountID] == entry {
+			delete(m.pendingPhone, accountID)
+		}
+		m.mu.Unlock()
+		_ = entry.client.Disconnect()
+		return PhoneAuthResult{}, errors.New("phone login challenge expired; start login again")
+	}
+	if strings.TrimSpace(password) == "" || len(password) > 1024 {
+		return PhoneAuthResult{}, errors.New("invalid two-factor password")
+	}
+	user, err := entry.client.CheckPassword(ctx, password)
+	if err != nil {
+		return PhoneAuthResult{}, fmt.Errorf("verify Telegram two-factor password: %w", err)
+	}
+	result, _, err := m.finishPhoneLogin(accountID, entry, user)
+	return result, err
 }
 
-func (m *Manager) finishPhoneLogin(accountID string, entry *pendingPhone, user *types.User) (PhoneAuthResult,bool,error) {
-	if user==nil{return PhoneAuthResult{},false,errors.New("Telegram authorization returned no user")}
-	session,err:=entry.client.ExportSessionString();if err!=nil{return PhoneAuthResult{},false,fmt.Errorf("export phone-authorized session: %w",err)}
+func (m *Manager) finishPhoneLogin(accountID string, entry *pendingPhone, user *types.User) (PhoneAuthResult, bool, error) {
+	if user == nil {
+		return PhoneAuthResult{}, false, errors.New("Telegram authorization returned no user")
+	}
+	session, err := entry.client.ExportSessionString()
+	if err != nil {
+		return PhoneAuthResult{}, false, fmt.Errorf("export phone-authorized session: %w", err)
+	}
 	m.mu.Lock()
-	if m.pendingPhone[accountID]!=entry {m.mu.Unlock();return PhoneAuthResult{},false,errors.New("phone login was cancelled")}
-	delete(m.pendingPhone,accountID);m.clients[accountID]=entry.client
+	if m.pendingPhone[accountID] != entry {
+		m.mu.Unlock()
+		return PhoneAuthResult{}, false, errors.New("phone login was cancelled")
+	}
+	delete(m.pendingPhone, accountID)
+	m.clients[accountID] = entry.client
 	m.mu.Unlock()
-	return PhoneAuthResult{UserID:user.ID,Username:user.Username,FirstName:user.FirstName,Phone:user.Phone,SessionString:session},false,nil
+	return PhoneAuthResult{UserID: user.ID, Username: user.Username, FirstName: user.FirstName, Phone: user.Phone, SessionString: session}, false, nil
 }
-
-
 
 // expirePhoneLogin releases the temporary MTGo connection even when a user
 // abandons the OTP/2FA screen. The identity check prevents an old timer from
@@ -796,7 +1188,17 @@ func (m *Manager) expirePhoneLogin(accountID string, entry *pendingPhone) {
 }
 
 func (m *Manager) CancelPhoneLogin(accountID string) error {
-	m.mu.Lock();entry:=m.pendingPhone[accountID];delete(m.pendingPhone,accountID);m.mu.Unlock()
-	if entry==nil{return nil};entry.mu.Lock();defer entry.mu.Unlock()
-	if entry.client==nil{return nil};return entry.client.Disconnect()
+	m.mu.Lock()
+	entry := m.pendingPhone[accountID]
+	delete(m.pendingPhone, accountID)
+	m.mu.Unlock()
+	if entry == nil {
+		return nil
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.client == nil {
+		return nil
+	}
+	return entry.client.Disconnect()
 }

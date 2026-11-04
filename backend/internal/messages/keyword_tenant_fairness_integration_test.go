@@ -15,8 +15,12 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	accountA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	accountB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	for _, tenant := range []struct{ id, account string }{{tenantA, accountA}, {tenantB, accountB}} {
-		if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, tenant.id); err != nil { t.Fatal(err) }
-		if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',$3)`, tenant.id, tenant.account, []byte{1}); err != nil { t.Fatal(err) }
+		if _, err := db.ExecContext(ctx, `INSERT INTO tenants(id,status,expires_at) VALUES($1,'active',NOW()+INTERVAL '30 days')`, tenant.id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',$3)`, tenant.id, tenant.account, []byte{1}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, ddl := range []string{
 		`CREATE TABLE message_reply_jobs(tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
@@ -35,32 +39,58 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 			telegram_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 	} {
-		if _, err := db.ExecContext(ctx, ddl); err != nil { t.Fatal(err) }
+		if _, err := db.ExecContext(ctx, ddl); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for i := 0; i < 2; i++ {
 		for _, tenant := range []struct{ id, account string }{{tenantA, accountA}, {tenantB, accountB}} {
 			suffix := 1 + i*2
-			if tenant.id == tenantB { suffix++ }
+			if tenant.id == tenantB {
+				suffix++
+			}
 			jobID := "10000000-0000-4000-8000-00000000000" + strconv.Itoa(suffix)
-			if _, err := db.ExecContext(ctx, `INSERT INTO keyword_action_jobs(id,tenant_id,telegram_account_id) VALUES($1,$2,$3)`, jobID, tenant.id, tenant.account); err != nil { t.Fatal(err) }
+			if _, err := db.ExecContext(ctx, `INSERT INTO keyword_action_jobs(id,tenant_id,telegram_account_id) VALUES($1,$2,$3)`, jobID, tenant.id, tenant.account); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	service := New(db)
 	first, err := service.ClaimKeywordActionJobs(ctx, 1)
-	if err != nil { t.Fatal(err) }
-	if len(first) != 1 { t.Fatalf("first claim batch size=%d, want 1", len(first)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("first claim batch size=%d, want 1", len(first))
+	}
 	// Simulate the worker completing the claimed job. A single Telegram
 	// account must not have multiple in-flight keyword actions at once.
-	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, first[0].ID); err != nil { t.Fatal(err) }
-	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil {
+		t.Fatal(err)
+	}
 	second, err := service.ClaimKeywordActionJobs(ctx, 1)
-	if err != nil { t.Fatal(err) }
-	if len(second) != 1 { t.Fatalf("second claim batch size=%d, want 1", len(second)) }
-	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, second[0].ID); err != nil { t.Fatal(err) }
-	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("second claim batch size=%d, want 1", len(second))
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, second[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil {
+		t.Fatal(err)
+	}
 	third, err := service.ClaimKeywordActionJobs(ctx, 1)
-	if err != nil { t.Fatal(err) }
-	if len(first) != 1 || len(second) != 1 || len(third) != 1 { t.Fatalf("claim batch sizes: %d/%d/%d, want 1 each", len(first), len(second), len(third)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || len(second) != 1 || len(third) != 1 {
+		t.Fatalf("claim batch sizes: %d/%d/%d, want 1 each", len(first), len(second), len(third))
+	}
 	if first[0].TenantID != tenantA || second[0].TenantID != tenantB || third[0].TenantID != tenantA {
 		t.Fatalf("tenant claim order=%s -> %s -> %s, want A -> B -> A", first[0].TenantID, second[0].TenantID, third[0].TenantID)
 	}

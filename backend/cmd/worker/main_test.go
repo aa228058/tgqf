@@ -1,10 +1,10 @@
 package main
 
 import (
-	"testing"
 	"errors"
-	"time"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/aa228058/tgqf/backend/internal/accounts"
 )
@@ -12,7 +12,7 @@ import (
 func TestReconnectDelay(t *testing.T) {
 	tests := []struct {
 		attempt int
-		want time.Duration
+		want    time.Duration
 	}{
 		{attempt: 0, want: 30 * time.Second},
 		{attempt: 1, want: 30 * time.Second},
@@ -54,12 +54,12 @@ func TestScheduleReconnect(t *testing.T) {
 
 func TestRuntimeConfigChanged(t *testing.T) {
 	tests := []struct {
-		name string
+		name           string
 		currentSession string
-		currentProxy string
+		currentProxy   string
 		desiredSession string
-		desiredProxy string
-		want bool
+		desiredProxy   string
+		want           bool
 	}{
 		{name: "unchanged config", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-a", desiredProxy: "proxy-a", want: false},
 		{name: "session changed", currentSession: "session-a", currentProxy: "proxy-a", desiredSession: "session-b", desiredProxy: "proxy-a", want: true},
@@ -76,42 +76,66 @@ func TestRuntimeConfigChanged(t *testing.T) {
 }
 
 func TestGenerateRandomTelegramUsername(t *testing.T) {
-	tests:=[]struct{name string;settings accounts.UsernameGenerationSettings;prefix string;length int}{
-		{name:"tenant prefix alphanumeric",settings:accounts.UsernameGenerationSettings{Prefix:"brand_",RandomLength:12,Charset:"alphanumeric"},prefix:"brand_",length:18},
-		{name:"letters only",settings:accounts.UsernameGenerationSettings{Prefix:"team",RandomLength:8,Charset:"letters"},prefix:"team",length:12},
-		{name:"empty prefix",settings:accounts.UsernameGenerationSettings{Prefix:"",RandomLength:10,Charset:"alphanumeric"},length:10},
+	tests := []struct {
+		name     string
+		settings accounts.UsernameGenerationSettings
+		prefix   string
+		length   int
+	}{
+		{name: "tenant prefix alphanumeric", settings: accounts.UsernameGenerationSettings{Prefix: "brand_", RandomLength: 12, Charset: "alphanumeric"}, prefix: "brand_", length: 18},
+		{name: "letters only", settings: accounts.UsernameGenerationSettings{Prefix: "team", RandomLength: 8, Charset: "letters"}, prefix: "team", length: 12},
+		{name: "empty prefix", settings: accounts.UsernameGenerationSettings{Prefix: "", RandomLength: 10, Charset: "alphanumeric"}, length: 10},
 	}
-	for _,tt:=range tests { t.Run(tt.name,func(t *testing.T){
-		for i:=0;i<100;i++ {
-			username,err:=generateRandomTelegramUsername(tt.settings);if err!=nil{t.Fatal(err)}
-			if len(username)!=tt.length{t.Fatalf("length %d, want %d: %q",len(username),tt.length,username)}
-			if tt.prefix!=""&&!strings.HasPrefix(username,tt.prefix){t.Fatalf("username %q missing prefix %q",username,tt.prefix)}
-			if username[0]<'a'||username[0]>'z'{t.Fatalf("username must start with lowercase letter: %q",username)}
-			for _,ch:=range username {
-				if !((ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')||ch=='_'){t.Fatalf("invalid character in %q",username)}
-				if tt.settings.Charset=="letters"&&!(ch>='a'&&ch<='z')&&ch!='_'{t.Fatalf("non-letter in letters-only username %q",username)}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := 0; i < 100; i++ {
+				username, err := generateRandomTelegramUsername(tt.settings)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(username) != tt.length {
+					t.Fatalf("length %d, want %d: %q", len(username), tt.length, username)
+				}
+				if tt.prefix != "" && !strings.HasPrefix(username, tt.prefix) {
+					t.Fatalf("username %q missing prefix %q", username, tt.prefix)
+				}
+				if username[0] < 'a' || username[0] > 'z' {
+					t.Fatalf("username must start with lowercase letter: %q", username)
+				}
+				for _, ch := range username {
+					if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+						t.Fatalf("invalid character in %q", username)
+					}
+					if tt.settings.Charset == "letters" && !(ch >= 'a' && ch <= 'z') && ch != '_' {
+						t.Fatalf("non-letter in letters-only username %q", username)
+					}
+				}
 			}
-		}
-	})}
+		})
+	}
 }
 
 func TestIsPermanentJoinFailure(t *testing.T) {
-    tests := []struct { name string; err error; want bool }{
-        {"expired invite", errors.New("INVITE_HASH_EXPIRED"), true},
-        {"private channel", errors.New("CHANNEL_PRIVATE"), true},
-        {"already participant", errors.New("USER_ALREADY_PARTICIPANT"), false},
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"expired invite", errors.New("INVITE_HASH_EXPIRED"), true},
+		{"private channel", errors.New("CHANNEL_PRIVATE"), true},
+		{"already participant", errors.New("USER_ALREADY_PARTICIPANT"), false},
 		{"approval request", errors.New("INVITE_REQUEST_SENT"), false},
-        {"flood wait", errors.New("FLOOD_WAIT_120"), false},
-        {"timeout", errors.New("context deadline exceeded"), false},
-        {"temporary rpc", errors.New("INTERNAL"), false},
+		{"flood wait", errors.New("FLOOD_WAIT_120"), false},
+		{"timeout", errors.New("context deadline exceeded"), false},
+		{"temporary rpc", errors.New("INTERNAL"), false},
 		{"temporary account restriction", errors.New("USER_RESTRICTED"), false},
-        {"temporary channel capacity limit", errors.New("CHANNELS_TOO_MUCH"), false},
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            if got := isPermanentJoinFailure(tt.err); got != tt.want {
-                t.Fatalf("isPermanentJoinFailure(%v)=%v, want %v", tt.err, got, tt.want)
-            }
-        })
-    }
+		{"temporary channel capacity limit", errors.New("CHANNELS_TOO_MUCH"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPermanentJoinFailure(tt.err); got != tt.want {
+				t.Fatalf("isPermanentJoinFailure(%v)=%v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
 }

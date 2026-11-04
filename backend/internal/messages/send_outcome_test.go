@@ -10,14 +10,14 @@ import (
 
 type simulatedNetworkTimeout struct{}
 
-func (simulatedNetworkTimeout) Error() string { return "network operation timed out" }
-func (simulatedNetworkTimeout) Timeout() bool { return true }
+func (simulatedNetworkTimeout) Error() string   { return "network operation timed out" }
+func (simulatedNetworkTimeout) Timeout() bool   { return true }
 func (simulatedNetworkTimeout) Temporary() bool { return true }
 
 func TestIsAmbiguousTelegramSendError(t *testing.T) {
 	cases := []struct {
 		name string
-		err error
+		err  error
 		want bool
 	}{
 		{"nil", nil, false},

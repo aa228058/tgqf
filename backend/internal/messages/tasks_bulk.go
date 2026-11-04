@@ -7,9 +7,9 @@ import (
 )
 
 type BulkTaskActionResult struct {
-	ID string `json:"id"`
-	Success bool `json:"success"`
-	Error string `json:"error,omitempty"`
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
 }
 
 // normalizeBulkTaskIDs validates the complete request before any queue mutation.
@@ -33,11 +33,17 @@ func normalizeBulkTaskIDs(taskType, action string, input []string) ([]string, er
 	seen := make(map[string]struct{}, len(input))
 	for _, raw := range input {
 		id := strings.TrimSpace(raw)
-		if id == "" { return nil, errors.New("task id is required") }
-		if _, ok := seen[id]; ok { return nil, errors.New("duplicate task id") }
+		if id == "" {
+			return nil, errors.New("task id is required")
+		}
+		if _, ok := seen[id]; ok {
+			return nil, errors.New("duplicate task id")
+		}
 		if taskType == "group_join" {
 			n, err := strconv.ParseInt(id, 10, 64)
-			if err != nil || n < 1 { return nil, errors.New("invalid group join task id") }
+			if err != nil || n < 1 {
+				return nil, errors.New("invalid group join task id")
+			}
 		} else if !validUUID(id) {
 			return nil, errors.New("invalid task id")
 		}

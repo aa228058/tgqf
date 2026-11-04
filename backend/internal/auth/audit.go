@@ -9,16 +9,16 @@ import (
 )
 
 type AuditLog struct {
-	ID int64 `json:"id"`
-	TenantID string `json:"tenant_id,omitempty"`
-	TenantName string `json:"tenant_name,omitempty"`
-	ActorUserID string `json:"actor_user_id,omitempty"`
-	ActorUsername string `json:"actor_username,omitempty"`
-	Action string `json:"action"`
-	ResourceType string `json:"resource_type"`
-	ResourceID string `json:"resource_id"`
-	Details json.RawMessage `json:"details"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            int64           `json:"id"`
+	TenantID      string          `json:"tenant_id,omitempty"`
+	TenantName    string          `json:"tenant_name,omitempty"`
+	ActorUserID   string          `json:"actor_user_id,omitempty"`
+	ActorUsername string          `json:"actor_username,omitempty"`
+	Action        string          `json:"action"`
+	ResourceType  string          `json:"resource_type"`
+	ResourceID    string          `json:"resource_id"`
+	Details       json.RawMessage `json:"details"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 func (s *Service) ListAuditLogs(ctx context.Context, tenantID, action string, limit, offset int) ([]AuditLog, int, error) {
@@ -61,4 +61,3 @@ func (s *Service) ListAuditLogs(ctx context.Context, tenantID, action string, li
 	}
 	return items, total, rows.Err()
 }
-

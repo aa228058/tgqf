@@ -9,12 +9,12 @@ import (
 )
 
 type GroupCatalogueImportRecord struct {
-	ChatID int64
-	ChatType string
-	Title string
-	Username string
+	ChatID      int64
+	ChatType    string
+	Title       string
+	Username    string
 	MemberCount int
-	IsVerified bool
+	IsVerified  bool
 }
 
 func normalizeGroupCatalogueImportRecord(item GroupCatalogueImportRecord) (GroupCatalogueImportRecord, error) {
@@ -52,7 +52,9 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 	normalized := make([]GroupCatalogueImportRecord, len(records))
 	for i, item := range records {
 		value, err := normalizeGroupCatalogueImportRecord(item)
-		if err != nil { return 0, 0, err }
+		if err != nil {
+			return 0, 0, err
+		}
 		normalized[i] = value
 	}
 	inserted, skipped := 0, 0
@@ -66,9 +68,15 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 				ON CONFLICT(chat_type,telegram_chat_id) DO UPDATE
 				SET last_seen_at=GREATEST(public_groups.last_seen_at,NOW())
 				RETURNING id,(xmax=0)`,
-				item.ChatID,item.ChatType,item.Title,item.Username,item.MemberCount,item.IsVerified).Scan(&groupID,&wasInserted)
-			if err != nil { return err }
-			if wasInserted { inserted++ } else { skipped++ }
+				item.ChatID, item.ChatType, item.Title, item.Username, item.MemberCount, item.IsVerified).Scan(&groupID, &wasInserted)
+			if err != nil {
+				return err
+			}
+			if wasInserted {
+				inserted++
+			} else {
+				skipped++
+			}
 			// Every tenant that imports an already-known shared group must still
 			// receive its own contribution record; the global row is not tenant-owned.
 			if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_group_contributions
@@ -76,7 +84,9 @@ func (s *Service) ImportGroupCatalogue(ctx context.Context, tenantID string, rec
 				VALUES($1,$2,NOW(),NOW(),1)
 				ON CONFLICT(tenant_id,group_id) DO UPDATE SET
 				last_contributed_at=NOW(),contribution_count=tenant_group_contributions.contribution_count+1`,
-				tenantID,groupID); err != nil { return err }
+				tenantID, groupID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
