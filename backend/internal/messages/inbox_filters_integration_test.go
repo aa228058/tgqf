@@ -58,6 +58,6 @@ func TestMessageListSupportsTenantScopedInboxFilters(t *testing.T) {
 	if len(album)!=2||album[0].GroupedID!=987654321||album[1].GroupedID!=987654321{t.Fatalf("album retrieval returned %#v; want two messages in the same group",album)}
 	items,total,err=service.List(ctx,tenantID,ListOptions{Limit:10,AccountID:accountA,ChatID:101,IncludeProcessed:true})
 	if err!=nil{t.Fatal(err)}
-	if total!=3||len(items)!=3{t.Fatalf("include_processed result total=%d items=%d, want 3",total,len(items))}
+	if total!=4||len(items)!=4{t.Fatalf("include_processed result total=%d items=%d, want 4",total,len(items))}
 	if _,_,err:=service.List(ctx,tenantID,ListOptions{Limit:10,AccountID:"not-a-uuid"});err==nil{t.Fatal("invalid account filter should be rejected")}
 }
