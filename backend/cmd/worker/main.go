@@ -197,7 +197,7 @@ func main() {
 	defer ticker.Stop()
 	lastProxySweep:=time.Time{}
 	lastPrivateInviteSweep:=time.Time{}
-	lastGroupPermissionSweep:=time.Time{}
+	lastGroupPermissionSweep:=time.Time{}\n\tlastAccountGroupSweep:=time.Time{}
 	lastMediaCacheSweep:=time.Time{}
 	workerID := newWorkerInstanceID()
 	hostname, _ := os.Hostname()
@@ -241,6 +241,31 @@ func main() {
 		processJoinTasks(ctx, messageService, manager, logger, &accountTenants)
 		processJoinApprovalSync(ctx, messageService, manager, logger, &accountTenants)
 		processProfileUpdateJobs(ctx, accountService, messageService, manager, logger, &accountTenants)
+		if time.Since(lastAccountGroupSweep) >= 30*time.Minute {
+			lastAccountGroupSweep = time.Now()
+			runtimeAccounts, loadErr := accountService.LoadAuthorizedRuntimeAccounts(ctx)
+			if loadErr != nil {
+				logger.Warn("load accounts for group membership sync", "error", loadErr)
+			} else {
+				for _, runtimeAccount := range runtimeAccounts {
+					if ctx.Err() != nil { break }
+					if !manager.IsConnected(runtimeAccount.ID) { continue }
+					syncCtx, cancelSync := context.WithTimeout(ctx, 45*time.Second)
+					groups, syncErr := manager.ListAccountGroups(syncCtx, runtimeAccount.ID, 1000)
+					if syncErr == nil && len(groups) >= 1000 {
+						syncErr = fmt.Errorf("group list reached 1000-item safety limit; snapshot may be incomplete")
+					}
+					if syncErr != nil {
+						_ = accountService.MarkAccountGroupSyncFailed(syncCtx, runtimeAccount.TenantID, runtimeAccount.ID, syncErr.Error())
+						logger.Warn("sync account group membership", "account_id", runtimeAccount.ID, "error", syncErr)
+					} else if saveErr := accountService.SaveAccountGroups(syncCtx, runtimeAccount.TenantID, runtimeAccount.ID, groups); saveErr != nil {
+						logger.Warn("persist account group membership", "account_id", runtimeAccount.ID, "error", saveErr)
+					}
+					cancelSync()
+					select { case <-ctx.Done(): break; case <-time.After(500 * time.Millisecond): }
+				}
+			}
+		}
 		if time.Since(lastProxySweep)>=10*time.Minute {
 			lastProxySweep=time.Now()
 			go func(){
