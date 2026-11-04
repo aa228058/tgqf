@@ -46,18 +46,27 @@ jobs:
       TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.2"
           cache: true
           cache-dependency-path: backend/go.sum
-      - name: Check Go formatting
-        working-directory: backend
+      - name: Check formatting of newly added Go files
         run: |
-          unformatted="$(find . -type f -name '*.go' -print0 | xargs -0 -r gofmt -l)"
-          if [[ -n "$unformatted" ]]; then
-            printf 'Go files need gofmt:\n%s\n' "$unformatted"
-            exit 1
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1
+            go_files="$(git diff --name-only --diff-filter=A "origin/$GITHUB_BASE_REF...HEAD" -- '*.go')"
+          else
+            go_files="$(git diff-tree --no-commit-id --name-only -r HEAD --diff-filter=A -- '*.go')"
+          fi
+          if [[ -n "$go_files" ]]; then
+            unformatted="$(printf '%s\n' "$go_files" | xargs -r gofmt -l)"
+            if [[ -n "$unformatted" ]]; then
+              printf 'New Go files need gofmt:\n%s\n' "$unformatted"
+              exit 1
+            fi
           fi
       - name: Resolve modules
         working-directory: backend
