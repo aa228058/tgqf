@@ -191,7 +191,9 @@ func (s *Service) ResumeJoinTask(ctx context.Context,tenantID,id string)error {
         if err:=ensureJoinTaskAccountsAuthorized(ctx,tx,tenantID,id);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='paused'",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be resumed")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='queued',pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='paused'",tenantID,id)
+		if err!=nil{return err}
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET pause_requested=FALSE,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='processing'",tenantID,id)
         return err
     })
 }
