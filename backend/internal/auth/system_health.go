@@ -108,7 +108,7 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
 }
 
 func (h SystemHealth) HasWarnings() bool {
-    return h.Database.Status!="ok" || h.Redis.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85 || h.Queues.IncomingPending>100 || h.Queues.MessageOutboxPending>1000
+    return h.Database.Status!="ok" || h.Redis.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85 || h.Host.CPUPercent>=90 || h.Queues.IncomingPending>100 || h.Queues.MessageOutboxPending>1000
 }
 
 
