@@ -84,7 +84,7 @@ Firewall: allow SSH, TCP 80 and TCP 443 only. Do not open 3000, 5432, 6379 or 80
 
 ## Upgrade and rollback
 
-The production installer automatically creates a consistent PostgreSQL + Redis backup before replacing an existing stack. The backup is written under `backups/` with owner-only directory/file permissions. Copy it off-host and encrypt it; it contains tenant data and queued Telegram updates. To skip this safety step only after independently verifying a recent external backup, set `TGQF_SKIP_PREDEPLOY_BACKUP=1` for that installer invocation.
+The production installer automatically creates a consistent PostgreSQL + Redis backup before replacing an existing stack. The backup is written under `backups/` with owner-only directory/file permissions. The script verifies the SHA-256 manifest, Redis archive and PostgreSQL custom dump before reporting success, and writes `BACKUP_METADATA.txt` with the release tag and recovery notes. Set `MIN_BACKUP_FREE_KB` in `.env` to enforce a minimum free-space threshold (default 0). Copy backups off-host and encrypt them; they contain tenant data and queued Telegram updates. To skip this safety step only after independently verifying a recent external backup, use `sudo TGQF_SKIP_PREDEPLOY_BACKUP=1 bash deploy/deploy.sh` for that installer invocation; a value in `.env` does not override the one-shot command-line choice.
 
 Use a new immutable `TGQF_IMAGE_TAG` for every release:
 
@@ -101,7 +101,7 @@ To roll back, restore the previous image tag in `.env` and run `docker compose u
 
 Run `deploy/backup.sh` from any directory. It creates a compressed PostgreSQL dump and a Redis data snapshot under `BACKUP_DIR` (default `./backups`). Backup directories are mode 0700 and backup files are mode 0600; keep them private. Copy backups off-host and encrypt them. The Redis snapshot is important because the incoming Telegram update stream can contain durable, not-yet-ingested events.
 
-Restore instructions are in `deploy/restore.sh`; restore only into a stopped, isolated stack after verifying the backup.
+Restore instructions are in `deploy/restore.sh`; restore only into a stopped, isolated stack after verifying the backup. The restore command waits for PostgreSQL/API readiness through the API health check and also requires Redis, Worker and frontend containers to report healthy before reopening the stack. Run both backup and restore rehearsals against an isolated Compose project before production use.
 
 ## Smoke tests
 
@@ -115,7 +115,9 @@ This checks API readiness, frontend HTTP response and authenticated-route protec
 
 - PostgreSQL is the source of truth; Redis uses AOF and a persistent volume.
 - Keep `.env` mode 0600 and outside backups unless backups are encrypted.
-- `SESSION_ENCRYPTION_KEY` loss makes encrypted Telegram sessions and proxy secrets unreadable. Back it up separately in a secret manager.
+- `SESSION_ENCRYPTION_KEY` loss makes encrypted Telegram sessions and proxy secrets unreadable. It is deliberately excluded from database/Redis backups; back it up separately in a secret manager or an encrypted off-host configuration backup, and rehearse retrieval. Never commit it to Git.
+- `deploy/backup.sh` checks the resulting dump/archive and checksum manifest before restarting services. A failed backup exits non-zero and its exit trap attempts to restart stopped services.
+- `deploy/tests/backup_test.sh` injects a Redis SAVE failure and checks service restart behavior; `deploy/tests/restore_test.sh` verifies cancellation occurs before any service is stopped. CI runs both.
 - The API and Worker each apply storage migrations on startup; Compose orders Worker after API readiness.
 - Monitor `/health/ready`, Docker health, Worker heartbeat rows and structured logs.
 - Configure host-level log rotation and off-site backups. Test restore before production use.
