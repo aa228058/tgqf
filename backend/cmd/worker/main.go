@@ -883,9 +883,21 @@ func runIncomingUpdateLoop(ctx context.Context, service *messages.Service, consu
 func runMessageEventOutboxLoop(ctx context.Context, service *messages.Service, logger *slog.Logger) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	lastPrune := time.Now()
 	for {
 		if _, err := service.PublishPendingMessageEvents(ctx, 100); err != nil && ctx.Err() == nil {
 			logger.Warn("publish committed message events", "error", err)
+		}
+		if time.Since(lastPrune) >= 24*time.Hour {
+			pruneCtx, cancelPrune := context.WithTimeout(ctx, 10*time.Second)
+			removed, err := service.PrunePublishedMessageEvents(pruneCtx, 30*24*time.Hour, 1000)
+			cancelPrune()
+			if err != nil {
+				logger.Warn("prune delivered message event outbox", "error", err)
+			} else if removed > 0 {
+				logger.Info("pruned delivered message event outbox", "rows", removed)
+			}
+			lastPrune = time.Now()
 		}
 		select {
 		case <-ctx.Done():
