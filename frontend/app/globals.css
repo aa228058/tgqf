@@ -827,3 +827,75 @@ td,th{padding:13px 11px}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
 }
+
+
+/* Monitoring and group-join screens: balanced desktop density and phone cards. */
+.keyword-monitor{padding:24px 0 46px;gap:20px}
+.keyword-toolbar{align-items:flex-end;padding-bottom:4px}
+.keyword-toolbar h2,.keyword-toolbar h1{letter-spacing:-.035em}
+.keyword-tabs{gap:6px;overflow-x:auto;scrollbar-width:thin}
+.keyword-tabs button{min-height:40px;white-space:nowrap}
+.keyword-rule-list{gap:12px}
+.keyword-card{border-color:var(--line);box-shadow:var(--shadow-card);transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.keyword-card:hover{border-color:color-mix(in srgb,var(--accent) 25%,var(--line));box-shadow:var(--shadow-hover);transform:translateY(-1px)}
+.keyword-card>div:first-child{min-width:0;overflow-wrap:anywhere}
+.keyword-card p{line-height:1.55}
+.keyword-actions{align-items:center}
+.keyword-table-wrap{border-color:var(--line);box-shadow:var(--shadow-card)}
+.keyword-table{min-width:760px}
+.keyword-table th{position:sticky;top:0;z-index:1;background:var(--bg);font-size:11px;letter-spacing:.025em}
+.keyword-table td{overflow-wrap:anywhere}
+.join-page{padding:26px 0 46px}
+.join-heading{align-items:flex-end;margin-bottom:22px}
+.join-heading h1{letter-spacing:-.035em}
+.join-notice{border-radius:13px;box-shadow:var(--shadow-card)}
+.join-task-list{gap:12px}
+.join-task-card{padding:17px 18px;border-radius:13px;box-shadow:var(--shadow-card);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.join-task-card:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--accent) 24%,var(--line));box-shadow:var(--shadow-hover)}
+.join-task-main{min-height:62px;align-content:center}
+.join-task-title{font-size:14px}
+.join-task-target{line-height:1.55}
+.join-task-actions button{min-height:38px}
+.join-account-results article{padding:12px;border-radius:10px;background:var(--surface)}
+.join-account-picker,.keyword-filter-set{background:color-mix(in srgb,var(--surface) 94%,var(--bg))}
+:root[data-theme="dark"] .join-account-picker,:root[data-theme="dark"] .keyword-filter-set{background:var(--surface)}
+@media(min-width:901px){
+  .join-task-card{gap:24px}
+  .join-task-actions{max-width:340px}
+  .keyword-card{padding:18px 20px}
+}
+@media(max-width:900px){
+  .join-page,.keyword-monitor{padding:20px 0 34px}
+  .join-heading{gap:13px}
+  .join-task-card{padding:15px}
+  .join-task-main{width:100%;grid-template-columns:minmax(0,1fr) auto}
+  .join-task-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+  .join-task-actions button{width:100%;min-height:42px}
+  .join-account-results article{grid-template-columns:minmax(0,1fr) auto;gap:9px}
+  .keyword-toolbar{align-items:flex-start}
+  .keyword-table-wrap{overflow:visible;border:0;box-shadow:none}
+  .keyword-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0 10px}
+  .keyword-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .keyword-table tbody{display:grid;gap:10px}
+  .keyword-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;padding:8px 13px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-card)}
+  .keyword-table td{display:block;min-width:0;padding:9px 0;border:0;border-bottom:1px solid var(--line);font-size:12px;overflow-wrap:anywhere;white-space:normal}
+  .keyword-table td::before{content:attr(data-label);display:block;margin-bottom:5px;color:var(--muted);font-size:10px;font-weight:700}
+  .keyword-table td[data-label="规则"],.keyword-table td[data-label="命中词"]{grid-column:1/-1}
+}
+@media(max-width:520px){
+  .keyword-toolbar{gap:12px}
+  .keyword-toolbar>div{min-width:0}
+  .keyword-toolbar h1,.keyword-toolbar h2,.join-heading h1{font-size:23px}
+  .keyword-card{gap:12px;padding:14px}
+  .keyword-actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .keyword-actions button{min-height:42px}
+  .keyword-state{margin:7px 0 0}
+  .join-task-card{gap:13px;padding:13px}
+  .join-task-main{grid-template-columns:minmax(0,1fr)}
+  .join-task-main .status{justify-self:start}
+  .join-task-actions{grid-template-columns:1fr 1fr}
+  .join-account-results article{grid-template-columns:minmax(0,1fr)}
+  .join-account-results article>span{justify-self:start}
+  .keyword-table tbody tr{grid-template-columns:minmax(0,1fr)}
+  .keyword-table td[data-label="规则"],.keyword-table td[data-label="命中词"]{grid-column:1}
+}
