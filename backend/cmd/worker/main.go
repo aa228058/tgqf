@@ -566,11 +566,18 @@ func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, m
 	}
 	for _,link:=range links {
 		if ctx.Err()!=nil{return ctx.Err()}
-		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
-		result,checkErr:=manager.CheckPrivateInviteApproval(checkCtx,accountID,link.Hash)
-		cancel()
 		status:="unknown"
-		errorText:=""
+		errorText:=link.CheckError
+		var checkErr error
+		if link.CheckError=="" {
+			checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+			result,err:=manager.CheckPrivateInviteApproval(checkCtx,accountID,link.Hash)
+			cancel()
+			checkErr=err
+			if err==nil {
+				if result=="request_pending" { status="approval_required" } else if result=="member"||result=="valid" { status="valid" }
+			}
+		}
 		if checkErr!=nil {
 			errorText=checkErr.Error()
 			upper:=strings.ToUpper(errorText)
