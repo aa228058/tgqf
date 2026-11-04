@@ -349,23 +349,24 @@ func evaluateAndRecordKeywordMatches(ctx context.Context,tx *sql.Tx,tenantID str
         if errors.Is(err,sql.ErrNoRows) {continue}
         if err!=nil{return err}
         actionText:=keywordReplyTextForChat(rule,in.ChatType)
+        actionStepsJSON:=keywordActionStepsJSON(rule.ActionSteps)
         if rule.ActionType=="voice_call" && in.ChatType=="private" && in.SenderID>0 {
-            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,target_user_id)
-                VALUES($1,$2,$3,$4,$5,'','voice_call',$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,in.SenderID)
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,target_user_id,action_steps)
+                VALUES($1,$2,$3,$4,$5,'','voice_call',$6,$7) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,in.SenderID,string(actionStepsJSON))
             if err!=nil{return err}
         } else if rule.ActionType=="contact" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
-            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,contact_phone,contact_first_name,contact_last_name)
-                VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName)
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,contact_phone,contact_first_name,contact_last_name,action_steps)
+                VALUES($1,$2,$3,$4,$5,'','contact',$6,$7,$8,$9) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.ContactPhone,rule.ContactFirstName,rule.ContactLastName,string(actionStepsJSON))
             if err!=nil{return err}
         } else if rule.ActionType=="media" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
-            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,media_asset_id,media_type,media_caption)
-                VALUES($1,$2,$3,$4,$5,'','media',$6,$7,$8) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.MediaAssetID,rule.MediaType,rule.MediaCaption)
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,media_asset_id,media_type,media_caption,action_steps)
+                VALUES($1,$2,$3,$4,$5,'','media',$6,$7,$8,$9) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,rule.MediaAssetID,rule.MediaType,rule.MediaCaption,string(actionStepsJSON))
             if err!=nil{return err}
         } else if rule.ActionType=="media_album" && (in.ChatType=="private" || in.ChatType=="group" || in.ChatType=="supergroup") {
-            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,media_album_items) VALUES($1,$2,$3,$4,$5,'','media_album',$6::jsonb) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,keywordAlbumJSON(rule.MediaAlbumItems));if err!=nil{return err}
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_type,media_album_items,action_steps) VALUES($1,$2,$3,$4,$5,'','media_album',$6::jsonb,$7::jsonb) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,keywordAlbumJSON(rule.MediaAlbumItems),string(actionStepsJSON));if err!=nil{return err}
         } else if actionText!="" {
-            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text)
-                VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,actionText)
+            _,err=tx.ExecContext(ctx,`INSERT INTO keyword_action_jobs(tenant_id,keyword_match_id,telegram_account_id,chat_id,reply_to_message_id,message_text,action_steps)
+                VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(keyword_match_id) DO NOTHING`,tenantID,matchID,in.AccountID,in.ChatID,in.MessageID,actionText,string(actionStepsJSON))
             if err!=nil{return err}
         }
     }
