@@ -720,9 +720,9 @@ func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string,
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error {
   result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
     check_attempts=check_attempts+1,
-    next_check_at=NOW()+CASE WHEN $3='unknown' THEN INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE INTERVAL '6 hours' END
+    next_check_at=CASE WHEN $3='unknown' AND $5>0 THEN NOW()+GREATEST($5*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $3='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END
    WHERE l.id=$1 AND l.link_type='invite' AND EXISTS(
-    SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError)
+    SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError,retrySeconds)
   if err!=nil{return err}
   n,_:=result.RowsAffected()
   if n==0{return errors.New("private invite link not found")}
