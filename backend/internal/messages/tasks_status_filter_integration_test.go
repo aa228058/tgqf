@@ -54,8 +54,18 @@ func TestUnifiedTaskStatusFiltersNormalizeQueueStates(t *testing.T) {
 		('55555555-5555-4555-8555-555555555551',$1,$2,'sent')`, tenantID, accountID); err != nil {
 		t.Fatal(err)
 	}
+	joinAccounts := []string{
+		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+		"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
+	}
+	for _, joinAccount := range joinAccounts {
+		if _, err := db.ExecContext(ctx, `INSERT INTO telegram_accounts(tenant_id,id,status,session_ciphertext) VALUES($1,$2,'authorized',$3)`, tenantID, joinAccount, []byte{1}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO tenant_join_task_accounts(tenant_id,task_id,telegram_account_id,status) VALUES
-		($1,$2,$3,'queued'),($1,$2,$3,'joined'),($1,$2,$3,'already_member'),($1,$2,$3,'skipped')`, tenantID, joinTaskID, accountID); err != nil {
+		($1,$2,$3,'queued'),($1,$4,$5,'joined'),($1,$4,$6,'already_member'),($1,$4,$7,'skipped')`, tenantID, joinTaskID, accountID, joinTaskID, joinAccounts[0], joinAccounts[1], joinAccounts[2]); err != nil {
 		t.Fatal(err)
 	}
 	// A second tenant has its own pending task; it must never leak into this
