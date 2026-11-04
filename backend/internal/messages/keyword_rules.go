@@ -329,6 +329,14 @@ func (s *Service) ClaimKeywordActionJobs(ctx context.Context, limit int) ([]Keyw
     return jobs,nil
 }
 
+func keywordActionRetryDelay(attempt int,floodWait time.Duration) time.Duration {
+    if floodWait > 0 { return floodWait + time.Second }
+    delay:=time.Duration(attempt*30)*time.Second
+    if delay<30*time.Second { delay=30*time.Second }
+    if delay>15*time.Minute { delay=15*time.Minute }
+    return delay
+}
+
 func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration) error {
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
         if sendErr==nil {
@@ -337,9 +345,8 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")};return nil
         }
         message:=sendErr.Error();if len(message)>500{message=message[:500]}
-        delay:=time.Duration(job.Attempts*30)*time.Second;if delay<30*time.Second{delay=30*time.Second};if delay>15*time.Minute{delay=15*time.Minute}
+        delay:=keywordActionRetryDelay(job.Attempts,floodWait)
         status:="pending";if job.Attempts>=5&&floodWait<=0{status="failed"}
-        if floodWait>0{delay=floodWait+time.Second}
         result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,int64(delay.Seconds()),job.LeaseUntil)
         if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
         if floodWait>0 { waitSeconds:=int64(floodWait/time.Second); if floodWait%time.Second!=0 {waitSeconds++}; waitSeconds++; if _,err:=tx.ExecContext(ctx,`UPDATE telegram_accounts SET telegram_send_cooldown_until=GREATEST(COALESCE(telegram_send_cooldown_until,NOW()),NOW()+($1 * INTERVAL '1 second')) WHERE tenant_id=$2 AND id=$3`,waitSeconds,job.TenantID,job.AccountID);err!=nil{return err} }
