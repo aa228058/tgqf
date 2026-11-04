@@ -516,6 +516,14 @@ func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,t
             return err
         }
         message:=sendErr.Error();if len(message)>500{message=message[:500]}
+        if floodWait<=0 && isAmbiguousTelegramSendError(sendErr) {
+            uncertainMessage:="send outcome uncertain; verify Telegram chat before resuming: "+message
+            if len(uncertainMessage)>500 { uncertainMessage=uncertainMessage[:500] }
+            result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status='paused',last_error=$3,lease_until=NULL,updated_at=NOW()
+                WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,job.TenantID,job.ID,uncertainMessage,job.LeaseUntil)
+            if err!=nil{return err};n,_:=result.RowsAffected();if n==0{return errors.New("keyword action lease not found")}
+            return nil
+        }
         delay:=keywordActionRetryDelay(job.Attempts,floodWait)
         status:="pending";if job.Attempts>=5&&floodWait<=0{status="failed"}
         result,err:=tx.ExecContext(ctx,`UPDATE keyword_action_jobs SET status=$3,last_error=$4,available_at=NOW()+($5 * INTERVAL '1 second'),lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$6`,job.TenantID,job.ID,status,message,int64(delay.Seconds()),job.LeaseUntil)
