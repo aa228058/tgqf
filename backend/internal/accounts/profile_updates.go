@@ -128,7 +128,7 @@ func (s *Service) CreateProfileUpdateBatch(ctx context.Context,tenantID,userID s
 			err:=tx.QueryRowContext(ctx,`INSERT INTO account_profile_update_jobs(batch_id,tenant_id,account_id,requested_by_user_id,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data)
 				VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 				RETURNING id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,photo_data,applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at`,
-				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset,in.PhotoData).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.HasPhoto,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
+				batchID,tenantID,in.AccountID,userID,in.FirstName,in.LastName,in.About,in.GenerateUsername,settings.Prefix,settings.RandomLength,settings.Charset,in.PhotoData).Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt)
 			if err!=nil{return err}
 			job.HasPhoto=len(job.PhotoData)>0
 			out=append(out,job)
@@ -150,7 +150,7 @@ func (s *Service) ListProfileUpdateJobs(ctx context.Context,tenantID,batchID,sta
 		rows,err:=tx.QueryContext(ctx,`SELECT id::text,batch_id::text,tenant_id::text,account_id::text,first_name,last_name,about,generate_username,username_prefix,username_random_length,username_charset,(octet_length(photo_data)>0),applied_username,status,attempts,next_run_at,lease_until,last_error,created_at,updated_at
 			FROM account_profile_update_jobs WHERE `+filter+` ORDER BY created_at DESC,id LIMIT $4 OFFSET $5`,tenantID,batchID,status,limit,offset)
 		if err!=nil{return err};defer rows.Close()
-		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.PhotoData,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
+		for rows.Next(){var job ProfileUpdateJob;if err:=rows.Scan(&job.ID,&job.BatchID,&job.TenantID,&job.AccountID,&job.FirstName,&job.LastName,&job.About,&job.GenerateUsername,&job.UsernamePrefix,&job.UsernameRandomLength,&job.UsernameCharset,&job.HasPhoto,&job.AppliedUsername,&job.Status,&job.Attempts,&job.NextRunAt,&job.LeaseUntil,&job.LastError,&job.CreatedAt,&job.UpdatedAt);err!=nil{return err};out=append(out,job)}
 		return rows.Err()
 	})
 	return out,total,err
