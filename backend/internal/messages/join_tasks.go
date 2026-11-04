@@ -171,7 +171,9 @@ func (s *Service) PauseJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be paused")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','processing')",tenantID,id)
+        // Do not revoke an in-flight processing lease: its Telegram RPC may already
+		// have succeeded. The parent task is paused, so no further rows are claimed.
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='paused',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status='queued'",tenantID,id)
         return err
     })
 }
@@ -195,7 +197,9 @@ func (s *Service) CancelJoinTask(ctx context.Context,tenantID,id string)error {
     return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         res,err:=tx.ExecContext(ctx,"UPDATE tenant_join_tasks SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND id=$2 AND status IN ('draft','queued','paused')",tenantID,id)
         if err!=nil{return err};n,_:=res.RowsAffected();if n==0{return errors.New("join task cannot be cancelled")}
-        _,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',lease_until=NULL,updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','processing','request_pending')",tenantID,id)
+        // Preserve processing leases until their Telegram RPC returns. A cancellation
+		// stops new claims; the in-flight result is still persisted by its worker.
+		_,err=tx.ExecContext(ctx,"UPDATE tenant_join_task_accounts SET status='cancelled',updated_at=NOW() WHERE tenant_id=$1 AND task_id=$2 AND status IN ('queued','paused','request_pending')",tenantID,id)
         if err!=nil{return err}
         return err
     })
