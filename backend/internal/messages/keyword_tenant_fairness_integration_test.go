@@ -46,9 +46,11 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	service := New(db)
 	first, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, first[0].ID); err != nil { t.Fatal(err) }
 	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	second, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
+	if _, err := db.ExecContext(ctx, `UPDATE keyword_action_jobs SET status='sent',lease_until=NULL WHERE id=$1`, second[0].ID); err != nil { t.Fatal(err) }
 	if _, err := db.ExecContext(ctx, `UPDATE telegram_accounts SET telegram_send_next_at=NOW()-INTERVAL '1 second'`); err != nil { t.Fatal(err) }
 	third, err := service.ClaimKeywordActionJobs(ctx, 1)
 	if err != nil { t.Fatal(err) }
