@@ -82,6 +82,7 @@ func TestKeywordActionClaimAndTenantExpiryPreserveLiveRPC(t *testing.T) {
 	jobUncertain:="10000000-0000-4000-8000-000000000004"
 	insertJob(jobA,activeTenant,accountA,"pending",time.Time{})
 	insertJob(jobB,activeTenant,accountB,"pending",time.Time{})
+	if _,err:=db.ExecContext(ctx,`UPDATE keyword_action_jobs SET chat_id=CASE WHEN telegram_account_id=$1 THEN 101 ELSE 102 END WHERE id IN ($2,$3)`,accountA,jobA,jobB);err!=nil{t.Fatal(err)}
 	insertJob(jobUncertain,activeTenant,accountA,"processing",time.Now().Add(-time.Minute))
 	insertJob(jobRevoked,activeTenant,accountRevoked,"pending",time.Time{})
 	insertJob(jobInactivePending,inactiveTenant,inactivePendingAccount,"pending",time.Time{})
