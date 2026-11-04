@@ -163,7 +163,7 @@ export default function Home() {
   if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
   return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} />} adminContent={<AdminConsole token={token} user={user}/>}><main className="shell">
-    <header className="topbar"><div><div className="eyebrow">TG MANAGER</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot" role="status" aria-live="polite">{busy?"正在同步任务":"自动刷新 · 10 秒"}</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button></div></header>
+    <header className="topbar"><div><div className="eyebrow">TG 账号管理工具</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot" role="status" aria-live="polite">{busy?"正在同步任务":"自动刷新 · 10 秒"}</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button></div></header>
     {error && <div className="alert error">{error}</div>}{notice && <div className="alert success">{notice}</div>}
     <section className="summary-grid">
       <article className="summary-card"><span>任务总数</span><strong>{summary?.total ?? "—"}</strong></article>
