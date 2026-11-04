@@ -51,8 +51,9 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			first_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			contribution_count BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(tenant_id,group_id))`,
 		`CREATE TABLE public_group_links (
-			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT UNIQUE,
-			invite_hash BYTEA UNIQUE, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
+			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT,
+			invite_hash BYTEA, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
+			UNIQUE(link_type,public_url), UNIQUE(invite_hash),
 			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
 			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID)`,
