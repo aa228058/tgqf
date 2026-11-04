@@ -200,6 +200,16 @@ func (s *Service) Ingest(ctx context.Context, tenantID string, in Incoming) (boo
 		var exists bool
 		if err:=tx.QueryRowContext(ctx,"SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)",tenantID,in.AccountID).Scan(&exists);err!=nil{return err}
 		if !exists{return errors.New("account not found")}
+		// A Redis delivery may be replayed after a worker crash or an ACK failure.
+		// Claim the Telegram update inside this transaction so every downstream
+		// side effect (catalogue counters, link sources, keyword matches, messages)
+		// is applied at most once.
+		dedup,err:=tx.ExecContext(ctx,`INSERT INTO telegram_incoming_update_dedup(tenant_id,telegram_account_id,chat_id,message_id)
+			VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,tenantID,in.AccountID,in.ChatID,in.MessageID)
+		if err!=nil{return err}
+		claimed,err:=dedup.RowsAffected()
+		if err!=nil{return err}
+		if claimed==0{return nil}
 		// Keep the chat catalogue independent from message-content collection:
 		// observing a group must not require a reply to our own message or pass
 		// the tenant's text/media filters. Only metadata is stored here.
