@@ -21,7 +21,7 @@ type DiscoveredLink struct {
 	InviteCiphertext []byte
 }
 
-var telegramLinkPattern = regexp.MustCompile(`(?i)(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(\+[A-Za-z0-9_-]{8,}|joinchat/[A-Za-z0-9_-]{8,}|[A-Za-z0-9_]{5,})`)
+var telegramLinkPattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./@-])(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(\+[A-Za-z0-9_-]{8,128}|joinchat/[A-Za-z0-9_-]{8,128}|[A-Za-z0-9_]{5,32})(?:[/?#][^\s<>"']*)?`)
 
 var reservedTelegramPaths = map[string]bool{
 	"s":true,"addstickers":true,"addemoji":true,"addtheme":true,"addlist":true,
