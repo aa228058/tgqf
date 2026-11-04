@@ -827,7 +827,7 @@ func (s *Service) UpdateKeywordVoiceCallState(ctx context.Context, tenantID, acc
     err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
         result, err := tx.ExecContext(ctx, `UPDATE keyword_action_jobs
             SET voice_call_state=$4, updated_at=NOW()
-            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND (action_type='voice_call' OR action_steps @> '[{'action_type':'voice_call'}]'::jsonb)`,
+            WHERE tenant_id=$1 AND telegram_account_id=$2 AND telegram_call_id=$3 AND (action_type='voice_call' OR action_steps @> '[{"action_type":"voice_call"}]'::jsonb)`,
             tenantID, accountID, callID, state)
         if err != nil {
             return err
