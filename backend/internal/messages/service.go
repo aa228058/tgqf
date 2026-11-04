@@ -1100,12 +1100,12 @@ func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessa
 		// Persist the Telegram result and the outbound conversation message in
 		// one transaction. If the worker crashes after Telegram accepts the send,
 		// a later retry of this DB transaction is safe and does not send again.
-		var accountID string
+		var accountID,sourceMessageID string
 		var chatID,replyToID int64
 		var textBody,messageType string
-		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,chat_id,reply_to_message_id,message_text,message_type
+		err:=tx.QueryRowContext(ctx,`SELECT telegram_account_id::text,unified_message_id::text,chat_id,reply_to_message_id,message_text,message_type
 			FROM message_reply_jobs WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$3
-			FOR UPDATE`,job.TenantID,job.ID,job.LeaseUntil).Scan(&accountID,&chatID,&replyToID,&textBody,&messageType)
+			FOR UPDATE`,job.TenantID,job.ID,job.LeaseUntil).Scan(&accountID,&sourceMessageID,&chatID,&replyToID,&textBody,&messageType)
 		if errors.Is(err,sql.ErrNoRows){return errors.New("reply job lease not found")}
 		if err!=nil{return err}
 		res,err:=tx.ExecContext(ctx,`UPDATE message_reply_jobs SET status='sent',telegram_message_id=$3,last_error='',lease_until=NULL,updated_at=NOW()
@@ -1120,10 +1120,9 @@ func (s *Service) CompleteReply(ctx context.Context, job ReplyJob, telegramMessa
 		)
 		SELECT $1,$2,$3,$4,source.chat_type,source.chat_title,0,$5,TRUE,TRUE,$6,$7,NOW()
 		FROM unified_messages source
-		WHERE source.tenant_id=$1 AND source.telegram_account_id=$2 AND source.chat_id=$3
-		ORDER BY source.message_date DESC LIMIT 1
+		WHERE source.tenant_id=$1 AND source.id=$8
 		ON CONFLICT(telegram_account_id,chat_id,message_id) DO NOTHING`,
-			job.TenantID,accountID,chatID,telegramMessageID,replyToID,textBody,mediaType)
+			job.TenantID,accountID,chatID,telegramMessageID,replyToID,textBody,mediaType,sourceMessageID)
 		if err!=nil{return err}
 		payload,err:=json.Marshal(MessageCreatedEvent{Type:"message.created",AccountID:accountID,ChatID:chatID,MessageID:telegramMessageID,CreatedAt:time.Now().UTC()})
 		if err!=nil{return err}
