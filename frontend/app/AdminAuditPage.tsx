@@ -10,7 +10,7 @@ export function AdminAuditPage({token}:{token:string}){
  useEffect(()=>{
   let alive=true;
   fetch(API+"/api/v1/admin/audit-logs?limit=50&offset=0",{headers:{Authorization:"Bearer "+token},cache:"no-store"})
-   .then(r=>{if(!r.ok)throw new Error(await apiErrorMessage(r,"读取失败"));return readAPIJSON<{logs:Row[]}>(r)})
+   .then(async r=>{if(!r.ok)throw new Error(await apiErrorMessage(r,"读取失败"));return readAPIJSON<{logs:Row[]}>(r)})
    .then(v=>{if(alive)setRows(v.logs||[])})
    .catch(e=>{if(alive)setError(e.message||"读取失败")});
   return()=>{alive=false};
