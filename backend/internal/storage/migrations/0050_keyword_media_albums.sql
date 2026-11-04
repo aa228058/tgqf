@@ -53,11 +53,11 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM tenant_keyword_rules r
     WHERE r.tenant_id=OLD.tenant_id AND r.action_type='media_album'
-      AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.media_album_items) item WHERE item->>'asset_id'=OLD.id::text)
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.media_album_items) AS items(item) WHERE item->>'asset_id'=OLD.id::text)
   ) OR EXISTS (
     SELECT 1 FROM keyword_action_jobs j
     WHERE j.tenant_id=OLD.tenant_id AND j.action_type='media_album'
-      AND EXISTS (SELECT 1 FROM jsonb_array_elements(j.media_album_items) item WHERE item->>'asset_id'=OLD.id::text)
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(j.media_album_items) AS items(item) WHERE item->>'asset_id'=OLD.id::text)
   ) THEN
     RAISE EXCEPTION 'media asset is referenced by a keyword album';
   END IF;
