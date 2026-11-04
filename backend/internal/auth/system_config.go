@@ -97,15 +97,19 @@ func (s *Service) UpdateSystemConfig(ctx context.Context, actorID, key string, r
 
 func (s *Service) SystemConfigBool(ctx context.Context, key string, fallback bool) bool {
     if def, ok := systemConfigDefinitions[key]; !ok || def.kind != "bool" { return fallback }
+    var raw []byte
+    if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_configs WHERE key=$1`, key).Scan(&raw); err != nil { return fallback }
     var value bool
-    if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_configs WHERE key=$1`, key).Scan(&value); err != nil { return fallback }
+    if err := json.Unmarshal(raw, &value); err != nil { return fallback }
     return value
 }
 
 func (s *Service) SystemConfigInt(ctx context.Context, key string, fallback int) int {
     def, ok := systemConfigDefinitions[key]
     if !ok || def.kind != "int" { return fallback }
+    var raw []byte
+    if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_configs WHERE key=$1`, key).Scan(&raw); err != nil { return fallback }
     var value int
-    if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_configs WHERE key=$1`, key).Scan(&value); err != nil || value < def.min || value > def.max { return fallback }
+    if err := json.Unmarshal(raw, &value); err != nil || value < def.min || value > def.max { return fallback }
     return value
 }
