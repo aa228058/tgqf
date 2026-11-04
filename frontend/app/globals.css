@@ -542,3 +542,48 @@ input,select,textarea{min-height:40px}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+
+/* Mobile data tables become readable, labeled cards instead of tiny horizontal tables. */
+@media(max-width:700px){
+  .groups-table-wrap,.account-table-wrap{overflow:visible}
+  .groups-table,.account-table{width:100%;min-width:0;border-collapse:separate;border-spacing:0 10px}
+  .groups-table thead,.account-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .groups-table tbody,.account-table tbody{display:grid;gap:10px}
+  .groups-table tbody tr,.account-table tbody tr{
+    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;
+    padding:8px 13px;border:1px solid var(--line);border-radius:12px;
+    background:var(--surface);box-shadow:0 2px 8px rgba(20,32,50,.035);
+  }
+  .groups-table tbody tr{cursor:pointer}
+  .groups-table td,.account-table td{
+    display:block;min-width:0;padding:9px 0;border:0;border-bottom:1px solid var(--line);
+    overflow-wrap:anywhere;white-space:normal;font-size:12px;
+  }
+  .groups-table td::before,.account-table td::before{
+    content:attr(data-label);display:block;margin-bottom:5px;
+    color:var(--muted);font-size:10px;font-weight:650;letter-spacing:.01em;
+  }
+  .groups-table td[data-label="群组"],.groups-table td[data-label="链接"],
+  .groups-table td[data-label="错误"],.account-table td[data-label="账号"],
+  .account-table td[data-label="操作"]{grid-column:1/-1}
+  .groups-table td:last-child,.account-table td:last-child{border-bottom:0}
+  .groups-table td.empty,.account-table td.empty{grid-column:1/-1;border:0;text-align:center;padding:18px 8px}
+  .groups-table td.empty::before,.account-table td.empty::before{content:none}
+  .account-table td[data-label="选择"]{display:flex;align-items:center;gap:8px}
+  .account-table td[data-label="选择"]::before{display:inline;margin:0}
+  .account-table td[data-label="选择"] input{width:18px;height:18px;min-height:18px}
+  .account-table td select{max-width:100%;width:100%;min-height:38px;font-size:12px}
+  .account-row-actions{min-width:0;gap:6px}
+  .account-row-actions button{min-height:38px;padding:8px 10px;font-size:11px}
+  .groups-pagination,.account-pagination{align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .groups-pagination>div,.account-pagination>div{width:100%}
+  .groups-pagination button,.account-pagination button{flex:1}
+}
+@media(max-width:420px){
+  .groups-table tbody tr,.account-table tbody tr{grid-template-columns:minmax(0,1fr)}
+  .groups-table td[data-label="群组"],.groups-table td[data-label="链接"],
+  .groups-table td[data-label="错误"],.account-table td[data-label="账号"],
+  .account-table td[data-label="操作"]{grid-column:1}
+  .account-row-actions button{flex:1 1 auto}
+}
