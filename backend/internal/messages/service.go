@@ -972,6 +972,7 @@ func (s *Service) ClaimPendingReplies(ctx context.Context, maxJobs int) ([]Reply
 				SELECT j.id,j.tenant_id,j.telegram_account_id
 				FROM message_reply_jobs j JOIN telegram_accounts a ON a.tenant_id=j.tenant_id AND a.id=j.telegram_account_id
 				WHERE j.tenant_id=$1
+				AND EXISTS (SELECT 1 FROM tenants active_tenant WHERE active_tenant.id=j.tenant_id AND active_tenant.status='active' AND active_tenant.expires_at>NOW())
 				AND ((j.status='pending' AND j.available_at<=NOW()) OR (j.status='processing' AND j.lease_until<NOW()))
 				AND a.status='authorized' AND a.session_ciphertext IS NOT NULL
 				AND COALESCE(a.telegram_send_next_at,'-infinity'::timestamptz)<=NOW()
