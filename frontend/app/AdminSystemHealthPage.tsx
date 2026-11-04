@@ -2,7 +2,7 @@
 import {useCallback,useEffect,useState} from "react";
 
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
-type Health={checked_at:string;host:{goroutines:number;heap_alloc_bytes:number;heap_in_use_bytes:number;sys_bytes:number;disk_total_bytes:number;disk_free_bytes:number;disk_used_percent:number};database:{status:string;open_connections:number;in_use_connections:number;idle_connections:number;max_open_connections:number;ping_latency_ms:number};workers:{total:number;running:number;stale:number;stopped:number};accounts:{total:number;authorized:number;disconnected:number;error:number;pending:number};proxies:{total:number;failed_checks_15m:number;successful_checks_15m:number}};
+type Health={checked_at:string;redis:{status:string;ping_latency_ms:number};queues:{incoming_stream_length:number;incoming_pending:number;message_outbox_pending:number};host:{cpu_percent:number;goroutines:number;heap_alloc_bytes:number;heap_in_use_bytes:number;sys_bytes:number;disk_total_bytes:number;disk_free_bytes:number;disk_used_percent:number};database:{status:string;open_connections:number;in_use_connections:number;idle_connections:number;max_open_connections:number;ping_latency_ms:number};workers:{total:number;running:number;stale:number;stopped:number};accounts:{total:number;authorized:number;disconnected:number;error:number;pending:number};proxies:{total:number;failed_checks_15m:number;successful_checks_15m:number}};
 const bytes=(n:number)=>n>=1024**3?(n/1024**3).toFixed(1)+" GB":n>=1024**2?(n/1024**2).toFixed(0)+" MB":n+" B";
 function Metric({label,value,detail,status}:{label:string;value:string|number;detail?:string;status?:"ok"|"warn"|"bad"}){return <article className="monitor-metric"><small>{label}</small><strong>{value}</strong>{detail&&<span>{detail}</span>}{status&&<i className={"monitor-status "+status}>{status==="ok"?"正常":status==="warn"?"关注":"异常"}</i>}</article>}
 export function AdminSystemHealthPage({token}:{token:string}){
@@ -19,13 +19,16 @@ export function AdminSystemHealthPage({token}:{token:string}){
   <div className="monitor-grid">
    <Metric label="整体状态" value={status==="healthy"?"运行正常":"存在告警"} detail={"采样时间 "+new Date(health.checked_at).toLocaleString()} status={status==="healthy"?"ok":"warn"}/>
    <Metric label="PostgreSQL" value={health.database.status==="ok"?"连接正常":"连接异常"} detail={health.database.ping_latency_ms+" ms · "+health.database.in_use_connections+"/"+health.database.max_open_connections+" 活跃连接"} status={health.database.status==="ok"?"ok":"bad"}/>
+   <Metric label="Redis" value={health.redis.status==="ok"?"连接正常":"连接异常"} detail={health.redis.ping_latency_ms+" ms · 入站 Stream "+health.queues.incoming_stream_length+" 条"} status={health.redis.status==="ok"?"ok":"bad"}/>
    <Metric label="Worker" value={health.workers.running+" 运行中"} detail={health.workers.stale+" 心跳超时 · "+health.workers.stopped+" 已停止"} status={health.workers.stale?"bad":"ok"}/>
    <Metric label="磁盘使用率" value={health.host.disk_total_bytes?health.host.disk_used_percent.toFixed(1)+"%":"不可用"} detail={health.host.disk_total_bytes?bytes(health.host.disk_free_bytes)+" 可用 / "+bytes(health.host.disk_total_bytes):"当前运行环境未提供磁盘指标"} status={health.host.disk_used_percent>=90?"bad":health.host.disk_used_percent>=85?"warn":"ok"}/>
    <Metric label="Telegram 账号" value={health.accounts.authorized+" / "+health.accounts.total+" 已授权"} detail={health.accounts.disconnected+" 断开 · "+health.accounts.pending+" 待授权 · "+health.accounts.error+" 错误"} status={health.accounts.error?"warn":"ok"}/>
    <Metric label="代理连接检查" value={health.proxies.total+" 条代理"} detail={"近 15 分钟成功 "+health.proxies.successful_checks_15m+" 次 · 失败 "+health.proxies.failed_checks_15m+" 次"} status={health.proxies.failed_checks_15m?"warn":"ok"}/>
    <Metric label="Go Heap" value={bytes(health.host.heap_alloc_bytes)} detail={"使用中 "+bytes(health.host.heap_in_use_bytes)+" · 系统分配 "+bytes(health.host.sys_bytes)}/>
+   <Metric label="CPU 使用率" value={health.host.cpu_percent.toFixed(1)+"%"} detail="基于 /proc/stat 的采样值"/>
+   <Metric label="队列积压" value={health.queues.incoming_pending+" pending"} detail={"消息 Outbox "+health.queues.message_outbox_pending+" 条待发布 · Stream 总量 "+health.queues.incoming_stream_length}/>
    <Metric label="Goroutines" value={health.host.goroutines} detail="API 进程当前协程数"/>
   </div>
-  <p className="monitor-footnote">当前版本提供 API 进程内存、磁盘、PostgreSQL 连接池、Worker 心跳、账号状态和代理检查历史。Redis 独立指标、主机 CPU、队列积压和主动告警通知尚未接入；不能将它们视为已监控。</p>
+  <p className="monitor-footnote">当前版本提供 API 进程内存、磁盘、PostgreSQL 连接池、Worker 心跳、账号状态和代理检查历史。主动告警通知和告警历史中心尚未接入；当前页面展示阈值状态和最近队列积压，不代表已配置短信、邮件或 Telegram 告警。</p>
  </section>;
 }
