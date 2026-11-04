@@ -9,6 +9,11 @@ set -a
 . "$ENV_FILE"
 set +a
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose.yaml")
+"${COMPOSE[@]}" config --quiet
+MIN_BACKUP_FREE_KB="${MIN_BACKUP_FREE_KB:-0}"
+[[ "$MIN_BACKUP_FREE_KB" =~ ^[0-9]+$ ]] || { echo "MIN_BACKUP_FREE_KB must be a non-negative integer" >&2; exit 1; }
+AVAILABLE_KB="$(df -Pk "$BACKUP_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')"
+if [[ -n "$AVAILABLE_KB" && "$AVAILABLE_KB" -lt "$MIN_BACKUP_FREE_KB" ]]; then echo "Insufficient free space for backup: ${AVAILABLE_KB}KB available, ${MIN_BACKUP_FREE_KB}KB required" >&2; exit 1; fi
 BACKUP_ROOT="${BACKUP_DIR:-$ROOT/backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
@@ -38,6 +43,11 @@ echo "Dumping PostgreSQL..."
   chmod 0600 postgres.dump redis-data.tar.gz
   sha256sum postgres.dump redis-data.tar.gz > SHA256SUMS
   chmod 0600 SHA256SUMS
+  printf "created_at=%s\\nimage_tag=%s\\npostgres_database=%s\\nredis_stream=tgqf:telegram:incoming-updates\\nsession_encryption_key_included=false\\n" "$STAMP" "${TGQF_IMAGE_TAG:-unknown}" "$POSTGRES_DB" > BACKUP_METADATA.txt
+  chmod 0600 BACKUP_METADATA.txt
+  sha256sum -c SHA256SUMS
+  tar -tzf redis-data.tar.gz >/dev/null
+  "${COMPOSE[@]}" exec -T postgres pg_restore --list < postgres.dump >/dev/null
 )
 "${COMPOSE[@]}" start redis api worker frontend
 stopped=0
