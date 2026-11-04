@@ -1028,8 +1028,8 @@ func (s *Service) nextReplyTenant(ctx context.Context) (string,error) {
 				AND ((e.status='pending' AND e.available_at<=NOW()) OR (e.status='processing' AND e.lease_until<NOW())) AND (e.created_at,e.id)<(j.created_at,j.id))
 		)
 		ORDER BY t.reply_jobs_last_claimed_at NULLS FIRST,t.id
-		FOR UPDATE OF t SKIP LOCKED
 		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED
 	)
 	UPDATE tenants t SET reply_jobs_last_claimed_at=clock_timestamp()
 	FROM candidate c WHERE t.id=c.id
