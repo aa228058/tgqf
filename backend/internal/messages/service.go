@@ -274,7 +274,7 @@ func storeDiscoveredLinks(ctx context.Context,tx *sql.Tx,tenantID string,in Inco
 		if link.Type=="public" {
 			if err:=tx.QueryRowContext(ctx,`INSERT INTO public_group_links(group_id,link_type,public_url,status)
 				VALUES((SELECT id FROM public_groups WHERE lower(username)=lower($1) ORDER BY id LIMIT 1),'public',$2,'pending')
-				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,next_check_at=NULL,check_attempts=0
+				ON CONFLICT(link_type,public_url) DO UPDATE SET last_seen_at=NOW(),status='pending',last_checked_at=NULL,last_check_error=NULL,next_check_at=NULL,check_attempts=0,check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
 				RETURNING id`,strings.TrimPrefix(strings.TrimPrefix(link.PublicURL,"https://t.me/"),"@"),link.PublicURL).Scan(&id);err!=nil{return err}
 		}else if link.Type=="invite" {
 			if len(link.InviteHash)==0||len(link.InviteCiphertext)==0{continue}
@@ -631,6 +631,7 @@ func (s *Service) GetGroupLinkStats(ctx context.Context, tenantID string) (Group
 type PublicLinkCheck struct {
  LinkID int64
  Username string
+ LeaseUntil time.Time
 }
 
 func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID string, limit int) ([]PublicLinkCheck, error) {
@@ -638,18 +639,28 @@ func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID 
  if limit < 1 || limit > 100 { limit = 50 }
  out := []PublicLinkCheck{}
  err := withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx) error {
-  rows,err:=tx.QueryContext(ctx,`SELECT l.id,l.public_url
-   FROM public_group_links l
-   JOIN public_group_link_sources src ON src.link_id=l.id
-   WHERE l.link_type='public' AND src.tenant_id=$1 AND src.telegram_account_id=$2
-    AND (l.next_check_at IS NULL OR l.next_check_at <= NOW())
-   ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id LIMIT $3`,tenantID,accountID,limit)
+  rows,err:=tx.QueryContext(ctx,`WITH due AS (
+    SELECT l.id
+    FROM public_group_links l
+    WHERE l.link_type='public'
+      AND EXISTS (SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$1 AND src.telegram_account_id=$2)
+      AND (l.next_check_at IS NULL OR l.next_check_at<=NOW())
+      AND (l.check_lease_until IS NULL OR l.check_lease_until<=NOW())
+    ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id
+    LIMIT $3 FOR UPDATE OF l SKIP LOCKED
+   ), claimed AS (
+    UPDATE public_group_links l
+    SET check_lease_until=NOW()+INTERVAL '2 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
+    FROM due WHERE l.id=due.id
+    RETURNING l.id,l.public_url,l.check_lease_until
+   )
+   SELECT id,public_url,check_lease_until FROM claimed ORDER BY id`,tenantID,accountID,limit)
   if err!=nil{return err}
   defer rows.Close()
   for rows.Next(){
    var item PublicLinkCheck
    var raw string
-   if err:=rows.Scan(&item.LinkID,&raw);err!=nil{return err}
+   if err:=rows.Scan(&item.LinkID,&raw,&item.LeaseUntil);err!=nil{return err}
    parsed,err:=url.Parse(raw)
    if err!=nil {continue}
    parts:=strings.Split(strings.Trim(parsed.Path,"/"),"/")
@@ -662,19 +673,21 @@ func (s *Service) ListPublicLinkChecks(ctx context.Context, tenantID, accountID 
  return out,err
 }
 
-func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID string,linkID int64,status,checkError string,retryAfter ...time.Duration) error {
+func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID,accountID string,linkID int64,status,checkError string,leaseUntil time.Time,retryAfter ...time.Duration) error {
  allowed:=map[string]bool{"valid":true,"invalid":true,"unknown":true}
- if linkID<=0||!allowed[status]{return errors.New("invalid public link check result")}
+ if !validUUID(accountID)||linkID<=0||leaseUntil.IsZero()||!allowed[status]{return errors.New("invalid public link check result")}
  if len(checkError)>500{checkError=checkError[:500]}
  retrySeconds:=int64(0);if len(retryAfter)>0&&retryAfter[0]>0{retrySeconds=int64(retryAfter[0]/time.Second);if retryAfter[0]%time.Second!=0{retrySeconds++}}
  return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
+  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$5,last_checked_at=NOW(),last_check_error=NULLIF($6,''),
     check_attempts=check_attempts+1,
-    next_check_at=CASE WHEN $3='unknown' AND $5>0 THEN NOW()+GREATEST($5*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $3='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END
-   WHERE l.id=$1 AND l.link_type='public' AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError,retrySeconds)
+    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END,
+    check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
+   WHERE l.id=$1 AND l.link_type='public' AND l.check_lease_tenant_id=$2 AND l.check_lease_account_id=$3 AND l.check_lease_until=$4
+    AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2 AND src.telegram_account_id=$3)`,linkID,tenantID,accountID,leaseUntil,status,checkError,retrySeconds)
   if err!=nil{return err}
   n,_:=result.RowsAffected()
-  if n==0{return errors.New("public Telegram link not found")}
+  if n==0{return errors.New("public Telegram link check lease expired or was superseded")}
   return nil
  })
 }
@@ -682,6 +695,7 @@ func (s *Service) RecordPublicLinkCheck(ctx context.Context,tenantID string,link
 type PrivateInviteCheck struct {
  LinkID int64
  Hash string
+ LeaseUntil time.Time
 }
 
 func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, accountID string, limit int) ([]PrivateInviteCheck, error) {
@@ -689,19 +703,28 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
  if limit < 1 || limit > 100 { limit = 50 }
  out := []PrivateInviteCheck{}
  err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-  rows, err := tx.QueryContext(ctx, `SELECT l.id, l.invite_ciphertext
-   FROM public_group_links l
-   JOIN public_group_link_sources src ON src.link_id=l.id
-   WHERE l.link_type='invite' AND src.tenant_id=$1 AND src.telegram_account_id=$2
-    AND (l.next_check_at IS NULL OR l.next_check_at <= NOW())
-   ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id
-   LIMIT $3`, tenantID, accountID, limit)
+  rows, err := tx.QueryContext(ctx, `WITH due AS (
+    SELECT l.id
+    FROM public_group_links l
+    WHERE l.link_type='invite'
+      AND EXISTS (SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$1 AND src.telegram_account_id=$2)
+      AND (l.next_check_at IS NULL OR l.next_check_at<=NOW())
+      AND (l.check_lease_until IS NULL OR l.check_lease_until<=NOW())
+    ORDER BY COALESCE(l.last_checked_at,l.first_seen_at),l.id
+    LIMIT $3 FOR UPDATE OF l SKIP LOCKED
+   ), claimed AS (
+    UPDATE public_group_links l
+    SET check_lease_until=NOW()+INTERVAL '2 minutes',check_lease_tenant_id=$1,check_lease_account_id=$2
+    FROM due WHERE l.id=due.id
+    RETURNING l.id,l.invite_ciphertext,l.check_lease_until
+   )
+   SELECT id,invite_ciphertext,check_lease_until FROM claimed ORDER BY id`, tenantID, accountID, limit)
   if err != nil { return err }
   defer rows.Close()
   for rows.Next() {
    var item PrivateInviteCheck
    var ciphertext []byte
-   if err := rows.Scan(&item.LinkID,&ciphertext); err != nil { return err }
+   if err := rows.Scan(&item.LinkID,&ciphertext,&item.LeaseUntil); err != nil { return err }
    hash, err := decryptJoinInviteHash(ciphertext)
    if err != nil { continue }
    item.Hash = hash
@@ -712,20 +735,21 @@ func (s *Service) ListPrivateInviteChecks(ctx context.Context, tenantID, account
  return out,err
 }
 
-func (s *Service) RecordPrivateInviteCheck(ctx context.Context, tenantID string, linkID int64, status, checkError string, retryAfter ...time.Duration) error {
- allowed := map[string]bool{"valid":true,"approval_required":true,"invalid":true,"unknown":true}
- if linkID <= 0 || !allowed[status] { return errors.New("invalid private invite check result") }
- if len(checkError)>500 { checkError=checkError[:500] }
+func (s *Service) RecordPrivateInviteCheck(ctx context.Context,tenantID,accountID string,linkID int64,status,checkError string,leaseUntil time.Time,retryAfter ...time.Duration) error {
+ allowed:=map[string]bool{"valid":true,"approval_required":true,"invalid":true,"unknown":true}
+ if !validUUID(accountID)||linkID<=0||leaseUntil.IsZero()||!allowed[status]{return errors.New("invalid private invite check result")}
+ if len(checkError)>500{checkError=checkError[:500]}
  retrySeconds:=int64(0);if len(retryAfter)>0&&retryAfter[0]>0{retrySeconds=int64(retryAfter[0]/time.Second);if retryAfter[0]%time.Second!=0{retrySeconds++}}
- return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error {
-  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$3,last_checked_at=NOW(),last_check_error=NULLIF($4,''),
+ return withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+  result,err:=tx.ExecContext(ctx,`UPDATE public_group_links l SET status=$5,last_checked_at=NOW(),last_check_error=NULLIF($6,''),
     check_attempts=check_attempts+1,
-    next_check_at=CASE WHEN $3='unknown' AND $5>0 THEN NOW()+GREATEST($5*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $3='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END
-   WHERE l.id=$1 AND l.link_type='invite' AND EXISTS(
-    SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2)`,linkID,tenantID,status,checkError,retrySeconds)
+    next_check_at=CASE WHEN $5='unknown' AND $7>0 THEN NOW()+GREATEST($7*INTERVAL '1 second',INTERVAL '15 minutes') WHEN $5='unknown' THEN NOW()+INTERVAL '15 minutes' * POWER(2,LEAST(check_attempts,5)) ELSE NOW()+INTERVAL '6 hours' END,
+    check_lease_until=NULL,check_lease_tenant_id=NULL,check_lease_account_id=NULL
+   WHERE l.id=$1 AND l.link_type='invite' AND l.check_lease_tenant_id=$2 AND l.check_lease_account_id=$3 AND l.check_lease_until=$4
+    AND EXISTS(SELECT 1 FROM public_group_link_sources src WHERE src.link_id=l.id AND src.tenant_id=$2 AND src.telegram_account_id=$3)`,linkID,tenantID,accountID,leaseUntil,status,checkError,retrySeconds)
   if err!=nil{return err}
   n,_:=result.RowsAffected()
-  if n==0{return errors.New("private invite link not found")}
+  if n==0{return errors.New("private Telegram invite check lease expired or was superseded")}
   return nil
  })
 }
