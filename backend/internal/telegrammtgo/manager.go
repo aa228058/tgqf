@@ -55,6 +55,7 @@ type pendingQR struct {
 	client *telegram.Client
 	token []byte
 	expires int64
+	expiresAt time.Time
 }
 type QRChallenge struct { URL string; Expires int64 }
 type QRAuthResult struct { Pending bool; Challenge *QRChallenge; SessionString string; UserID int64; Username string; FirstName string; Phone string }
@@ -281,13 +282,38 @@ func (m *Manager) StartQR(ctx context.Context, accountID, proxyJSON string, prof
 		m.mu.Unlock()
 		return QRAuthResult{SessionString:sessionString, UserID:token.User.ID, Username:token.User.Username, FirstName:token.User.FirstName, Phone:token.User.Phone}, nil
 	}
-	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires)}
+	entry := &pendingQR{client:client, token:append([]byte(nil), token.Token...), expires:int64(token.Expires), expiresAt:time.Now().Add(10*time.Minute)}
 	m.mu.Lock()
 	if _, exists := m.clients[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account client is already managed") }
 	if _, exists := m.pendingQR[accountID]; exists { m.mu.Unlock(); _ = client.Disconnect(); return QRAuthResult{}, errors.New("account QR login is already pending") }
 	m.pendingQR[accountID] = entry
 	m.mu.Unlock()
+	go m.expireQRLogin(accountID, entry)
 	return QRAuthResult{Pending:true,Challenge:&QRChallenge{URL:"tg://login?token="+base64.RawURLEncoding.EncodeToString(token.Token),Expires:int64(token.Expires)}},nil
+}
+
+
+
+// expireQRLogin bounds the lifetime of an abandoned QR authorization client.
+// Token refreshes do not extend this overall challenge lifetime.
+func (m *Manager) expireQRLogin(accountID string, entry *pendingQR) {
+	delay := time.Until(entry.expiresAt)
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+
+	m.mu.Lock()
+	if m.pendingQR[accountID] != entry {
+		m.mu.Unlock()
+		return
+	}
+	delete(m.pendingQR, accountID)
+	m.mu.Unlock()
+
+	_ = disconnectPending(entry)
 }
 
 func (m *Manager) PollQR(ctx context.Context, accountID string) (QRAuthResult, error) {
