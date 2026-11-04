@@ -460,3 +460,12 @@ func (s *Service) ApplyBulkRuntimeAction(ctx context.Context, tenantID string, a
 	if err != nil { return 0, err }
 	return changed, nil
 }
+
+// OwnsAccount checks tenant ownership without returning account secrets.
+func (s *Service) OwnsAccount(ctx context.Context, tenantID, accountID string) (bool, error) {
+ owned:=false
+ err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx) error {
+  return tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2::uuid)`,tenantID,accountID).Scan(&owned)
+ })
+ return owned,err
+}
