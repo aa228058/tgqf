@@ -165,7 +165,7 @@ func main() {
 					accountID,okID:=key.(string);tenantID,okTenant:=value.(string)
 					if !okID||!okTenant||!manager.IsConnected(accountID){return true}
 					if err:=refreshPrivateInviteLinks(sweepCtx,messageService,manager,accountID,tenantID,logger);err!=nil {
-						logger.Warn("refresh private Telegram invite links","account_id",accountID,"error",err)
+						logger.Warn("refresh Telegram group links","account_id",accountID,"error",err)
 					}
 					return sweepCtx.Err()==nil
 				})
