@@ -108,7 +108,7 @@ func (s *Service) ListUnifiedTasks(ctx context.Context, tenantID string, input U
 			SELECT ja.id::text, ja.task_id::text, 'group_join'::text, jt.name,
 				ja.status, ja.telegram_account_id::text,
 				COALESCE(NULLIF(a.display_name,''),a.phone,''),
-				ja.attempts, ja.available_at, ja.lease_until, ja.last_error,
+				ja.attempts, ja.available_at, CASE WHEN ja.status='request_pending' THEN ja.approval_check_lease_until ELSE ja.lease_until END, ja.last_error,
 				ja.created_at, ja.updated_at
 			FROM tenant_join_task_accounts ja
 			JOIN tenant_join_tasks jt ON jt.tenant_id=ja.tenant_id AND jt.id=ja.task_id
