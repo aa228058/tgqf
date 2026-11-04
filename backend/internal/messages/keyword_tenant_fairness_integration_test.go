@@ -21,7 +21,6 @@ func TestKeywordActionClaimsRotateAcrossTenants(t *testing.T) {
 	for _, ddl := range []string{
 		`CREATE TABLE message_reply_jobs(tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE account_profile_update_jobs(tenant_id UUID,account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
-		`CREATE TABLE tenant_join_task_accounts(tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE keyword_action_jobs(
 			id UUID PRIMARY KEY,tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
 			chat_id BIGINT NOT NULL DEFAULT 1,reply_to_message_id BIGINT NOT NULL DEFAULT 1,
