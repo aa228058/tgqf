@@ -521,6 +521,26 @@ func recordWorkerHeartbeat(ctx context.Context, db *sql.DB, instanceID, hostname
 func refreshPrivateInviteLinks(ctx context.Context, service *messages.Service, manager *telegrammtgo.Manager, accountID, tenantID string, logger *slog.Logger) error {
 	links,err:=service.ListPrivateInviteChecks(ctx,tenantID,accountID,50)
 	if err!=nil{return err}
+	publicLinks,publicErr:=service.ListPublicLinkChecks(ctx,tenantID,accountID,50)
+	if publicErr!=nil{return publicErr}
+	for _,link:=range publicLinks {
+		if ctx.Err()!=nil{return ctx.Err()}
+		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
+		valid,checkErr:=manager.CheckPublicUsername(checkCtx,accountID,link.Username)
+		cancel()
+		status:="unknown"
+		errorText:=""
+		if checkErr!=nil {
+			errorText=checkErr.Error()
+			upper:=strings.ToUpper(errorText)
+			if strings.Contains(upper,"USERNAME_NOT_OCCUPIED")||strings.Contains(upper,"USERNAME_INVALID")||strings.Contains(upper,"USERNAME_PURCHASE_AVAILABLE") {
+				status="invalid"
+			}
+		} else if valid { status="valid" } else { status="invalid" }
+		if err:=service.RecordPublicLinkCheck(ctx,tenantID,link.LinkID,status,errorText);err!=nil {
+			logger.Warn("persist public link check result","link_id",link.LinkID,"error",err)
+		}
+	}
 	for _,link:=range links {
 		if ctx.Err()!=nil{return ctx.Err()}
 		checkCtx,cancel:=context.WithTimeout(ctx,20*time.Second)
