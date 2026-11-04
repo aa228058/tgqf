@@ -328,6 +328,19 @@ func processKeywordActionJobs(ctx context.Context, service *messages.Service, ma
             var asset messages.MediaAssetContent
             asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,job.MediaAssetID)
             if sendErr==nil { telegramMessageID,sendErr=manager.SendMediaReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,job.MediaType,asset.FileName,asset.MIMEType,job.MediaCaption,asset.Content) }
+        case "media_album":
+            album:=make([]telegrammtgo.MediaAlbumItem,0,len(job.MediaAlbumItems))
+            for _,item:=range job.MediaAlbumItems {
+                var asset messages.MediaAssetContent
+                asset,sendErr=service.GetMediaAsset(sendCtx,job.TenantID,item.AssetID)
+                if sendErr!=nil { break }
+                album=append(album,telegrammtgo.MediaAlbumItem{MediaType:item.MediaType,FileName:asset.FileName,MIMEType:asset.MIMEType,Caption:item.Caption,Content:asset.Content})
+            }
+            if sendErr==nil {
+                var ids []int64
+                ids,sendErr=manager.SendMediaAlbumReply(sendCtx,job.AccountID,job.ChatID,job.ReplyToMessageID,album)
+                if sendErr==nil && len(ids)>0 { telegramMessageID=ids[0] }
+            }
         default:
             sendErr=fmt.Errorf("unsupported keyword action type %q",job.ActionType)
         }
