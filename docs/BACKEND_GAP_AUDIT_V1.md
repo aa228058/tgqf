@@ -73,8 +73,8 @@
 - [x] P1-07 第一阶段：新增 `public_group_sources`、`tenant_group_contributions`，记录来源账号、发现租户、发现次数和时间。
 - [x] P1-10 第二阶段：租户可提交群组标题、公开用户名、成员数和认证标记的纠错建议；超级管理员审核通过后才更新全局资料，拒绝/通过均记录审核人、时间和备注。
 - [x] P1-11 第一阶段：超级管理员可人工合并同类型重复群组；迁移来源记录、租户贡献、公开链接关联和纠错历史，并保存合并快照与审计日志。合并不自动根据相似名称执行。
-- P1-08 待完成：从 MTGo 实际群组实体读取并分别记录群组默认发言限制（default banned rights）与当前账号个人权限（admin/restricted rights）；当前入库事件只携带群组基础资料，不能把权限未知误记为允许发言。
-- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 读取共享目录并提供来源数、贡献租户数；本轮增加稳定内部 ID、成员/来源/贡献筛选、认证状态筛选、多字段排序及最多 10,000 条 CSV 导出。
+- P1-08 第一阶段已接入：Worker 从 MTGo `message.Chat.Permissions` 采集群组默认发言权限，并将当前账号的管理员/受限权限快照单独写入该租户的来源记录；两者分列保存，未获取到的权限保持 SQL NULL/未知，不推断为允许。权限快照随实时消息更新，尚未建立离线全群定期刷新任务。
+- P1-09 已将实时新群组/频道元数据写入全局公共库，`GET /api/v1/groups` 读取共享目录并提供来源数、贡献租户数；本轮增加稳定内部 ID、成员/来源/贡献筛选、认证状态筛选、多字段排序、群组默认权限快照、最多 10,000 条 CSV 导出。
 - P1-10/P1-11 已增加纠错建议审核、人工合并和合并审计；审核只由超级管理员执行，租户建议不会直接写入全局资料。本轮增加 CSV 导入纠错建议（最多 1,000 行），所有修改仍进入待审核队列；导入不直接创建/篡改全局群组。
 
 ### P2 — 自动化业务闭环
@@ -106,6 +106,7 @@
 - `PUT /api/v1/proxies/{id}` 支持 `clear_password: true` 显式清除已保存的代理密码；不传密码仍保持原密码。
 - 数据库迁移 `0040_account_tags.sql`：`telegram_accounts.tags TEXT[]`，并建立 GIN 索引。
 - 数据库迁移 `0041_proxy_check_history.sql`：新增租户隔离的代理检测历史表；手动及 Worker 每 10 分钟自动检测均记录协议认证/Telegram DC TCP 隧道结果、耗时和脱敏错误信息；每代理最多保留最近 100 条。
+- 数据库迁移 `0042_public_group_permissions.sql`：分别保存全局群组默认权限与租户来源账号权限快照。
 - `GET /api/v1/accounts/profile-updates`（按 batch_id/status 分页查询逐账号执行结果）
 - `POST /api/v1/accounts/profile-updates/{id}/retry`、`POST /api/v1/accounts/profile-updates/{id}/resume`、`POST /api/v1/accounts/profile-updates/{id}/cancel`（失败重试、暂停恢复；仅 pending/paused 可取消，正在执行的任务必须等待当前 Telegram RPC 结束）
 - `PATCH /api/v1/accounts/{id}/group`
