@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$\{POSTGRES_USER}\" -d \"$\{POSTGRES_DB}\""]
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -25,11 +25,11 @@ services:
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$\{REDIS_PASSWORD}\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"${REDIS_PASSWORD}\""]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$\{REDIS_PASSWORD}\" ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
