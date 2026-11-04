@@ -2,6 +2,8 @@ package messages
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -48,6 +50,18 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			tenant_id UUID NOT NULL, group_id BIGINT NOT NULL REFERENCES public_groups(id),
 			first_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_contributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			contribution_count BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(tenant_id,group_id))`,
+		`CREATE TABLE public_group_links (
+			id BIGSERIAL PRIMARY KEY, group_id BIGINT, link_type TEXT NOT NULL, public_url TEXT,
+			invite_hash BYTEA, invite_ciphertext BYTEA, status TEXT NOT NULL DEFAULT 'pending',
+			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_checked_at TIMESTAMPTZ, last_check_error TEXT, check_attempts INTEGER NOT NULL DEFAULT 0,
+			next_check_at TIMESTAMPTZ, check_lease_until TIMESTAMPTZ, check_lease_tenant_id UUID, check_lease_account_id UUID)`,
+		`CREATE TABLE public_group_link_sources (
+			link_id BIGINT NOT NULL, tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
+			source_chat_id BIGINT NOT NULL, source_message_id BIGINT NOT NULL,
+			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			discovery_count BIGINT NOT NULL DEFAULT 1,
+			PRIMARY KEY(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id))`,
 	}
 	for _,statement:=range ddl { if _,err:=db.Exec(statement);err!=nil{db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close();t.Fatal(err)} }
 	cleanup:=func(){db.Close();adminDB.Exec("DROP SCHEMA "+schema+" CASCADE");adminDB.Close()}
@@ -119,5 +133,53 @@ func TestGroupCatalogueImportAndPermissionRefreshIntegration(t *testing.T) {
 	var checkError string
 	var lease sql.NullTime
 	if err:=db.QueryRowContext(ctx,`SELECT rights_check_attempts,rights_check_error,rights_check_lease_until FROM public_group_sources WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3`,groupID,tenantA,accountA).Scan(&attempts,&checkError,&lease);err!=nil{t.Fatal(err)}
+
 	if attempts!=1||checkError!="temporary Telegram RPC failure"||lease.Valid{t.Fatalf("failure retry state attempts=%d error=%q lease=%v",attempts,checkError,lease)}
+
+	// Public and private link leases are global per link, while visibility and
+	// claiming still require a source owned by the requesting tenant/account.
+	t.Setenv("SESSION_ENCRYPTION_KEY",base64.StdEncoding.EncodeToString(make([]byte,32)))
+	var publicLinkID int64
+	if err:=db.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,public_url,status) VALUES('public','https://t.me/shared_group','pending') RETURNING id`).Scan(&publicLinkID);err!=nil{t.Fatal(err)}
+	var inviteLinkID int64
+	inviteCode:="AbCdEf123456"
+	inviteCiphertext,err:=encryptInvite([]byte(inviteCode))
+	if err!=nil{t.Fatal(err)}
+	inviteHash:=sha256.Sum256([]byte(inviteCode))
+	if err:=db.QueryRowContext(ctx,`INSERT INTO public_group_links(link_type,invite_hash,invite_ciphertext,status) VALUES('invite',$1,$2,'pending') RETURNING id`,inviteHash[:],inviteCiphertext).Scan(&inviteLinkID);err!=nil{t.Fatal(err)}
+	for _,linkID:=range []int64{publicLinkID,inviteLinkID} {
+		for _,source:=range []struct{tenant,account string}{{tenantA,accountA},{tenantB,accountB}} {
+			if _,err:=db.ExecContext(ctx,`INSERT INTO public_group_link_sources(link_id,tenant_id,telegram_account_id,source_chat_id,source_message_id) VALUES($1,$2,$3,500,600)`,linkID,source.tenant,source.account);err!=nil{t.Fatal(err)}
+		}
+	}
+
+	publicA,err:=service.ListPublicLinkChecks(ctx,tenantA,accountA,5)
+	if err!=nil{t.Fatal(err)}
+	publicB,err:=service.ListPublicLinkChecks(ctx,tenantB,accountB,5)
+	if err!=nil{t.Fatal(err)}
+	if len(publicA)!=1||len(publicB)!=0{t.Fatalf("public link lease should be exclusive across tenants: A=%d B=%d",len(publicA),len(publicB))}
+	if _,err:=db.ExecContext(ctx,`UPDATE public_group_links SET next_check_at=NULL,check_lease_until=NOW()-INTERVAL '1 second' WHERE id=$1`,publicLinkID);err!=nil{t.Fatal(err)}
+	publicB,err=service.ListPublicLinkChecks(ctx,tenantB,accountB,5)
+	if err!=nil{t.Fatal(err)}
+	if len(publicB)!=1{t.Fatalf("public link expired lease was not reclaimed: %d",len(publicB))}
+	if err:=service.RecordPublicLinkCheck(ctx,tenantA,accountA,publicLinkID,"valid","",publicA[0].LeaseUntil);err==nil{t.Fatal("stale public-link worker unexpectedly wrote after lease reclaim")}
+	if err:=service.RecordPublicLinkCheck(ctx,tenantB,accountB,publicLinkID,"valid","",publicB[0].LeaseUntil);err!=nil{t.Fatal(err)}
+	var publicStatus string
+	if err:=db.QueryRowContext(ctx,`SELECT status FROM public_group_links WHERE id=$1`,publicLinkID).Scan(&publicStatus);err!=nil{t.Fatal(err)}
+	if publicStatus!="valid"{t.Fatalf("public link status=%q",publicStatus)}
+
+	privateA,err:=service.ListPrivateInviteChecks(ctx,tenantA,accountA,5)
+	if err!=nil{t.Fatal(err)}
+	privateB,err:=service.ListPrivateInviteChecks(ctx,tenantB,accountB,5)
+	if err!=nil{t.Fatal(err)}
+	if len(privateA)!=1||privateA[0].Hash!=inviteCode||len(privateB)!=0{t.Fatalf("private invite lease/decryption mismatch: A=%#v B=%#v",privateA,privateB)}
+	if _,err:=db.ExecContext(ctx,`UPDATE public_group_links SET next_check_at=NULL,check_lease_until=NOW()-INTERVAL '1 second' WHERE id=$1`,inviteLinkID);err!=nil{t.Fatal(err)}
+	privateB,err=service.ListPrivateInviteChecks(ctx,tenantB,accountB,5)
+	if err!=nil{t.Fatal(err)}
+	if len(privateB)!=1{t.Fatalf("private invite expired lease was not reclaimed: %d",len(privateB))}
+	if err:=service.RecordPrivateInviteCheck(ctx,tenantA,accountA,inviteLinkID,"valid","",privateA[0].LeaseUntil);err==nil{t.Fatal("stale private-invite worker unexpectedly wrote after lease reclaim")}
+	if err:=service.RecordPrivateInviteCheck(ctx,tenantB,accountB,inviteLinkID,"approval_required","awaiting admin",privateB[0].LeaseUntil);err!=nil{t.Fatal(err)}
+	var privateStatus string
+	if err:=db.QueryRowContext(ctx,`SELECT status FROM public_group_links WHERE id=$1`,inviteLinkID).Scan(&privateStatus);err!=nil{t.Fatal(err)}
+	if privateStatus!="approval_required"{t.Fatalf("private invite status=%q",privateStatus)}
 }
