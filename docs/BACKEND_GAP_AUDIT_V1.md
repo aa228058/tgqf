@@ -464,3 +464,8 @@ CI 修复记录：联系人发送选项参数与 MTGo v0.22.0 实际签名不一
 - [ ] 仍需 PostgreSQL 多 Worker 集成测试，验证链接和审批轮询租约过期重领、旧 Worker 延迟写回被 fencing、链接状态全局共享语义，以及不同账号/租户来源下的检查公平性。
 - [ ] 仍需真实 Telegram 测试账号验证公开加入、私密邀请加入、审批通过/拒绝、FloodWait、链接过期和账号断线恢复。真实 Telegram 端的外部加入动作无法由单元测试替代。
 - [ ] 私密邀请 hash 本身无法在所有场景中可靠区分“管理员拒绝申请”与“申请仍在等待”；只有能够查询目标 chat membership 且 Telegram 返回明确 left/banned 时才标记 declined，其余情况保持 pending/unknown，避免误报。
+
+
+## Keyword media actions
+
+关键词规则已支持绑定租户媒体素材，并由 Worker 通过 MTGo 发送 photo/video/document/audio/voice/video_note 单素材回复。素材删除受规则/队列外键保护；混合相册和动作失败停止策略仍待实现。
