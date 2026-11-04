@@ -21,9 +21,9 @@ type GroupPermissionRefresh struct {
 	IsVerified bool
 }
 
-// ListGroupPermissionRefreshes claims stale shared-group permission snapshots
-// using a database lease. A group remains globally shared; the tenant/account
-// only identifies the Telegram identity used for this read-only refresh.
+// ListGroupPermissionRefreshes claims due permission snapshots for this
+// tenant/account. The lease is source-scoped: one account cannot starve other
+// tenants' independent account-rights snapshots for the same shared group.
 func (s *Service) ListGroupPermissionRefreshes(ctx context.Context, tenantID, accountID string, limit int) ([]GroupPermissionRefresh, error) {
 	if !validUUID(accountID) {
 		return nil, errors.New("invalid Telegram account id")
@@ -34,25 +34,23 @@ func (s *Service) ListGroupPermissionRefreshes(ctx context.Context, tenantID, ac
 	out := []GroupPermissionRefresh{}
 	err := withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `WITH due AS (
-			SELECT g.id
-			FROM public_groups g
-			WHERE (g.permissions_next_check_at IS NULL OR g.permissions_next_check_at <= NOW())
-			  AND (g.permissions_check_lease_until IS NULL OR g.permissions_check_lease_until <= NOW())
-			  AND EXISTS (
-				SELECT 1 FROM public_group_sources src
-				WHERE src.group_id=g.id AND src.tenant_id=$1 AND src.telegram_account_id=$2
-			  )
-			ORDER BY COALESCE(g.permissions_next_check_at,g.permissions_observed_at,g.last_seen_at),g.id
-			LIMIT $3 FOR UPDATE OF g SKIP LOCKED
+			SELECT src.group_id
+			FROM public_group_sources src
+			JOIN public_groups g ON g.id=src.group_id
+			WHERE src.tenant_id=$1 AND src.telegram_account_id=$2
+			  AND (src.rights_next_check_at IS NULL OR src.rights_next_check_at <= NOW())
+			  AND (src.rights_check_lease_until IS NULL OR src.rights_check_lease_until <= NOW())
+			ORDER BY COALESCE(src.rights_next_check_at,src.account_rights_observed_at,src.last_seen_at),src.group_id
+			LIMIT $3 FOR UPDATE OF src SKIP LOCKED
 		), claimed AS (
-			UPDATE public_groups g
-			SET permissions_check_lease_until=NOW()+INTERVAL '5 minutes',
-			    permissions_check_tenant_id=$1,
-			    permissions_check_account_id=$2
-			FROM due WHERE g.id=due.id
-			RETURNING g.id,g.telegram_chat_id,g.permissions_check_lease_until
+			UPDATE public_group_sources src
+			SET rights_check_lease_until=NOW()+INTERVAL '5 minutes'
+			FROM due WHERE src.group_id=due.group_id AND src.tenant_id=$1 AND src.telegram_account_id=$2
+			RETURNING src.group_id,src.rights_check_lease_until
 		)
-		SELECT id,telegram_chat_id,permissions_check_lease_until FROM claimed ORDER BY id`, tenantID, accountID, limit)
+		SELECT claimed.group_id,g.telegram_chat_id,claimed.rights_check_lease_until
+		FROM claimed JOIN public_groups g ON g.id=claimed.group_id
+		ORDER BY claimed.group_id`, tenantID, accountID, limit)
 		if err != nil { return err }
 		defer rows.Close()
 		for rows.Next() {
@@ -66,7 +64,7 @@ func (s *Service) ListGroupPermissionRefreshes(ctx context.Context, tenantID, ac
 }
 
 // RecordGroupPermissionRefresh persists only observed values. Unknown permission
-// fields remain NULL/unchanged; no missing rights are inferred as allowed.
+// fields remain unchanged; no missing rights are inferred as allowed.
 func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, accountID string, item GroupPermissionRefresh, defaultPermissions, accountRights []byte, refreshErr error) error {
 	if !validUUID(accountID) || item.GroupID <= 0 || item.ChatID == 0 || item.LeaseUntil.IsZero() {
 		return errors.New("invalid group permission refresh result")
@@ -83,40 +81,42 @@ func (s *Service) RecordGroupPermissionRefresh(ctx context.Context, tenantID, ac
 		if len(errText) > 500 { errText = errText[:500] }
 	}
 	return withTenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		var result sql.Result
-		var err error
 		if refreshErr != nil {
-			result, err = tx.ExecContext(ctx, `UPDATE public_groups
-				SET permissions_check_attempts=permissions_check_attempts+1,
-				    permissions_check_error=$5,
-				    permissions_next_check_at=NOW()+LEAST(INTERVAL '24 hours',INTERVAL '30 minutes' * POWER(2,LEAST(permissions_check_attempts,5))),
-				    permissions_check_lease_until=NULL,permissions_check_tenant_id=NULL,permissions_check_account_id=NULL
-				WHERE id=$1 AND permissions_check_tenant_id=$2 AND permissions_check_account_id=$3 AND permissions_check_lease_until=$4`,
+			result, err := tx.ExecContext(ctx, `UPDATE public_group_sources
+				SET rights_check_attempts=rights_check_attempts+1,
+				    rights_check_error=$5,
+				    rights_next_check_at=NOW()+LEAST(INTERVAL '24 hours',INTERVAL '30 minutes' * POWER(2,LEAST(rights_check_attempts,5))),
+				    rights_check_lease_until=NULL
+				WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND rights_check_lease_until=$4`,
 				item.GroupID,tenantID,accountID,item.LeaseUntil,errText)
-		} else {
-			result, err = tx.ExecContext(ctx, `UPDATE public_groups
-				SET default_permissions=COALESCE(NULLIF($5::jsonb,'null'::jsonb),default_permissions),
-				    permissions_observed_at=CASE WHEN $5::jsonb IS NULL OR $5::jsonb='null'::jsonb THEN permissions_observed_at ELSE NOW() END,
-				    permissions_check_attempts=0,permissions_check_error=NULL,permissions_next_check_at=NOW()+INTERVAL '24 hours',
-				    permissions_check_lease_until=NULL,permissions_check_tenant_id=NULL,permissions_check_account_id=NULL,
-				    member_count=GREATEST(member_count,$6),
-				    title=COALESCE(NULLIF($7,''),title),
-				    username=COALESCE(NULLIF($8,''),username),
-				    is_verified=is_verified OR $9
-				WHERE id=$1 AND permissions_check_tenant_id=$2 AND permissions_check_account_id=$3 AND permissions_check_lease_until=$4`,
-				item.GroupID,tenantID,accountID,item.LeaseUntil,nullJSON(defaultPermissions),max(0,item.MemberCount),item.Title,item.Username,item.IsVerified)
 			if err != nil { return err }
+			n, _ := result.RowsAffected()
+			if n == 0 { return ErrGroupPermissionLeaseLost }
+			return nil
 		}
+
+		result, err := tx.ExecContext(ctx, `UPDATE public_group_sources
+			SET account_rights_snapshot=COALESCE(NULLIF($5::jsonb,'null'::jsonb),account_rights_snapshot),
+			    account_rights_observed_at=CASE WHEN $5::jsonb IS NULL OR $5::jsonb='null'::jsonb THEN account_rights_observed_at ELSE NOW() END,
+			    rights_check_attempts=0,rights_check_error=NULL,rights_next_check_at=NOW()+INTERVAL '24 hours',
+			    rights_check_lease_until=NULL
+			WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND rights_check_lease_until=$4`,
+			item.GroupID,tenantID,accountID,item.LeaseUntil,nullJSON(accountRights))
+		if err != nil { return err }
 		n, _ := result.RowsAffected()
 		if n == 0 { return ErrGroupPermissionLeaseLost }
-		if refreshErr == nil && len(accountRights) > 0 {
-			_, err = tx.ExecContext(ctx, `UPDATE public_group_sources
-				SET account_rights_snapshot=$5::jsonb,account_rights_observed_at=NOW()
-				WHERE group_id=$1 AND tenant_id=$2 AND telegram_account_id=$3 AND EXISTS (
-					SELECT 1 FROM public_groups g WHERE g.id=$1 AND g.telegram_chat_id=$4
-				)`, item.GroupID,tenantID,accountID,item.ChatID,accountRights)
-			if err != nil { return fmt.Errorf("store tenant account rights snapshot: %w",err) }
-		}
+
+		_, err = tx.ExecContext(ctx, `UPDATE public_groups
+			SET default_permissions=COALESCE(NULLIF($2::jsonb,'null'::jsonb),default_permissions),
+			    permissions_observed_at=CASE WHEN $2::jsonb IS NULL OR $2::jsonb='null'::jsonb THEN permissions_observed_at ELSE NOW() END,
+			    member_count=GREATEST(member_count,$3),
+			    title=COALESCE(NULLIF($4,''),title),
+			    username=COALESCE(NULLIF($5,''),username),
+			    is_verified=is_verified OR $6,
+			    last_seen_at=GREATEST(last_seen_at,NOW()),updated_at=NOW()
+			WHERE id=$1 AND telegram_chat_id=$7`,
+			item.GroupID,nullJSON(defaultPermissions),max(0,item.MemberCount),item.Title,item.Username,item.IsVerified,item.ChatID)
+		if err != nil { return fmt.Errorf("update shared group permission snapshot: %w",err) }
 		return nil
 	})
 }
