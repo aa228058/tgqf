@@ -457,7 +457,7 @@ func (s *Service) ListGroupLibraryFiltered(ctx context.Context,tenantID string,f
 	switch filter.Sort {case "", "recent": case "title":sortExpr="lower(g.title) ASC,g.id ASC";case "members":sortExpr="g.member_count DESC,g.title ASC,g.id ASC";case "sources":sortExpr="(SELECT COUNT(*) FROM public_group_sources s WHERE s.group_id=g.id AND s.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC";case "contributors":sortExpr="(SELECT COUNT(*) FROM tenant_group_contributions c WHERE c.group_id=g.id AND c.tenant_id=scope.tenant_id) DESC,g.last_seen_at DESC,g.id ASC"}
 	items:=[]GroupLibraryItem{};total:=0
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
-		clauses:=[]string{"scope.tenant_id=$1"};args:=[]any{tenantID}
+		clauses:=[]string{"1=1"};args:=[]any{tenantID}
 		add:=func(value any,clause string){args=append(args,value);clauses=append(clauses,fmt.Sprintf(clause,len(args)))}
 		if chatType!=""{add(chatType,"g.chat_type=$%d")}
 		if query!=""{args=append(args,query);n:=len(args);clauses=append(clauses,fmt.Sprintf("(strpos(lower(g.title),lower($%d))>0 OR strpos(lower(g.username),lower($%d))>0)",n,n));}
