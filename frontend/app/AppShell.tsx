@@ -11,7 +11,7 @@ const items:{key:Key;label:string;icon:string;description:string}[]=[
 {key:"tasks",label:"任务中心",icon:"☷",description:"统一任务队列"},
 {key:"settings",label:"系统设置",icon:"⚙",description:"个人资料、密码和主题设置将在真实设置能力接入后开放。"},
 {key:"admin",label:"管理后台",icon:"▦",description:"仅超级管理员可访问租户、卡密、授权和系统配置。"}];
-export function AppShell({user,onLogout,children}:{user:AppUser;onLogout:()=>void;children:ReactNode}){
+export function AppShell({user,onLogout,children,workbench}:{user:AppUser;onLogout:()=>void;children:ReactNode;workbench?:ReactNode}){
  const [active,setActive]=useState<Key>("tasks"),[moreOpen,setMoreOpen]=useState(false),[theme,setTheme]=useState<"light"|"dark">("light");
  const admin=user.role==="super_admin",visible=items.filter(x=>x.key!=="admin"||admin),section=visible.find(x=>x.key===active)||items[5];
  useEffect(()=>{const v=localStorage.getItem("tgqf_theme");if(v==="dark"||v==="light")setTheme(v)},[]);
@@ -24,7 +24,7 @@ export function AppShell({user,onLogout,children}:{user:AppUser;onLogout:()=>voi
    <div className="sidebar-bottom"><div className="account-chip"><span className="avatar">{user.username.slice(0,1).toUpperCase()}</span><span><strong>{user.username}</strong><small>{admin?"超级管理员":"租户管理员"}</small></span></div><button className="sidebar-logout" onClick={onLogout}>退出登录</button></div>
   </aside>
   <div className="app-main"><header className="app-topbar"><div className="breadcrumb"><span>TG Manager</span><span className="breadcrumb-separator">/</span><strong>{section.label}</strong></div><div className="topbar-user"><span className="role-label">{admin?"超级管理员":"租户空间"}</span><button className="theme-toggle" onClick={()=>setTheme(v=>v==="light"?"dark":"light")}>{theme==="light"?"◐ 深色":"☼ 浅色"}</button><span className="topbar-username">{user.username}</span><button className="topbar-logout" onClick={onLogout}>退出</button></div></header>
-   <div className="app-content">{active==="tasks"?children:<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG MANAGER · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面框架已就位。后续按模块接入真实 API、加载状态、空状态、错误反馈和权限控制。</div></section>}</div>
+   <div className="app-content">{active==="tasks"?children:active==="workbench"&&workbench?workbench:<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG MANAGER · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面框架已就位。后续按模块接入真实 API、加载状态、空状态、错误反馈和权限控制。</div></section>}</div>
    <nav className="mobile-bottom-nav" aria-label="手机主导航">{primary.map(key=>{const x=items.find(i=>i.key===key)!;return <button key={key} className={active===key?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>go(key)}><span>{x.icon}</span><small>{x.label}</small></button>})}<div className="mobile-more-wrap"><button className={moreOpen||more.some(x=>x.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(v=>!v)}><span>•••</span><small>更多</small></button>{moreOpen&&<div className="mobile-more-menu">{more.map(x=><button key={x.key} onClick={()=>go(x.key)}>{x.icon}<span>{x.label}</span></button>)}</div>}</div></nav>
   </div>
  </div>
