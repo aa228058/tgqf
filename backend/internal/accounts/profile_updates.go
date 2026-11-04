@@ -199,6 +199,33 @@ func (s *Service) ClaimProfileUpdateJobs(ctx context.Context,tenantID string,lim
 	return out,err
 }
 
+// RecordProfileUpdateUsername persists a successfully applied Telegram username
+// before the rest of the job is finalized. This prevents a worker crash between
+// the Telegram RPC and job completion from generating a second username on retry.
+func (s *Service) RecordProfileUpdateUsername(ctx context.Context, job ProfileUpdateJob, username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("applied Telegram username is required")
+	}
+	return withTenantTx(ctx, s.db, job.TenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE account_profile_update_jobs
+			SET applied_username=$3, updated_at=NOW()
+			WHERE tenant_id=$1 AND id=$2 AND status='processing' AND lease_until=$4`,
+			job.TenantID, job.ID, username, job.LeaseUntil)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("profile update lease was lost while recording username")
+		}
+		return nil
+	})
+}
+
 func (s *Service) CompleteProfileUpdate(ctx context.Context,job ProfileUpdateJob)error {
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
 		res,err:=tx.ExecContext(ctx,`UPDATE account_profile_update_jobs SET status='completed',applied_username=$3,lease_until=NULL,last_error='',updated_at=NOW()
