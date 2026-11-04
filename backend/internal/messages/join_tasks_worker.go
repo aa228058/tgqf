@@ -61,14 +61,17 @@ func (s *Service) ClaimJoinTaskAccounts(ctx context.Context, tenantID string, li
                 SET status='processing',lease_until=NOW()+INTERVAL '3 minutes',attempts=a.attempts+1,pause_requested=FALSE,cancel_requested=FALSE,updated_at=NOW()
                 FROM picked p
                 WHERE a.id=p.id AND a.tenant_id=p.tenant_id
-                RETURNING p.tenant_id,p.task_id,p.id,p.telegram_account_id,a.attempts,p.target_url,p.private_invite_hash_ciphertext,a.lease_until
+                RETURNING a.tenant_id,a.task_id,a.id,a.telegram_account_id,a.attempts,a.lease_until
             ), scheduled AS (
                 UPDATE telegram_accounts acc SET telegram_send_next_at=NOW()+INTERVAL '2 seconds'
                 FROM claimed c WHERE acc.tenant_id=c.tenant_id AND acc.id=c.telegram_account_id
-                RETURNING acc.id
+                RETURNING acc.tenant_id,acc.id
             )
-            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.attempts,c.target_url,c.private_invite_hash_ciphertext,c.lease_until
-            FROM claimed c JOIN scheduled s ON TRUE
+            SELECT c.tenant_id::text,c.task_id::text,c.id,c.telegram_account_id::text,c.attempts,
+                   p.target_url,p.private_invite_hash_ciphertext,c.lease_until
+            FROM claimed c
+            JOIN picked p ON p.tenant_id=c.tenant_id AND p.id=c.id
+            JOIN scheduled s ON s.tenant_id=c.tenant_id AND s.id=c.telegram_account_id
         `,tenantID,limit)
         if err!=nil{return err};defer rows.Close()
         for rows.Next(){var job JoinTaskJob;if err:=rows.Scan(&job.TenantID,&job.TaskID,&job.AccountRowID,&job.AccountID,&job.Attempts,&job.TargetURL,&job.PrivateInviteCiphertext,&job.LeaseUntil);err!=nil{return err};if len(job.PrivateInviteCiphertext)>0 { hash,decryptErr:=decryptJoinInviteHash(job.PrivateInviteCiphertext);if decryptErr!=nil{return decryptErr};job.TargetURL="https://t.me/+"+hash };jobs=append(jobs,job)}
