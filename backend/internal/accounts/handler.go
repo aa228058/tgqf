@@ -56,7 +56,7 @@ func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("POST /api/v1/accounts/profile-updates/photo",h.auth.Authenticated(http.HandlerFunc(h.createProfilePhotoUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.createProfileUpdates)))
  m.Handle("GET /api/v1/accounts/profile-updates",h.auth.Authenticated(http.HandlerFunc(h.listProfileUpdates)))
- m.Handle("POST /api/v1/accounts/profile-updates/bulk/{action}",h.auth.Authenticated(http.HandlerFunc(h.bulkControlProfileUpdates)))
+ m.Handle("POST /api/v1/accounts/profile-updates/actions/bulk/{action}",h.auth.Authenticated(http.HandlerFunc(h.bulkControlProfileUpdates)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/retry",h.auth.Authenticated(http.HandlerFunc(h.retryProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/pause",h.auth.Authenticated(http.HandlerFunc(h.pauseQueuedProfileUpdate)))
  m.Handle("POST /api/v1/accounts/profile-updates/{id}/resume",h.auth.Authenticated(http.HandlerFunc(h.resumeProfileUpdate)))
