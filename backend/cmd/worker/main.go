@@ -184,6 +184,9 @@ func main() {
 		}
 	}()
 	for {
+		if _, err := messageService.PublishPendingMessageEvents(ctx, 100); err != nil && ctx.Err() == nil {
+			logger.Warn("publish committed message events", "error", err)
+		}
 		processIncomingUpdates(ctx, messageService, workerID, logger)
 		if err := reconcile(ctx, accountService, manager, logger, lastSavedSessions, reconnects, statusSynced, &accountTenants, time.Now()); err != nil { logger.Error("reconcile Telegram accounts", "error", err) }
 		processReplyJobs(ctx, messageService, manager, logger)
