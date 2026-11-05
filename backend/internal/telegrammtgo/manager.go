@@ -104,6 +104,28 @@ func (m *Manager) registerMessageHandler(accountID string, client *telegram.Clie
 	})
 }
 
+// VerifySession checks that a saved session can connect and represents an authorized
+// Telegram user. It uses an isolated short-lived manager so validation does not
+// register the imported account in the application's long-lived runtime.
+func (m *Manager) VerifySession(sessionString, proxyJSON string, profile device.Profile) error {
+	if m == nil {
+		return errors.New("Telegram manager is unavailable")
+	}
+	validator := NewManager(RuntimeConfig{
+		APIID: m.cfg.APIID,
+		APIHash: m.cfg.APIHash,
+		ConnectTimeout: 20 * time.Second,
+	})
+	validationID := fmt.Sprintf("session-validation-%d", time.Now().UnixNano())
+	if err := validator.Start(validationID, sessionString, proxyJSON, profile); err != nil {
+		return fmt.Errorf("verify Telegram session authorization: %w", err)
+	}
+	if err := validator.Stop(validationID); err != nil {
+		return fmt.Errorf("close Telegram session validation client: %w", err)
+	}
+	return nil
+}
+
 // Start restores an existing MTGo-compatible session and connects it.
 // The caller must pass decrypted session data only in memory.
 func (m *Manager) Start(accountID, sessionString, proxyJSON string, profiles ...device.Profile) error {

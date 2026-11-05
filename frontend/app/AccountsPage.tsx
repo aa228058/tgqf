@@ -14,7 +14,7 @@ type AccountGroupSync={status:string;group_count:number;last_started_at?:string;
 type Proxy={id:string;name:string;protocol:string;host:string;port:number;username:string;has_password:boolean;is_default:boolean;last_check_status?:string;last_check_latency_ms?:number;last_check_at?:string};
 type ProxyInput={name:string;protocol:string;host:string;port:number;username:string;password:string;clear_password?:boolean};
 type ProxyCheck={id:string;check_type:string;status:string;latency_ms:number;message:string;checked_at:string};
-type QRState={accountId:string;url:string;expiresAt:string};
+type QRState={accountId:string;url:string;expiresAt:number};
 type LoginMode="qr"|"phone"|"session";
 type ProfileJob={id:string;batch_id:string;account_id:string;first_name:string;last_name:string;about:string;generate_username:boolean;has_photo:boolean;applied_username?:string;status:string;attempts:number;next_run_at:string;last_error?:string};
 type UsernameSettings={prefix:string;random_length:number;charset:"letters"|"alphanumeric"};
@@ -36,6 +36,13 @@ async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
 const statusLabel:Record<string,string>={authorized:"已授权",pending:"待登录",error:"异常",disconnected:"已断开"};
 const statusClass:Record<string,string>={authorized:"status-joined",pending:"status-pending",error:"status-failed",disconnected:"status-paused"};
 const fmt=(value?:string)=>value?new Date(value).toLocaleString():"—";
+function qrExpiryMilliseconds(value:number|string):number{
+ const numeric=typeof value==="number"?value:Number(value);
+ if(Number.isFinite(numeric)&&numeric>0)return numeric<1e12?numeric*1000:numeric;
+ const parsed=new Date(value).getTime();
+ if(Number.isFinite(parsed))return parsed;
+ throw new Error("Telegram 返回的二维码有效期格式无效，请重新生成二维码");
+}
 
 export function AccountsPage({token}:{token:string}){
  const [tab,setTab]=useState<"accounts"|"proxies"|"profile">("accounts");
@@ -100,7 +107,7 @@ export function AccountsPage({token}:{token:string}){
  },[qr?.url]);
  useEffect(()=>{
   if(!qr)return;
-  const updateRemaining=()=>setQRSecondsRemaining(Math.max(0,Math.ceil((new Date(qr.expiresAt).getTime()-Date.now())/1000)));
+  const updateRemaining=()=>setQRSecondsRemaining(Math.max(0,Math.ceil((qr.expiresAt-Date.now())/1000)));
   updateRemaining();
   const timer=window.setInterval(updateRemaining,1000);
   return()=>window.clearInterval(timer);
@@ -118,10 +125,10 @@ export function AccountsPage({token}:{token:string}){
    if(!active||document.visibilityState!=="visible"||qrPollLock.current)return;
    qrPollLock.current=true;
    try{
-    const result=await api<{status:string;qr?:{url:string;expires_at:string};telegram_user?:unknown}>(`/api/v1/accounts/${qr.accountId}/qr/status`,token);
+    const result=await api<{status:string;qr?:{url:string;expires_at:number|string};telegram_user?:unknown}>(`/api/v1/accounts/${qr.accountId}/qr/status`,token);
     if(!active)return;
     if(result.status==="authorized"){setQR(null);setQRImage("");setNotice("Telegram 账号授权成功");await loadAccounts()}
-    else if(result.qr)setQR({accountId:qr.accountId,url:result.qr.url,expiresAt:result.qr.expires_at});
+    else if(result.qr)setQR({accountId:qr.accountId,url:result.qr.url,expiresAt:qrExpiryMilliseconds(result.qr.expires_at)});
    }catch(e){if(active)setError(e instanceof Error ? translateAPIError(e.message) :"二维码状态检查失败")}
    finally{qrPollLock.current=false}
   },3000);
@@ -176,11 +183,11 @@ export function AccountsPage({token}:{token:string}){
   catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"资料更新任务操作失败")}
   finally{setBusy(false)}
  }
- async function startQR(event:FormEvent){
+ async function startQR(event:{preventDefault:()=>void}){
   event.preventDefault();if(authActionLock.current)return;authActionLock.current=true;setBusy(true);setError("");setNotice("");
   try{
-   const result=await api<{account:Account;status?:string;qr?:{url:string;expires_at:string}}>("/api/v1/accounts/qr/start",token,{method:"POST",body:JSON.stringify({group_name:loginGroup})});
-   if(result.qr){setQR({accountId:result.account.id,url:result.qr.url,expiresAt:result.qr.expires_at});setLoginAccountID(result.account.id)}
+   const result=await api<{account:Account;status?:string;qr?:{url:string;expires_at:number|string}}>("/api/v1/accounts/qr/start",token,{method:"POST",body:JSON.stringify({group_name:loginGroup})});
+   if(result.qr){setQR({accountId:result.account.id,url:result.qr.url,expiresAt:qrExpiryMilliseconds(result.qr.expires_at)});setLoginAccountID(result.account.id)}
    else{setNotice("Telegram 账号授权成功");setLoginOpen(false);await loadAccounts()}
   }catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"二维码登录启动失败")}
   finally{authActionLock.current=false;setBusy(false)}
@@ -377,12 +384,12 @@ export function AccountsPage({token}:{token:string}){
   {proxyHistory&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProxyHistory(null)}}><section role="dialog" aria-modal="true" aria-label="账号管理对话框" className="account-modal"><div className="modal-heading"><div><h2>{proxyHistory.proxy.name} · 检测历史</h2><p>结果仅表示代理认证及 Telegram 数据中心 TCP 隧道连通性，不代表账号已完成登录。</p></div><button className="ghost" onClick={()=>setProxyHistory(null)}>关闭</button></div><div className="profile-job-list">{proxyHistory.checks.map(item=><article key={item.id}><div className="profile-job-title"><strong>{item.check_type==="telegram_dc_tunnel"?"Telegram 数据中心 TCP 隧道":item.check_type}</strong><span className={`status ${item.status==="success"?"status-joined":"status-failed"}`}>{item.status==="success"?"成功":"失败"}</span></div><small>{fmt(item.checked_at)} · {item.latency_ms} ms</small>{item.message&&<small className={item.status==="success"?"":"account-last-error"}>{translateAPIError(item.message)}</small>}</article>)}{!proxyHistory.checks.length&&<div className="empty">暂无检测记录</div>}</div></section></div>}
   {loginOpen&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!qr)setLoginOpen(false)}}><section role="dialog" aria-modal="true" aria-label="账号管理对话框" className="account-modal"><div className="modal-heading"><div><h2>添加 Telegram 账号</h2><p>使用二维码、手机号验证码或 Session 文件</p></div><button className="ghost" onClick={()=>setLoginOpen(false)} disabled={!!qr}>关闭</button></div>
    <div className="login-tabs"><button className={loginMode==="qr"?"active":""} onClick={()=>setLoginMode("qr")}>扫码登录</button><button className={loginMode==="phone"?"active":""} onClick={()=>setLoginMode("phone")}>手机号登录</button><button className={loginMode==="session"?"active":""} onClick={()=>setLoginMode("session")}>Session 导入</button></div>
-   {!qr&&loginMode==="qr"&&<form onSubmit={startQR} className="account-form"><label>账号分组（可选）<input value={loginGroup} onChange={e=>setLoginGroup(e.target.value)} placeholder="例如：客服账号"/></label><button className="primary" disabled={busy}>{busy?"正在创建授权会话…":"生成 Telegram 登录二维码"}</button></form>}
+   {!qr&&loginMode==="qr"&&<form onSubmit={startQR} className="account-form"><label>账号分组（可选）<input value={loginGroup} onChange={e=>setLoginGroup(e.target.value)} placeholder="例如：客服账号"/></label><button type="submit" className="primary" disabled={busy} onClick={event=>{event.preventDefault();void startQR(event)}}>{busy?"正在创建授权会话…":"生成 Telegram 登录二维码"}</button></form>}
    {qr&&<div className="qr-login"><p>请使用 Telegram 官方客户端扫描二维码完成登录。</p>{qrImage?<img src={qrImage} alt="Telegram 登录二维码"/>:<p>二维码生成中…</p>}<small>{qrSecondsRemaining>0?`二维码剩余有效时间：${Math.floor(qrSecondsRemaining/60)}分${qrSecondsRemaining%60}秒`:"二维码已过期，请取消本次登录后重新生成"}</small><code>{qr.url}</code><button className="secondary" onClick={()=>{void navigator.clipboard?.writeText(qr.url).then(()=>setNotice("登录链接已复制")).catch(()=>setError("复制失败，请检查浏览器剪贴板权限"))}}>复制登录链接</button><button className="danger-text" onClick={()=>void cancelPending()}>取消本次登录</button></div>}
    {loginMode==="phone"&&!qr&&<form onSubmit={loginAccountID?(twoFactor?verifyPassword:verifyPhone):startPhone} className="account-form">
     {!loginAccountID?<><label>手机号<input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+8613800000000" required/></label><label>账号分组（可选）<input value={loginGroup} onChange={e=>setLoginGroup(e.target.value)}/></label><button className="primary" disabled={busy}>发送验证码</button></>:twoFactor?<><p>Telegram 要求输入两步验证密码。</p><label>两步验证密码<input type="password" value={phonePassword} onChange={e=>setPhonePassword(e.target.value)} required/></label><button className="primary" disabled={busy}>验证并完成登录</button></>:<><p>验证码发送方式：{delivery||"Telegram"}。请填写 Telegram 收到的验证码。</p><label>验证码<input value={phoneCode} onChange={e=>setPhoneCode(e.target.value)} required/></label><small>{resendCountdown>0?`Telegram 要求等待 ${resendCountdown} 秒后才能重新发起验证码请求。`:"验证码请求等待时间已结束。"} 当前可直接验证已收到的验证码。</small><button className="primary" disabled={busy}>验证验证码</button><button type="button" className="danger-text" onClick={()=>void cancelPending()}>取消登录</button></>}
    </form>}
-   {loginMode==="session"&&!qr&&<><form onSubmit={importSession} className="account-form"><label>Session 文件<input type="file" accept=".session,.json,.csv,.txt" onChange={e=>setImportFile(e.target.files?.[0]||null)} required/></label>{importFile?.name.toLowerCase().endsWith(".session")&&<><label>账号手机号<input value={importPhone} onChange={e=>setImportPhone(e.target.value)} placeholder="+8613800000000" required/></label><label>显示名称<input value={importName} onChange={e=>setImportName(e.target.value)}/></label><label>分组<input value={importGroup} onChange={e=>setImportGroup(e.target.value)}/></label></>}<small>支持 Telethon .session、JSON、CSV 和 TXT；单文件最大 1 MiB，最多导入 20 个账号。</small><button className="primary" disabled={busy||!importFile}>{busy?"正在安全校验并导入…":"导入账号"}</button></form>{importResults.length>0&&<section className="import-results"><div className="panel-heading"><h3>逐项导入结果</h3><span>{importResults.filter(x=>x.account).length} 成功 · {importResults.filter(x=>x.error).length} 失败</span></div>{importResults.map(item=><div className="import-result-row" key={item.index}><span>第 {item.index+1} 项</span>{item.account?<><strong>{item.account.phone||item.account.display_name||"账号已创建"}</strong><span className="status status-joined">成功</span></>:<><span className="account-last-error">{translateAPIError(item.error||"导入失败")}</span><span className="status status-failed">失败</span></>}</div>)}</section>}</>}
+   {loginMode==="session"&&!qr&&<><form onSubmit={importSession} className="account-form"><label>Session 文件<input type="file" accept=".session,.json,.csv,.txt" onChange={e=>setImportFile(e.target.files?.[0]||null)} required/></label>{importFile?.name.toLowerCase().endsWith(".session")&&<><label>账号手机号<input value={importPhone} onChange={e=>setImportPhone(e.target.value)} placeholder="+8613800000000" required/></label><label>显示名称<input value={importName} onChange={e=>setImportName(e.target.value)}/></label><label>分组<input value={importGroup} onChange={e=>setImportGroup(e.target.value)}/></label></>}<small>支持 Telethon .session、JSON、CSV 和 TXT；单文件最大 1 MiB，最多导入 20 个账号。每个 Session 都会实际连接 Telegram 验证授权，单个验证最多等待 20 秒。</small><button className="primary" disabled={busy||!importFile}>{busy?"正在安全校验并导入…":"导入账号"}</button></form>{importResults.length>0&&<section className="import-results"><div className="panel-heading"><h3>逐项导入结果</h3><span>{importResults.filter(x=>x.account).length} 成功 · {importResults.filter(x=>x.error).length} 失败</span></div>{importResults.map(item=><div className="import-result-row" key={item.index}><span>第 {item.index+1} 项</span>{item.account?<><strong>{item.account.phone||item.account.display_name||"账号已创建"}</strong><span className="status status-joined">成功</span></>:<><span className="account-last-error">{translateAPIError(item.error||"导入失败")}</span><span className="status status-failed">失败</span></>}</div>)}</section>}</>}
    {error&&<div className="alert error" role="alert">{error}</div>}
   </section></div>}
   {accountGroups&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setAccountGroups(null)}}><section role="dialog" aria-modal="true" aria-label="账号管理对话框" className="account-modal"><div className="modal-heading"><div><h2>{accountGroups.account.display_name||accountGroups.account.phone} · 实际加入的群组</h2><p>来自该账号 Telegram 对话列表；不会自动加入或退出任何群组</p></div><button className="ghost" onClick={()=>setAccountGroups(null)}>关闭</button></div><div className="account-table-meta"><span>当前成员 {accountGroups.groups.filter(g=>g.is_member).length} 个</span><span>同步状态：{({never:"从未同步",running:"同步中",succeeded:"成功",failed:"失败"} as Record<string,string>)[accountGroups.sync.status]||accountGroups.sync.status}</span><span>最近同步：{fmt(accountGroups.sync.last_synced_at)}</span></div>{accountGroups.sync.last_error&&<div className="alert error" role="alert">{translateAPIError(accountGroups.sync.last_error)}</div>}<div className="account-bulkbar"><button className="primary" onClick={()=>void syncAccountGroups()} disabled={groupSyncBusy}>{groupSyncBusy?"同步中…":"立即同步"}</button><button className="secondary" onClick={()=>void loadAccountGroups(accountGroups.account,!showLeftGroups)} disabled={groupSyncBusy}>{showLeftGroups?"只看当前群组":"查看历史退出群组"}</button></div>{accountGroups.groups.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>群组</th><th>类型</th><th>身份</th><th>状态</th><th>最近发现</th></tr></thead><tbody>{accountGroups.groups.map(g=><tr key={g.chat_id}><td><strong>{g.title||"未命名群组"}</strong><small>{g.username?("@"+g.username):g.chat_id}</small></td><td>{({group:"普通群",supergroup:"超级群",channel:"频道"} as Record<string,string>)[g.chat_type]||g.chat_type}</td><td>{({creator:"创建者",admin:"管理员",member:"成员"} as Record<string,string>)[g.membership_status]||g.membership_status}</td><td>{g.is_member?"仍在群内":"已退出"}</td><td>{fmt(g.last_seen_at)}</td></tr>)}</tbody></table></div>:<div className="empty">{groupSyncBusy?"正在加载…":"暂无群组记录。账号需要先完成授权并保持连接，再执行同步。"}</div>}</section></div>}

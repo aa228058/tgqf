@@ -2,6 +2,9 @@ package accounts
 
 import (
     "bytes"
+    "fmt"
+    "log"
+    "time"
     "database/sql"
     "encoding/csv"
     "encoding/json"
@@ -15,6 +18,7 @@ import (
 
     "github.com/aa228058/tgqf/backend/internal/auth"
     tgconv "github.com/mtgo-labs/session-converter"
+    device "github.com/mtgo-labs/device-manager"
     _ "modernc.org/sqlite"
 )
 
@@ -185,8 +189,23 @@ func (h *Handler) importAccounts(w http.ResponseWriter,r *http.Request,records [
     u:=auth.UserFromContext(r.Context())
     type itemResult struct{Index int `json:"index"`;Account *Account `json:"account,omitempty"`;Error string `json:"error,omitempty"`}
     results:=make([]itemResult,0,len(records));success:=0
+    if h.telegram==nil {
+        writeError(w,http.StatusServiceUnavailable,"Telegram authorization verification is unavailable; session import was not accepted")
+        return
+    }
     for i,item:=range records {
         if err:=validateImportedSession(item.Session);err!=nil{results=append(results,itemResult{Index:i,Error:err.Error()});continue}
+        profile:=device.IOS.Generate(fmt.Sprintf("session-import-validation-%d-%d",time.Now().UnixNano(),i))
+        if err:=h.telegram.VerifySession(item.Session,string(item.Proxy),profile);err!=nil {
+            log.Printf("accounts: imported Telegram session authorization check failed item=%d: %v",i+1,err)
+            message:="Telegram session could not be verified; check whether it was revoked and whether the network or proxy is reachable"
+            lower:=strings.ToLower(err.Error())
+            if strings.Contains(lower,"not authorized") || strings.Contains(lower,"auth key unregistered") {
+                message="Telegram session is not authorized or has been revoked; please import a valid session"
+            }
+            results=append(results,itemResult{Index:i,Error:message})
+            continue
+        }
         account,err:=h.service.Create(r.Context(),u.TenantID,item.Phone,item.DisplayName,item.GroupName,item.Session,item.Proxy)
         if err!=nil {
             message:="account import failed"
