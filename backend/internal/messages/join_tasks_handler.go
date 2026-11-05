@@ -83,7 +83,6 @@ func (h *Handler) bulkJoinTasks(w http.ResponseWriter,r *http.Request) {
  }
  status:=http.StatusCreated
  if succeeded!=len(results) { status=http.StatusMultiStatus }
- if succeeded==0 { status=http.StatusBadRequest }
  messageJSON(w,status,map[string]any{"total":len(results),"succeeded":succeeded,"failed":len(results)-succeeded,"results":results,"execution_enabled":true,"notice":"Created tasks remain drafts and must be reviewed and started manually."})
 }
 
