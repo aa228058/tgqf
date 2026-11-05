@@ -44,6 +44,8 @@ export function JoinTasksPage({ token }: { token: string }) {
   const [accounts,setAccounts] = useState<Account[]>([]);
   const [groups,setGroups] = useState<Group[]>([]);
   const [links,setLinks] = useState<Link[]>([]);
+  const [linksTotal,setLinksTotal] = useState(0);
+  const [loadingMoreLinks,setLoadingMoreLinks] = useState(false);
   const [total,setTotal] = useState(0);
   const [offset,setOffset] = useState(0);
   const [detail,setDetail] = useState<Task|null>(null);
@@ -73,13 +75,14 @@ export function JoinTasksPage({ token }: { token: string }) {
         api<{tasks:Task[];total:number}>(`/api/v1/join-tasks?limit=50&offset=${offset}`,token),
         api<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token),
         api<{groups:Group[]}>("/api/v1/groups?limit=100&offset=0&sort=title",token),
-        api<{links:Link[]}>("/api/v1/group-links?limit=100&offset=0",token)
+        api<{links:Link[];total:number}>("/api/v1/group-links?limit=100&offset=0",token)
       ]);
       setTasks(taskResult.tasks || []);
       setTotal(taskResult.total || 0);
       setAccounts((accountResult.accounts || []).filter(a=>a.status==="authorized" && a.has_session));
       setGroups(groupResult.groups || []);
       setLinks(linkResult.links || []);
+      setLinksTotal(linkResult.total || 0);
     } catch (e) {
       setError(e instanceof Error ? translateAPIError(e.message) : "自动加群数据加载失败");
     } finally {
@@ -96,6 +99,24 @@ export function JoinTasksPage({ token }: { token: string }) {
     const timer=window.setInterval(()=>void refreshDetail(),10000);
     return()=>{active=false;window.clearInterval(timer)};
   },[detail?.id,token]);
+
+  async function loadMoreLinks() {
+    if (loadingMoreLinks || links.length >= linksTotal) return;
+    setLoadingMoreLinks(true);
+    setError("");
+    try {
+      const result = await api<{links:Link[];total:number}>(`/api/v1/group-links?limit=100&offset=${links.length}`,token);
+      setLinks(current => {
+        const seen = new Set(current.map(item => item.id));
+        return [...current,...(result.links || []).filter(item => !seen.has(item.id))];
+      });
+      setLinksTotal(result.total || 0);
+    } catch (e) {
+      setError(e instanceof Error ? translateAPIError(e.message) : "加载更多群链接失败");
+    } finally {
+      setLoadingMoreLinks(false);
+    }
+  }
 
   function openCreate() {
     setName("");setTargetMode("group");setGroupID("");setLinkID("");setInvite("");
@@ -167,7 +188,7 @@ export function JoinTasksPage({ token }: { token: string }) {
       <label>任务名称<input required maxLength={120} value={name} onChange={e=>setName(e.target.value)} placeholder="例如：行业群组加入任务"/></label>
       <label>目标来源<select value={targetMode} onChange={e=>{setTargetMode(e.target.value as typeof targetMode);setGroupID("");setLinkID("");setInvite("")}}><option value="group">共享群组库（公开用户名）</option><option value="link">本租户发现的群链接</option><option value="invite">手动私密邀请链接</option></select></label>
       {targetMode==="group"&&<div className="join-group-picker-field"><label>选择共享群组</label><SharedGroupPicker token={token} value={groupID} onChange={id=>setGroupID(id)} disabled={busy}/><small>支持按名称、username、群组类型搜索并分页；仅显示可通过公开 username 访问的目标。</small></div>}
-      {targetMode==="link"&&<label>选择本租户发现的链接<select required value={linkID} onChange={e=>setLinkID(e.target.value)}><option value="">选择链接</option>{links.filter(l=>l.status!=="invalid").map(l=><option key={l.id} value={l.id}>{l.type==="invite"?"私密邀请":"公开链接"} · {l.public_url||`邀请 #${l.id}`} · {l.status}</option>)}</select><small>仅允许使用本租户采集来源关联的链接。</small></label>}
+      {targetMode==="link"&&<label>选择本租户发现的链接<select required value={linkID} onChange={e=>setLinkID(e.target.value)}><option value="">选择链接</option>{links.filter(l=>l.status!=="invalid").map(l=><option key={l.id} value={l.id}>{l.type==="invite"?"私密邀请":"公开链接"} · {l.public_url||`邀请 #${l.id}`} · {l.status}</option>)}</select><small>仅允许使用本租户采集来源关联的链接。已加载 {links.length}/{linksTotal} 条。</small>{links.length<linksTotal&&<button type="button" className="secondary" onClick={()=>void loadMoreLinks()} disabled={loadingMoreLinks}>{loadingMoreLinks?"加载中…":"加载更多链接"}</button>}</label>}
       {targetMode==="invite"&&<label>私密邀请链接<input required value={invite} onChange={e=>setInvite(e.target.value)} placeholder="https://t.me/+…"/><small>邀请 hash 仅以加密形式保存，不会明文写入任务表。</small></label>}
       <fieldset className="join-account-picker"><legend>分配账号（最多 20 个）</legend><div className="join-account-list">{accounts.map(account=><label key={account.id}><input type="checkbox" checked={accountIDs.includes(account.id)} onChange={()=>toggleAccount(account.id)}/><span>{account.display_name||account.phone||account.id}<small>{account.phone} · {account.id.slice(0,8)}…</small></span></label>)}</div>{!accounts.length&&<small>当前没有已授权且存在 Session 的账号。</small>}<small>已选 {accountIDs.length}/20</small></fieldset>
       <label>授权说明（可选）<textarea rows={2} maxLength={500} value={authorizationNote} onChange={e=>setAuthorizationNote(e.target.value)} placeholder="记录本次加入的授权来源或业务目的"/></label>
