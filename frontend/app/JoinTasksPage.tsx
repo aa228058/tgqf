@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON, notifyUser, translateAPIError } from "./api-response";
+import { apiErrorMessage, readAPIJSON, translateAPIError } from "./api-response";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SharedGroupPicker } from "./SharedGroupPicker";
@@ -25,7 +25,6 @@ async function api<T>(path: string, token: string, init?: RequestInit): Promise<
     message = await apiErrorMessage(response, message);
     throw new Error(message);
   }
-  if (["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase())) notifyUser(path.includes("/bulk")?"批量加群任务已创建为草稿，请检查后手动启动。":path.endsWith("/join-tasks")?"加群任务已创建，请查看任务列表。":"加群任务操作已成功完成。");
   if (response.status === 204) return undefined as T;
   return readAPIJSON<T>(response);
 }
