@@ -14,7 +14,7 @@ import (
  device "github.com/mtgo-labs/device-manager"
 )
 type Service struct{db *sql.DB}
-type Account struct{ID string `json:"id"`;Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Tags []string `json:"tags"`;Status string `json:"status"`;HasSession bool `json:"has_session"`;HasProxy bool `json:"has_proxy"`;LastError string `json:"last_error"`;CreatedAt time.Time `json:"created_at"`;UpdatedAt time.Time `json:"updated_at"`}
+type Account struct{ID string `json:"id"`;Phone string `json:"phone"`;DisplayName string `json:"display_name"`;GroupName string `json:"group_name"`;Tags []string `json:"tags"`;Status string `json:"status"`;HasSession bool `json:"has_session"`;HasProxy bool `json:"has_proxy"`;LastError string `json:"last_error"`;JoinFloodWaitUntil *time.Time `json:"join_flood_wait_until,omitempty"`;SendCooldownUntil *time.Time `json:"send_cooldown_until,omitempty"`;CreatedAt time.Time `json:"created_at"`;UpdatedAt time.Time `json:"updated_at"`}
 func New(db *sql.DB)*Service{return &Service{db:db}}
 func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session string,proxy json.RawMessage)(Account,error){
  phone=strings.TrimSpace(phone);name=strings.TrimSpace(name);group=strings.TrimSpace(group);session=strings.TrimSpace(session)
@@ -31,7 +31,7 @@ func(s *Service)Create(ctx context.Context,tenantID,phone,name,group,session str
  if err=tx.QueryRowContext(ctx,`SELECT COUNT(*) FROM telegram_accounts WHERE tenant_id=$1`,tenantID).Scan(&count);err!=nil{return Account{},err}
  if count>=limit{return Account{},fmt.Errorf("account limit reached (%d)",limit)}
  var a Account
- err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,session_ciphertext,session_key_version,proxy_ciphertext,proxy_id) VALUES($1,$2,$3,$4,'pending',$5,1,$6,CASE WHEN $6::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,phone,display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,phone,name,group,sessionCipher,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt)
+ err=tx.QueryRowContext(ctx,`INSERT INTO telegram_accounts(tenant_id,phone,display_name,group_name,status,session_ciphertext,session_key_version,proxy_ciphertext,proxy_id) VALUES($1,$2,$3,$4,'pending',$5,1,$6,CASE WHEN $6::bytea IS NULL THEN (SELECT id FROM tenant_proxies WHERE tenant_id=$1 AND is_default=TRUE LIMIT 1) ELSE NULL END) RETURNING id::text,phone,display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at`,tenantID,phone,name,group,sessionCipher,nullBytes(proxyCipher)).Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.JoinFloodWaitUntil,&a.SendCooldownUntil,&a.CreatedAt,&a.UpdatedAt)
  if err!=nil{return Account{},err};if err=insertDeviceProfile(ctx,tx,tenantID,a.ID);err!=nil{return Account{},err};if err=tx.Commit();err!=nil{return Account{},err};return a,nil
 }
 func nullBytes(v []byte)any{if len(v)==0{return nil};return v}
@@ -65,7 +65,7 @@ func (s *Service) ListPage(ctx context.Context,tenantID string,opts AccountListO
 	err=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
 		filter:="tenant_id=$1 AND ($2='' OR phone ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') AND ($3='' OR group_name=$3) AND ($4='' OR status=$4)"
 		if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM telegram_accounts WHERE "+filter,tenantID,opts.Query,opts.GroupName,opts.Status).Scan(&total);err!=nil{return err}
-		rows,err:=tx.QueryContext(ctx,"SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,created_at,updated_at FROM telegram_accounts WHERE "+filter+" ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6",tenantID,opts.Query,opts.GroupName,opts.Status,opts.Limit,opts.Offset)
+		rows,err:=tx.QueryContext(ctx,"SELECT id::text,COALESCE(phone,''),display_name,group_name,tags,status,session_ciphertext IS NOT NULL,(proxy_ciphertext IS NOT NULL OR proxy_id IS NOT NULL),last_error,join_flood_wait_until,telegram_send_cooldown_until,created_at,updated_at FROM telegram_accounts WHERE "+filter+" ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6",tenantID,opts.Query,opts.GroupName,opts.Status,opts.Limit,opts.Offset)
 		if err!=nil{return err};defer rows.Close()
 		for rows.Next(){var a Account;if err:=rows.Scan(&a.ID,&a.Phone,&a.DisplayName,&a.GroupName,&a.Tags,&a.Status,&a.HasSession,&a.HasProxy,&a.LastError,&a.CreatedAt,&a.UpdatedAt);err!=nil{return err};out=append(out,a)}
 		return rows.Err()
