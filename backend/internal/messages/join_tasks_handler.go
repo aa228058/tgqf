@@ -72,7 +72,7 @@ func (h *Handler) bulkJoinTasks(w http.ResponseWriter,r *http.Request) {
   seen[key]=true
   name:=input.NamePrefix+" - "+label
   if label=="" { name=fmt.Sprintf("%s - %s",input.NamePrefix,key) }
-  if len([]rune(name))>120 { name=string([]rune(name)[:120]) }
+  runes:=[]rune(name);for len(string(runes))>120&&len(runes)>0{runes=runes[:len(runes)-1]};name=string(runes)
   task,err:=h.service.CreateJoinTask(r.Context(),user.TenantID,user.ID,JoinTaskInput{
    Name:name,TargetGroupID:target.TargetGroupID,TargetLinkID:target.TargetLinkID,
    AccountIDs:input.AccountIDs,AuthorizationConfirmed:input.AuthorizationConfirmed,
