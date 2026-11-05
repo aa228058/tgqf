@@ -9,9 +9,9 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").replace(/\/$/, "")
 type Account = { id: string; phone: string; display_name: string; status: string; has_session: boolean };
 type Group = { id: number; title: string; username: string; chat_type: string; member_count: number };
 type Link = { id: number; type: string; public_url: string; status: string; private_invite: boolean; group_id?: number };
-type TaskAccount = { account_id: string; account_name: string; status: string; application_status: string; attempts: number; last_error: string; updated_at: string };
+type TaskAccount = { account_id: string; account_name: string; status: string; application_status: string; attempts: number; last_error: string; updated_at: string; available_at: string };
 type Task = {
-  id: string; name: string; target_group_id: number; target_link_id: number; status: string;
+  id: string; name: string; target_group_id: number; target_link_id: number; status: string; available_at: string;
   authorization_confirmed: boolean; authorization_note: string; authorized_at?: string;
   account_count: number; created_at: string; updated_at: string; accounts?: TaskAccount[];
 };
@@ -151,7 +151,7 @@ export function JoinTasksPage({ token }: { token: string }) {
     <section className="panel">
       <div className="panel-heading"><div><h2>加群任务</h2><p>任务总数 {total} · {loading?"正在同步…":"每 10 秒自动同步"}</p></div></div>
       <div className="join-task-list">{tasks.map(task=><article className="join-task-card" key={task.id}>
-        <button className="join-task-main" onClick={()=>void openDetail(task)}><span className="join-task-title">{task.name}</span><span className={`status status-${task.status}`}>{statusName[task.status]||task.status}</span><span className="join-task-target">{targetLabel(task)}</span><small>{task.account_count} 个账号 · 创建于 {date(task.created_at)}</small></button>
+        <button className="join-task-main" onClick={()=>void openDetail(task)}><span className="join-task-title">{task.name}</span><span className={`status status-${task.status}`}>{statusName[task.status]||task.status}</span><span className="join-task-target">{targetLabel(task)}</span><small>{task.account_count} 个账号 · 创建于 {date(task.created_at)}</small>{task.status==="queued"&&task.available_at&&new Date(task.available_at).getTime()>Date.now()&&<small>任务预计下次可执行：{date(task.available_at)}</small>}</button>
         <div className="join-task-actions">
           {task.status==="draft"&&<button disabled={busy} className="primary" onClick={()=>void action(task,"start")}>启动</button>}
           {task.status==="queued"&&<button disabled={busy} className="secondary" onClick={()=>void action(task,"pause")}>暂停</button>}
