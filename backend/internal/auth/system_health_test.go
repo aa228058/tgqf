@@ -13,6 +13,7 @@ func TestSystemHealthHasWarnings(t *testing.T) {
         {"incoming queue backlog",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Queues:QueueHealth{IncomingPending:101}},true},
         {"outbox backlog",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Queues:QueueHealth{MessageOutboxPending:1001}},true},
         {"stale worker",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Workers:WorkerHealth{Stale:1}},true},
+        {"stale join task lease",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},JoinTasks:JoinTaskHealth{StaleLeases:1}},true},
         {"account error",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Accounts:AccountHealth{Error:1}},true},
         {"proxy failure",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Proxies:ProxyHealth{FailedChecks15m:1}},true},
         {"disk warning threshold",SystemHealth{Database:DatabaseHealth{Status:"ok"},Redis:RedisHealth{Status:"ok"},Host:HostHealth{DiskUsedPercent:85}},true},

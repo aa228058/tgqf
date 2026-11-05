@@ -33,6 +33,7 @@ type JoinTask struct {
     AccountCount int `json:"account_count"`
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
+	AvailableAt time.Time `json:"available_at"`
 }
 
 type JoinTaskAccount struct {
@@ -43,6 +44,7 @@ type JoinTaskAccount struct {
     Attempts int `json:"attempts"`
     LastError string `json:"last_error,omitempty"`
     UpdatedAt time.Time `json:"updated_at"`
+	AvailableAt time.Time `json:"available_at"`
 }
 
 type JoinTaskDetail struct {
@@ -115,10 +117,10 @@ func (s *Service) ListJoinTasks(ctx context.Context,tenantID string,limit,offset
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         if err:=tx.QueryRowContext(ctx,"SELECT COUNT(*) FROM tenant_join_tasks WHERE tenant_id=$1",tenantID).Scan(&total);err!=nil{return err}
         rows,err:=tx.QueryContext(ctx,`SELECT t.id::text,t.name,COALESCE(t.target_group_id,0),COALESCE(t.target_link_id,0),t.status,t.authorization_confirmed,t.authorization_note,t.authorized_at,
-            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at
+            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at,t.available_at
             FROM tenant_join_tasks t WHERE t.tenant_id=$1 ORDER BY t.created_at DESC,t.id DESC LIMIT $2 OFFSET $3`,tenantID,limit,offset)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item JoinTask;if err:=rows.Scan(&item.ID,&item.Name,&item.TargetGroupID,&item.TargetLinkID,&item.Status,&item.AuthorizationConfirmed,&item.AuthorizationNote,&item.AuthorizedAt,&item.AccountCount,&item.CreatedAt,&item.UpdatedAt);err!=nil{return err};out=append(out,item)}
+        for rows.Next(){var item JoinTask;if err:=rows.Scan(&item.ID,&item.Name,&item.TargetGroupID,&item.TargetLinkID,&item.Status,&item.AuthorizationConfirmed,&item.AuthorizationNote,&item.AuthorizedAt,&item.AccountCount,&item.CreatedAt,&item.UpdatedAt,&item.AvailableAt);err!=nil{return err};out=append(out,item)}
         return rows.Err()
     })
     return out,total,err
@@ -129,14 +131,14 @@ func (s *Service) GetJoinTask(ctx context.Context,tenantID,id string)(JoinTaskDe
     var detail JoinTaskDetail;detail.Accounts=[]JoinTaskAccount{}
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         err:=tx.QueryRowContext(ctx,`SELECT t.id::text,t.name,COALESCE(t.target_group_id,0),COALESCE(t.target_link_id,0),t.status,t.authorization_confirmed,t.authorization_note,t.authorized_at,
-            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at
-            FROM tenant_join_tasks t WHERE t.tenant_id=$1 AND t.id=$2`,tenantID,id).Scan(&detail.ID,&detail.Name,&detail.TargetGroupID,&detail.TargetLinkID,&detail.Status,&detail.AuthorizationConfirmed,&detail.AuthorizationNote,&detail.AuthorizedAt,&detail.AccountCount,&detail.CreatedAt,&detail.UpdatedAt)
+            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at,t.available_at
+            FROM tenant_join_tasks t WHERE t.tenant_id=$1 AND t.id=$2`,tenantID,id).Scan(&detail.ID,&detail.Name,&detail.TargetGroupID,&detail.TargetLinkID,&detail.Status,&detail.AuthorizationConfirmed,&detail.AuthorizationNote,&detail.AuthorizedAt,&detail.AccountCount,&detail.CreatedAt,&detail.UpdatedAt,&detail.AvailableAt)
         if errors.Is(err,sql.ErrNoRows){return errors.New("join task not found")};if err!=nil{return err}
-        rows,err:=tx.QueryContext(ctx,`SELECT a.telegram_account_id::text,COALESCE(NULLIF(t.display_name,''),t.phone,''),a.status,a.application_status,a.attempts,a.last_error,a.updated_at
+        rows,err:=tx.QueryContext(ctx,`SELECT a.telegram_account_id::text,COALESCE(NULLIF(t.display_name,''),t.phone,''),a.status,a.application_status,a.attempts,a.last_error,a.updated_at,a.available_at
             FROM tenant_join_task_accounts a JOIN telegram_accounts t ON t.tenant_id=a.tenant_id AND t.id=a.telegram_account_id
             WHERE a.tenant_id=$1 AND a.task_id=$2 ORDER BY a.created_at,a.id`,tenantID,id)
         if err!=nil{return err};defer rows.Close()
-        for rows.Next(){var item JoinTaskAccount;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.Status,&item.ApplicationStatus,&item.Attempts,&item.LastError,&item.UpdatedAt);err!=nil{return err};detail.Accounts=append(detail.Accounts,item)}
+        for rows.Next(){var item JoinTaskAccount;if err:=rows.Scan(&item.AccountID,&item.AccountName,&item.Status,&item.ApplicationStatus,&item.Attempts,&item.LastError,&item.UpdatedAt,&item.AvailableAt);err!=nil{return err};detail.Accounts=append(detail.Accounts,item)}
         return rows.Err()
     })
     return detail,err

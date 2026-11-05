@@ -22,6 +22,7 @@ type SystemHealth struct {
     Workers WorkerHealth `json:"workers"`
     Accounts AccountHealth `json:"accounts"`
     Proxies ProxyHealth `json:"proxies"`
+    JoinTasks JoinTaskHealth `json:"join_tasks"`
 }
 type HostHealth struct {
     CPUPercent float64 `json:"cpu_percent"`
@@ -70,6 +71,18 @@ type ProxyHealth struct {
     Total int `json:"total"`
     FailedChecks15m int `json:"failed_checks_15m"`
     SuccessfulChecks15m int `json:"successful_checks_15m"`
+}
+type JoinTaskHealth struct {
+    Total int `json:"total"`
+    Draft int `json:"draft"`
+    Queued int `json:"queued"`
+    Processing int `json:"processing"`
+    Paused int `json:"paused"`
+    Completed int `json:"completed"`
+    Failed int `json:"failed"`
+    AwaitingApproval int `json:"awaiting_approval"`
+    Cooling int `json:"cooling"`
+    StaleLeases int `json:"stale_leases"`
 }
 
 func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
@@ -123,7 +136,7 @@ func (s *Service) SystemHealth(ctx context.Context) (SystemHealth,error) {
 }
 
 func (h SystemHealth) HasWarnings() bool {
-    return h.Database.Status!="ok" || h.Redis.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85 || h.Host.CPUPercent>=90 || h.Queues.IncomingPending>100 || h.Queues.MessageOutboxPending>1000
+    return h.Database.Status!="ok" || h.Redis.Status!="ok" || h.Workers.Stale>0 || h.Accounts.Error>0 || h.Proxies.FailedChecks15m>0 || h.Host.DiskUsedPercent>=85 || h.Host.CPUPercent>=90 || h.Queues.IncomingPending>100 || h.Queues.MessageOutboxPending>1000 || h.JoinTasks.StaleLeases>0
 }
 
 
@@ -171,6 +184,10 @@ func (s *Service) aggregateTenantHealth(ctx context.Context, result *SystemHealt
         var proxies,failedChecks,successfulChecks int
         if err:=tx.QueryRowContext(ctx,"SELECT (SELECT COUNT(*) FROM tenant_proxies WHERE tenant_id=$1),(SELECT COUNT(*) FILTER(WHERE status='failed') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes'),(SELECT COUNT(*) FILTER(WHERE status='success') FROM tenant_proxy_checks WHERE tenant_id=$1 AND checked_at >= NOW()-INTERVAL '15 minutes')",tenantID).Scan(&proxies,&failedChecks,&successfulChecks);err!=nil{return fmt.Errorf("proxy health for tenant: %w",err)}
         result.Proxies.Total+=proxies;result.Proxies.FailedChecks15m+=failedChecks;result.Proxies.SuccessfulChecks15m+=successfulChecks
+        var joinTotal,joinDraft,joinQueued,joinProcessing,joinPaused,joinCompleted,joinFailed,awaitingApproval,cooling,staleLeases int
+        if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*),COUNT(*) FILTER(WHERE status='draft'),COUNT(*) FILTER(WHERE status='queued'),COUNT(*) FILTER(WHERE status='processing'),COUNT(*) FILTER(WHERE status='paused'),COUNT(*) FILTER(WHERE status='completed'),COUNT(*) FILTER(WHERE status='failed') FROM tenant_join_tasks WHERE tenant_id=$1`,tenantID).Scan(&joinTotal,&joinDraft,&joinQueued,&joinProcessing,&joinPaused,&joinCompleted,&joinFailed);err!=nil{return fmt.Errorf("join task health: %w",err)}
+        if err:=tx.QueryRowContext(ctx,`SELECT COUNT(*) FILTER(WHERE status='request_pending'),COUNT(*) FILTER(WHERE status='queued' AND available_at>NOW()),COUNT(*) FILTER(WHERE status='processing' AND lease_until<=NOW()) FROM tenant_join_task_accounts WHERE tenant_id=$1`,tenantID).Scan(&awaitingApproval,&cooling,&staleLeases);err!=nil{return fmt.Errorf("join task account health: %w",err)}
+        result.JoinTasks.Total+=joinTotal;result.JoinTasks.Draft+=joinDraft;result.JoinTasks.Queued+=joinQueued;result.JoinTasks.Processing+=joinProcessing;result.JoinTasks.Paused+=joinPaused;result.JoinTasks.Completed+=joinCompleted;result.JoinTasks.Failed+=joinFailed;result.JoinTasks.AwaitingApproval+=awaitingApproval;result.JoinTasks.Cooling+=cooling;result.JoinTasks.StaleLeases+=staleLeases
     }
     return tx.Commit()
 }
