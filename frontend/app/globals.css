@@ -1352,7 +1352,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
 }
-input, select, textarea {
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   min-height: 40px;
   max-width: 100%;
 }
