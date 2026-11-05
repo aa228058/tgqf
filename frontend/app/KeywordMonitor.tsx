@@ -52,7 +52,7 @@ const emptyRule=():Rule=>({
 
 export function KeywordMonitor({token}:{token:string}){
  const [rules,setRules]=useState<Rule[]>([]),[matches,setMatches]=useState<Match[]>([]),[actions,setActions]=useState<Action[]>([]);
- const [assets,setAssets]=useState<Asset[]>([]),[accounts,setAccounts]=useState<Account[]>([]);
+ const [assets,setAssets]=useState<Asset[]>([]),[accounts,setAccounts]=useState<Account[]>([]),[accountsTotal,setAccountsTotal]=useState(0),[accountsLoadedCount,setAccountsLoadedCount]=useState(0),[loadingMoreAccounts,setLoadingMoreAccounts]=useState(false);
  const [tab,setTab]=useState<"rules"|"matches"|"actions">("rules");
  const [draft,setDraft]=useState<Rule|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [keywordText,setKeywordText]=useState(""),[excludeText,setExcludeText]=useState(""),[groupText,setGroupText]=useState("");
@@ -76,12 +76,13 @@ export function KeywordMonitor({token}:{token:string}){
     api<{matches:Match[];total:number}>(`/api/v1/keyword-rules/matches?limit=50&offset=${matchOffset}`,token),
     api<{actions:Action[];total:number}>(`/api/v1/keyword-actions?limit=50&offset=${actionOffset}${status?`&status=${encodeURIComponent(status)}`:""}`,token),
     api<{assets:Asset[]}>("/api/v1/keyword-media-assets",token),
-    api<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token)
+    api<{accounts:Account[];total:number}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token)
    ]);
-   if(sequence===loadSequence.current){setRules(r.rules||[]);setMatches(m.matches||[]);setMatchTotal(m.total||0);setActions(a.actions||[]);setActionTotal(a.total||0);setAssets(media.assets||[]);setAccounts(accountResult.accounts||[])}
+   if(sequence===loadSequence.current){setRules(r.rules||[]);setMatches(m.matches||[]);setMatchTotal(m.total||0);setActions(a.actions||[]);setActionTotal(a.total||0);setAssets(media.assets||[]);setAccounts(current=>{const first=accountResult.accounts||[];const ids=new Set(first.map(x=>x.id));return [...first,...current.filter(x=>!ids.has(x.id))]});setAccountsTotal(accountResult.total||0);setAccountsLoadedCount(current=>Math.max(current,(accountResult.accounts||[]).length))}
   }catch(e){if(sequence===loadSequence.current)setError(e instanceof Error ? translateAPIError(e.message) :"关键词监控数据加载失败")}
   finally{if(sequence===loadSequence.current)setLoading(false)}
  },[token,matchOffset,actionOffset,status]);
+ async function loadMoreAccounts(){if(loadingMoreAccounts||accountsLoadedCount>=accountsTotal)return;setLoadingMoreAccounts(true);setError("");try{const r=await api<{accounts:Account[];total:number}>(`/api/v1/accounts?limit=100&offset=${accountsLoadedCount}&status=authorized`,token);setAccounts(current=>{const seen=new Set(current.map(x=>x.id));return [...current,...(r.accounts||[]).filter(x=>!seen.has(x.id))]});setAccountsLoadedCount(current=>current+(r.accounts||[]).length);setAccountsTotal(r.total||0)}catch(e){setError(e instanceof Error?translateAPIError(e.message):"加载更多账号失败")}finally{setLoadingMoreAccounts(false)}}
  useEffect(()=>{void load();const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},15000);return()=>{loadSequence.current++;window.clearInterval(timer)}},[load]);
  useEffect(()=>()=>{if(preview?.url)URL.revokeObjectURL(preview.url)},[preview?.url]);
  function edit(rule?:Rule){
@@ -211,7 +212,7 @@ export function KeywordMonitor({token}:{token:string}){
    <fieldset className="keyword-filter-set"><legend>匹配范围</legend>
     <div className="keyword-checks"><label><input type="checkbox" checked={draft.chat_types.includes("private")} onChange={e=>setDraft({...draft,chat_types:e.target.checked?[...draft.chat_types,"private"]:draft.chat_types.filter(x=>x!=="private")})}/>私聊</label><label><input type="checkbox" checked={draft.chat_types.includes("group")} onChange={e=>setDraft({...draft,chat_types:e.target.checked?[...draft.chat_types,"group"]:draft.chat_types.filter(x=>x!=="group")})}/>群组</label><label><input type="checkbox" checked={draft.chat_types.includes("channel")} disabled={(draft.action_steps||[]).some(step=>step.action_type!=="text")} onChange={e=>setDraft({...draft,chat_types:e.target.checked?[...draft.chat_types,"channel"]:draft.chat_types.filter(x=>x!=="channel")})}/>频道（仅文本）</label><label><input type="checkbox" checked={draft.case_sensitive} onChange={e=>setDraft({...draft,case_sensitive:e.target.checked})}/>区分大小写</label></div>
     {draft.action_type==="voice_call"&&<small>语音呼叫规则只能选择私聊。</small>}
-    <label>限定账号（不选表示所有已接入账号）<div className="keyword-account-picker">{accounts.map(account=><label key={account.id}><input type="checkbox" checked={draft.account_ids.includes(account.id)} onChange={e=>setDraft({...draft,account_ids:e.target.checked?[...draft.account_ids,account.id]:draft.account_ids.filter(x=>x!==account.id)})}/><span>{account.display_name||account.phone||account.id}</span></label>)}</div></label>
+    <fieldset className="keyword-filter-set keyword-account-picker-field"><legend>限定账号（不选表示所有已接入账号）</legend><div className="keyword-account-picker">{accounts.map(account=><label key={account.id}><input type="checkbox" checked={draft.account_ids.includes(account.id)} onChange={e=>setDraft({...draft,account_ids:e.target.checked?[...draft.account_ids,account.id]:draft.account_ids.filter(x=>x!==account.id)})}/><span>{account.display_name||account.phone||account.id}</span></label>)}</div><small>已加载 {accountsLoadedCount}/{accountsTotal} 个授权账号</small>{accountsLoadedCount<accountsTotal&&<button type="button" className="secondary" onClick={()=>void loadMoreAccounts()} disabled={loadingMoreAccounts}>{loadingMoreAccounts?"加载中…":"加载更多账号"}</button>}</fieldset>
     <div className="keyword-editor-grid"><label>Chat ID（逗号分隔）<input value={chatIDsText} onChange={e=>setChatIDsText(e.target.value)} placeholder="-100123…, 12345"/></label><label>媒体类型（逗号分隔）<input value={mediaTypesText} onChange={e=>setMediaTypesText(e.target.value)} placeholder="photo, video, document"/></label></div>
     <div className="keyword-editor-grid"><label>聊天名称包含（逗号分隔）<input value={chatTitlesText} onChange={e=>setChatTitlesText(e.target.value)}/></label><label>聊天 username（逗号分隔）<input value={chatUsernamesText} onChange={e=>setChatUsernamesText(e.target.value)}/></label></div>
     <div className="keyword-editor-grid"><label>发送者 ID（逗号分隔）<input value={senderIDsText} onChange={e=>setSenderIDsText(e.target.value)}/></label><label>发送者 username（逗号分隔）<input value={senderUsernamesText} onChange={e=>setSenderUsernamesText(e.target.value)}/></label></div>
