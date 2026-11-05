@@ -103,7 +103,7 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ""
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     image: tgqf-frontend:${TGQF_IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
