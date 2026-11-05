@@ -55,6 +55,7 @@ func(h *Handler)Routes(mux *http.ServeMux){
 	mux.Handle("POST /api/v1/keyword-actions/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.keywordActionControl)))
 	mux.Handle("GET /api/v1/join-tasks",h.auth.Authenticated(http.HandlerFunc(h.joinTasks)))
 	mux.Handle("POST /api/v1/join-tasks",h.auth.Authenticated(http.HandlerFunc(h.joinTasks)))
+	mux.Handle("POST /api/v1/join-tasks/bulk",h.auth.Authenticated(http.HandlerFunc(h.bulkJoinTasks)))
 	mux.Handle("GET /api/v1/join-tasks/{id}",h.auth.Authenticated(http.HandlerFunc(h.joinTask)))
 	mux.Handle("POST /api/v1/join-tasks/{id}/{action}",h.auth.Authenticated(http.HandlerFunc(h.joinTaskAction)))
 	mux.Handle("GET /api/v1/messages",h.auth.Authenticated(http.HandlerFunc(h.list)))
