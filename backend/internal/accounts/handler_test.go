@@ -2,6 +2,7 @@ package accounts
 
 import (
  "net/http/httptest"
+ "errors"
  "strings"
  "testing"
 )
@@ -121,5 +122,20 @@ func TestNormalizeBulkDeleteAccountIDs(t *testing.T) {
 	if err!=nil||len(got)!=1||got[0]!=id{t.Fatalf("unexpected normalized IDs %#v, %v",got,err)}
 	for _,ids:=range [][]string{nil, {id,id}, {"invalid"}, make([]string,101)} {
 		if _,err:=normalizeBulkDeleteAccountIDs(ids);err==nil{t.Errorf("invalid delete IDs accepted: %#v",ids)}
+	}
+}
+
+func TestTelegramLoginErrorReturnsOnlySafeKnownCodes(t *testing.T) {
+	cases := []struct { input string; want string }{
+		{"RPC_ERROR: PHONE_NUMBER_INVALID phone=+15551234567", "phone_number_invalid"},
+		{"FLOOD_WAIT_120", "flood_wait"},
+		{"PASSWORD_HASH_INVALID", "password_hash_invalid"},
+		{"connection reset by peer", "network"},
+		{"arbitrary error containing private details", "could not start Telegram login"},
+	}
+	for _, tt := range cases {
+		if got := telegramLoginError(errors.New(tt.input), "could not start Telegram login"); got != tt.want {
+			t.Errorf("telegramLoginError(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }

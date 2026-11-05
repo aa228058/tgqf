@@ -38,6 +38,17 @@ export function translateAPIError(message: string): string {
   if (lower.includes("user_privacy_restricted")) return "对方的隐私设置不允许此操作，无法向该用户发起联系或邀请。";
   if (lower.includes("user_not_mutual_contact")) return "该用户仅允许互为联系人的账号联系，请先确认联系人关系。";
   if (lower.includes("phone_number_invalid")) return "手机号格式无效，请检查国家区号和号码。";
+  if (lower.includes("phone_number_banned")) return "该手机号已被 Telegram 限制，暂时无法登录。";
+  if (lower.includes("phone_number_flood") || lower.includes("phone_password_flood")) return "该手机号请求过于频繁，请等待一段时间后重试。";
+  if (lower.includes("phone_code_empty") || lower.includes("phone_code_hash_empty")) return "验证码会话无效，请重新发起登录。";
+  if (lower.includes("password_hash_invalid")) return "二步验证密码错误，请检查后重试。";
+  if (lower.includes("api_id_invalid") || lower.includes("api_id_published_flood")) return "服务器 Telegram API 配置异常，请联系管理员。";
+  if (lower.includes("auth_key_invalid")) return "Telegram 登录密钥无效，请重新登录授权。";
+  if (lower.includes("phone_number_unoccupied")) return "该手机号尚未注册 Telegram 账号。";
+  if (lower.includes("phone_number_occupied")) return "该手机号已注册，请继续完成验证码登录。";
+  if (lower.includes("phone_number_unavailable")) return "Telegram 暂时无法向该手机号发送验证码，请稍后重试。";
+  if (lower.includes("phone_number_app_signup_forbidden")) return "Telegram 不允许通过当前客户端注册此手机号。";
+  if (lower === "network" || lower === "timeout" || lower.includes("deadline exceeded")) return "连接 Telegram 服务器失败或超时，请检查服务器网络和代理设置。";
   if (lower.includes("phone_code_invalid") || lower.includes("phone_code_expired")) return "Telegram 验证码错误或已过期，请重新获取验证码。";
   if (lower.includes("session_password_needed")) return "该账号已开启二步验证，请输入正确的二步验证密码。";
   if (lower.includes("auth_key_unregistered") || lower.includes("session_revoked")) return "账号登录会话已失效，请重新登录授权。";

@@ -182,6 +182,27 @@ func decode(w http.ResponseWriter,r *http.Request,v any)bool{
 func writeJSON(w http.ResponseWriter,status int,v any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(status);_=json.NewEncoder(w).Encode(v)}
 func writeError(w http.ResponseWriter,status int,message string){writeJSON(w,status,map[string]string{"error":message})}
 
+func telegramLoginError(err error, fallback string) string {
+	if err == nil { return fallback }
+	message := strings.ToLower(err.Error())
+	// Return only known Telegram RPC identifiers. Never echo arbitrary MTGo
+	// errors because they may contain user-provided or transport details.
+	known := []string{
+		"phone_number_invalid", "phone_number_banned", "phone_number_flood",
+		"phone_code_invalid", "phone_code_expired", "phone_code_empty",
+		"phone_code_hash_empty", "phone_password_flood", "password_hash_invalid",
+		"session_password_needed", "auth_key_unregistered", "auth_key_invalid",
+		"api_id_invalid", "api_id_published_flood", "flood_wait",
+		"phone_number_unoccupied", "phone_number_occupied",
+		"phone_number_unavailable", "phone_number_app_signup_forbidden",
+		"network", "timeout", "deadline exceeded",
+	}
+	for _, code := range known {
+		if strings.Contains(message, code) { return code }
+	}
+	return fallback
+}
+
 func (h *Handler) startQR(w http.ResponseWriter,r *http.Request) {
  var q qrStartRequest;if !decode(w,r,&q){writeError(w,400,"invalid request body");return}
  u:=auth.UserFromContext(r.Context())
@@ -192,7 +213,7 @@ func (h *Handler) startQR(w http.ResponseWriter,r *http.Request) {
   proxyJSON,proxyErr:=h.service.LoadPendingProxyJSON(r.Context(),u.TenantID,a.ID)
   if proxyErr!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,500,"could not load account proxy configuration");return}
   result,err:=h.telegram.StartQR(r.Context(),a.ID,proxyJSON,profile)
- if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram QR login");return}
+ if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,telegramLoginError(err,"could not start Telegram QR login"));return}
  if !result.Pending { authorizedAccount,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,a.ID,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString); _=h.telegram.Stop(a.ID); if saveErr!=nil { writeError(w,409,"Telegram authorization completed but account details could not be saved");return }; writeJSON(w,201,map[string]any{"account":authorizedAccount,"status":"authorized"});return }
  writeJSON(w,201,map[string]any{"account":a,"qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}})
 }
@@ -200,7 +221,7 @@ func (h *Handler) pollQR(w http.ResponseWriter,r *http.Request) {
  u:=auth.UserFromContext(r.Context());id:=r.PathValue("id")
  pending,err:=h.service.IsPending(r.Context(),u.TenantID,id);if err!=nil{writeError(w,500,"failed to verify account");return}
  if !pending{writeError(w,404,"pending account not found");return}
- result,err:=h.telegram.PollQR(r.Context(),id);if err!=nil{writeError(w,502,"Telegram QR status check failed");return}
+ result,err:=h.telegram.PollQR(r.Context(),id);if err!=nil{writeError(w,502,telegramLoginError(err,"Telegram QR status check failed"));return}
  if result.Pending{writeJSON(w,200,map[string]any{"status":"pending","qr":map[string]any{"url":result.Challenge.URL,"expires_at":result.Challenge.Expires}});return}
  _,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,strings.TrimSpace(result.FirstName),result.SessionString)
  _=h.telegram.Stop(id)
@@ -381,7 +402,7 @@ func (h *Handler) startPhoneLogin(w http.ResponseWriter,r *http.Request) {
 	proxyJSON,err:=h.service.LoadPendingProxyJSON(r.Context(),u.TenantID,a.ID)
 	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,500,"could not load account proxy configuration");return}
 	result,err:=h.telegram.StartPhoneLogin(r.Context(),a.ID,q.Phone,proxyJSON,profile)
-	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,"could not start Telegram phone login");return}
+	if err!=nil {_=h.service.Delete(context.Background(),u.TenantID,a.ID);writeError(w,502,telegramLoginError(err,"could not start Telegram phone login"));return}
 	writeJSON(w,201,map[string]any{"account":a,"status":"code_sent","delivery_type":result.DeliveryType,"resend_after_seconds":result.Timeout})
 }
 
@@ -436,7 +457,7 @@ func (h *Handler) startBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
 		if startErr!=nil {
 			_ = h.telegram.CancelPhoneLogin(account.ID)
 			_ = h.service.Delete(context.Background(),u.TenantID,account.ID)
-			result.Error="Telegram could not start phone login";results=append(results,result);continue
+			result.Error=telegramLoginError(startErr,"Telegram could not start phone login");results=append(results,result);continue
 		}
 		result.Account=&account;result.Status="code_sent";result.DeliveryType=challenge.DeliveryType;result.ResendAfterSeconds=challenge.Timeout
 		started++;results=append(results,result)
