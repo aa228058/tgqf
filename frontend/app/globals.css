@@ -1252,3 +1252,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 
 .group-correction-form{display:flex;flex-direction:column;gap:13px}.group-correction-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:650}.group-correction-form input:not([type=checkbox]){width:100%;min-width:0}.group-correction-form .groups-correction-checkbox{display:flex;flex-direction:row;align-items:center;justify-content:space-between}.group-correction-form .groups-correction-checkbox input{width:18px;height:18px;accent-color:var(--accent)}
 @media(max-width:600px){.group-correction-form{max-height:85dvh;overflow-y:auto;padding:18px}.group-correction-form .row-actions{display:flex;justify-content:flex-end;flex-wrap:wrap}}
+
+
+/* Group-library bulk join task workflow */
+.groups-bulk-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:13px}
+.groups-bulk-toolbar>span{color:var(--muted);font-weight:600}
+.groups-bulk-toolbar>div{display:flex;gap:8px;flex-wrap:wrap}
+.groups-bulk-toolbar input[type=checkbox],.groups-table input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent);cursor:pointer}
+.join-batch-targets{display:flex;flex-wrap:wrap;gap:7px;max-height:140px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+.join-batch-targets span{padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;overflow-wrap:anywhere}
+@media(max-width:600px){.groups-bulk-toolbar{align-items:stretch}.groups-bulk-toolbar>div{display:grid;grid-template-columns:1fr}.groups-bulk-toolbar button{min-height:42px}.join-batch-targets{max-height:110px}}
