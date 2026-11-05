@@ -1211,6 +1211,7 @@ func (s *Service) FailReplyWithFloodWait(ctx context.Context, job ReplyJob, caus
 	message:=cause.Error();if len(message)>500{message=message[:500]}
 	status,delay:=replyRetrySchedule(job.Attempts,floodWait)
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		if err:=recordTelegramCapabilityIssueTx(tx,job.TenantID,job.AccountID,job.ChatID,cause,floodWait>0);err!=nil{return err}
 		var tenantActive bool
 		if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM tenants WHERE id=$1 AND status='active' AND expires_at>NOW())`,job.TenantID).Scan(&tenantActive);err!=nil{return err}
 		if !tenantActive {

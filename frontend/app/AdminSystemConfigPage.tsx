@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, notifyUser } from "./api-response";
 
 import {useCallback,useEffect,useState} from "react";
 
@@ -12,6 +12,7 @@ const labels:Record<string,string>={registration_enabled:"开放租户注册",de
 async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  const response=await fetch(API+path,{...init,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(init?.headers||{})},cache:"no-store"});
  if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message);throw new Error(message)}
+ if(["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase()))notifyUser("系统配置已成功更新。");
  return readAPIJSON<T>(response);
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, notifyUser, translateAPIError } from "./api-response";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SharedGroupPicker } from "./SharedGroupPicker";
@@ -25,6 +25,7 @@ async function api<T>(path: string, token: string, init?: RequestInit): Promise<
     message = await apiErrorMessage(response, message);
     throw new Error(message);
   }
+  if (["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase())) notifyUser(path.includes("/bulk")?"批量加群任务已创建为草稿，请检查后手动启动。":path.endsWith("/join-tasks")?"加群任务已创建，请查看任务列表。":"加群任务操作已成功完成。");
   if (response.status === 204) return undefined as T;
   return readAPIJSON<T>(response);
 }
@@ -81,7 +82,7 @@ export function JoinTasksPage({ token }: { token: string }) {
       setGroups(groupResult.groups || []);
       setLinks(linkResult.links || []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "自动加群数据加载失败");
+      setError(e instanceof Error ? translateAPIError(e.message) : "自动加群数据加载失败");
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -92,7 +93,7 @@ export function JoinTasksPage({ token }: { token: string }) {
   useEffect(()=>{
     if(!detail)return;
     let active=true;
-    const refreshDetail=async()=>{if(document.visibilityState!=="visible")return;try{const result=await api<{task:Task}>(`/api/v1/join-tasks/${detail.id}`,token);if(active)setDetail(result.task)}catch(e){if(active)setError(e instanceof Error?e.message:"任务详情刷新失败")}};
+    const refreshDetail=async()=>{if(document.visibilityState!=="visible")return;try{const result=await api<{task:Task}>(`/api/v1/join-tasks/${detail.id}`,token);if(active)setDetail(result.task)}catch(e){if(active)setError(e instanceof Error ? translateAPIError(e.message) :"任务详情刷新失败")}};
     const timer=window.setInterval(()=>void refreshDetail(),10000);
     return()=>{active=false;window.clearInterval(timer)};
   },[detail?.id,token]);
@@ -119,7 +120,7 @@ export function JoinTasksPage({ token }: { token: string }) {
       await api("/api/v1/join-tasks",token,{method:"POST",body:JSON.stringify(body)});
       setCreateOpen(false);setNotice("加群任务已创建。请检查目标和授权记录后启动任务。");await load();
     } catch(e) {
-      setError(e instanceof Error?e.message:"创建加群任务失败");
+      setError(e instanceof Error ? translateAPIError(e.message) :"创建加群任务失败");
     } finally {setBusy(false)}
   }
   async function action(task:Task,op:"start"|"pause"|"resume"|"cancel"|"retry") {
@@ -130,14 +131,14 @@ export function JoinTasksPage({ token }: { token: string }) {
       await api(`/api/v1/join-tasks/${task.id}/${op}`,token,{method:"POST"});
       setNotice(`任务已${labels[op]}`);await load();
       if(detail?.id===task.id){const result=await api<{task:Task}>(`/api/v1/join-tasks/${task.id}`,token);setDetail(result.task)}
-    } catch(e) {setError(e instanceof Error?e.message:"任务操作失败")}
+    } catch(e) {setError(e instanceof Error ? translateAPIError(e.message) :"任务操作失败")}
     finally {setBusy(false)}
   }
   async function openDetail(task:Task) {
     const sequence=++detailRequest.current;
     setDetail(task);
     try {const result=await api<{task:Task}>(`/api/v1/join-tasks/${task.id}`,token);if(sequence===detailRequest.current)setDetail(result.task)}
-    catch(e){if(sequence===detailRequest.current)setError(e instanceof Error?e.message:"任务详情加载失败")}
+    catch(e){if(sequence===detailRequest.current)setError(e instanceof Error ? translateAPIError(e.message) :"任务详情加载失败")}
   }
   const targetLabel=(task:Task)=>{
     if(task.target_group_id){const g=groups.find(x=>x.id===task.target_group_id);return g?g.title:`公共群组 #${task.target_group_id}`}
@@ -174,6 +175,6 @@ export function JoinTasksPage({ token }: { token: string }) {
       <label className="join-authorization"><input type="checkbox" checked={authorized} onChange={e=>setAuthorized(e.target.checked)}/><span>我确认已获得加入目标群组所需的授权，并理解 Telegram 平台限制及 FloodWait 冷却要求。</span></label>
       <button className="primary" disabled={busy||!authorized||!accountIDs.length||(targetMode==="group"&&!groupID)||(targetMode==="link"&&!linkID)||(targetMode==="invite"&&!invite.trim())}>创建任务（创建后需手动启动）</button>
     </form></div>}
-    {detail&&<div className="modal-backdrop" onClick={()=>{detailRequest.current++;setDetail(null)}}><section className="account-modal join-detail" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{detail.name}</h2><p>{targetLabel(detail)} · {statusName[detail.status]||detail.status}</p></div><button className="ghost" onClick={()=>{detailRequest.current++;setDetail(null)}}>关闭</button></div><div className="join-detail-meta"><span>授权确认：{detail.authorization_confirmed?"已确认":"未确认"}</span><span>授权时间：{date(detail.authorized_at)}</span><span>账号数：{detail.account_count}</span><span>任务下次可执行：{date(detail.available_at)}</span></div>{detail.authorization_note&&<p className="join-auth-note">授权说明：{detail.authorization_note}</p>}<h3>账号执行结果</h3><div className="join-account-results">{(detail.accounts||[]).map(account=><article key={account.account_id}><div><strong>{account.account_name||account.account_id}</strong><small>{account.account_id}</small></div><span className={`status status-${account.status}`}>{statusName[account.status]||account.status}</span><span>{appName[account.application_status]||account.application_status}</span><span>尝试 {account.attempts}</span>{account.status==="queued"&&<small>下次可执行：{date(account.available_at)}</small>}{account.last_error&&<small className="join-error">{account.last_error}</small>}</article>)}{!detail.accounts?.length&&<div className="empty">暂无账号执行结果</div>}</div></section></div>}
+    {detail&&<div className="modal-backdrop" onClick={()=>{detailRequest.current++;setDetail(null)}}><section className="account-modal join-detail" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{detail.name}</h2><p>{targetLabel(detail)} · {statusName[detail.status]||detail.status}</p></div><button className="ghost" onClick={()=>{detailRequest.current++;setDetail(null)}}>关闭</button></div><div className="join-detail-meta"><span>授权确认：{detail.authorization_confirmed?"已确认":"未确认"}</span><span>授权时间：{date(detail.authorized_at)}</span><span>账号数：{detail.account_count}</span><span>任务下次可执行：{date(detail.available_at)}</span></div>{detail.authorization_note&&<p className="join-auth-note">授权说明：{detail.authorization_note}</p>}<h3>账号执行结果</h3><div className="join-account-results">{(detail.accounts||[]).map(account=><article key={account.account_id}><div><strong>{account.account_name||account.account_id}</strong><small>{account.account_id}</small></div><span className={`status status-${account.status}`}>{statusName[account.status]||account.status}</span><span>{appName[account.application_status]||account.application_status}</span><span>尝试 {account.attempts}</span>{account.status==="queued"&&<small>下次可执行：{date(account.available_at)}</small>}{account.last_error&&<small className="join-error">{translateAPIError(account.last_error)}</small>}</article>)}{!detail.accounts?.length&&<div className="empty">暂无账号执行结果</div>}</div></section></div>}
   </section>;
 }

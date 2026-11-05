@@ -582,6 +582,7 @@ func keywordActionRetryDelay(attempt int,floodWait time.Duration) time.Duration 
 
 func (s *Service) FinishKeywordAction(ctx context.Context,job KeywordActionJob,telegramMessageID int64,sendErr error,floodWait time.Duration,messageIDLists ...[]int64) error {
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if sendErr!=nil { if err:=recordTelegramCapabilityIssueTx(tx,job.TenantID,job.AccountID,job.ChatID,sendErr,floodWait>0);err!=nil{return err} }
         if sendErr==nil {
             if telegramMessageID<=0{return errors.New("invalid Telegram message id")}
             messageIDs:=[]int64{telegramMessageID}

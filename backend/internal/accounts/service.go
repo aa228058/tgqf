@@ -488,3 +488,36 @@ func (s *Service) OwnsAccount(ctx context.Context, tenantID, accountID string) (
  })
  return owned,err
 }
+
+
+type AccountCapabilityStatus struct {
+	Capability string    `json:"capability"`
+	ChatID int64         `json:"chat_id,omitempty"`
+	ChatTitle string     `json:"chat_title,omitempty"`
+	ChatType string      `json:"chat_type,omitempty"`
+	Status string        `json:"status"`
+	RPCError string      `json:"rpc_error,omitempty"`
+	Reason string        `json:"reason"`
+	Source string        `json:"source"`
+	LastObservedAt time.Time `json:"last_observed_at"`
+}
+
+func (s *Service) ListCapabilityStatus(ctx context.Context, tenantID, accountID string) ([]AccountCapabilityStatus,error) {
+	if tenantID=="" || accountID=="" { return nil,errors.New("account not found") }
+	out:=[]AccountCapabilityStatus{}
+	err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
+		var exists bool
+		if err:=tx.QueryRowContext(ctx,`SELECT EXISTS(SELECT 1 FROM telegram_accounts WHERE tenant_id=$1 AND id=$2)`,tenantID,accountID).Scan(&exists);err!=nil{return err}
+		if !exists{return errors.New("account not found")}
+		rows,err:=tx.QueryContext(ctx,`SELECT s.capability,s.chat_id,COALESCE(NULLIF(c.chat_title,''),g.title,''),COALESCE(c.chat_type,g.chat_type,''),s.status,s.rpc_error,s.reason,s.source,s.last_observed_at
+			FROM telegram_account_capability_status s
+			LEFT JOIN tenant_message_chats c ON c.tenant_id=s.tenant_id AND c.telegram_account_id=s.account_id AND c.chat_id=s.chat_id AND s.chat_id<>0
+			LEFT JOIN telegram_account_groups g ON g.tenant_id=s.tenant_id AND g.account_id=s.account_id AND g.chat_id=s.chat_id AND s.chat_id<>0
+			WHERE s.tenant_id=$1 AND s.account_id=$2
+			ORDER BY s.last_observed_at DESC LIMIT 100`,tenantID,accountID)
+		if err!=nil{return err};defer rows.Close()
+		for rows.Next(){var item AccountCapabilityStatus;if err:=rows.Scan(&item.Capability,&item.ChatID,&item.ChatTitle,&item.ChatType,&item.Status,&item.RPCError,&item.Reason,&item.Source,&item.LastObservedAt);err!=nil{return err};out=append(out,item)}
+		return rows.Err()
+	})
+	return out,err
+}

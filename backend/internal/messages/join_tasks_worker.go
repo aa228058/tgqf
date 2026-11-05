@@ -106,6 +106,7 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
 	if seconds<=0{return errors.New("positive FloodWait duration is required")}
 	if len(reason)>500 {reason=reason[:500]}
 	return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+		if err:=recordJoinCapabilityIssueTx(tx,job.TenantID,job.AccountID,reason,true);err!=nil{return err}
 		if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
 		// Consume only this exact lease. Pause/cancel stops future work without
 		// invalidating a Telegram RPC that is already running.
@@ -142,6 +143,7 @@ func (s *Service) RescheduleJoinTaskAccount(ctx context.Context,job JoinTaskJob,
 func (s *Service) FailJoinTaskAccount(ctx context.Context,job JoinTaskJob,reason string)error {
     if len(reason)>500 {reason=reason[:500]}
     return withTenantTx(ctx,s.db,job.TenantID,func(tx *sql.Tx)error{
+        if err:=recordJoinCapabilityIssueTx(tx,job.TenantID,job.AccountID,reason,false);err!=nil{return err}
         if err:=lockJoinTaskParent(ctx,tx,job.TenantID,job.TaskID);err!=nil{return err}
         res,err:=tx.ExecContext(ctx,`UPDATE tenant_join_task_accounts a SET
 				status=CASE WHEN a.cancel_requested OR t.status='cancelled' THEN 'cancelled' WHEN a.pause_requested OR t.status='paused' THEN 'paused' ELSE 'failed' END,
