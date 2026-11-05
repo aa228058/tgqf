@@ -20,6 +20,12 @@ const API_ERROR_ZH: Record<string, string> = {
   "failed to load system configuration": "系统配置加载失败，请稍后刷新。",
   "invalid login type": "登录入口选择无效，请重新选择登录身份。",
   "new password must be 10-72 bytes": "新密码长度必须为 10–72 字节。",
+  "could not start Telegram QR login": "无法启动 Telegram 二维码登录，请检查服务器网络、代理和 Telegram API 配置。",
+  "Telegram QR status check failed": "二维码状态检查失败，请重新生成二维码或检查服务器网络。",
+  "could not start Telegram phone login": "无法启动手机号登录，请检查手机号、服务器网络和代理配置。",
+  "Telegram authorization verification is unavailable; session import was not accepted": "Telegram 授权验证服务暂不可用，本次未接受 Session 导入。",
+  "Telegram session could not be verified; check whether it was revoked and whether the network or proxy is reachable": "Session 验证失败：可能已被撤销，或服务器网络/代理无法连接 Telegram。",
+  "Telegram session is not authorized or has been revoked; please import a valid session": "该 Session 未授权或已被撤销，请重新导入有效 Session。",
 };
 export function translateAPIError(message: string): string {
   const raw = message.trim();
