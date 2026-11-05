@@ -1,8 +1,10 @@
 "use client";
 
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { ToastViewport } from "./ToastViewport";
+import { notifyUser } from "./api-response";
 
-export type AppUser = { id:string; tenant_id?:string; username:string; role:string };
+export type AppUser = { id:string; tenant_id?:string; username:string; role:string; tenant_status?:string; tenant_expires_at?:string; account_limit?:number };
 type Key = "workbench"|"accounts"|"messages"|"groups"|"join"|"monitor"|"runtime"|"tasks"|"settings"|"admin";
 const items:{key:Key;label:string;icon:string;description:string}[] = [
   {key:"workbench",label:"工作台",icon:"⌂",description:"工作台只展示真实账号、消息和 Worker 数据。"},
@@ -18,14 +20,16 @@ const items:{key:Key;label:string;icon:string;description:string}[] = [
 ];
 
 export function AppShell({
-  user,onLogout,children,workbench,accounts,messages,groups,join,monitor,runtime,settings,adminContent
+  user,onLogout,children,workbench,accounts,messages,groups,join,monitor,runtime,settings,adminContent,initialSection
 }:{
-  user:AppUser;onLogout:()=>void;children:ReactNode;
+  user:AppUser;onLogout:()=>void;children:ReactNode;initialSection?:Key;
   workbench?:ReactNode;accounts?:ReactNode;messages?:ReactNode;groups?:ReactNode;
   join?:ReactNode;monitor?:ReactNode;runtime?:ReactNode;settings?:ReactNode;adminContent?:ReactNode;
 }) {
   const isAdmin = user.role==="super_admin";
-  const [active,setActive] = useState<Key>(isAdmin?"admin":"tasks");
+  const subscriptionActive = isAdmin || (user.tenant_status==="active" && !!user.tenant_expires_at && new Date(user.tenant_expires_at).getTime()>Date.now());
+  const [active,setActive] = useState<Key>(initialSection || (isAdmin?"admin":subscriptionActive?"tasks":"settings"));
+  useEffect(()=>{if(initialSection)setActive(initialSection);else if(!subscriptionActive&&!isAdmin)setActive("settings")},[initialSection,subscriptionActive,isAdmin]);
   const [moreOpen,setMoreOpen] = useState(false);
   const [theme,setTheme] = useState<"light"|"dark">("light");
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -57,6 +61,7 @@ export function AppShell({
   },[theme]);
   const go=(key:Key)=>{
     if(key==="admin"&&!isAdmin)return;
+    if(!isAdmin&&!subscriptionActive&&key!=="settings"){setActive("settings");setMoreOpen(false);notifyUser("当前租户尚未激活或服务已到期，请先在系统设置中兑换卡密。","info");return;}
     setActive(key);setMoreOpen(false);
   };
   const primary:Key[]=isAdmin?["admin"]:["workbench","accounts","messages"];
@@ -72,7 +77,7 @@ export function AppShell({
     active==="runtime" ? runtime :
     active==="settings" ? settings :
     active==="admin"&&isAdmin ? adminContent : null;
-  return <div className="app-frame">
+  return <><ToastViewport /><div className="app-frame">
     <aside className="app-sidebar">
       <div className="app-brand"><div className="app-brand-mark">TG</div><div><strong>TG 账号管理工具</strong><small>{isAdmin?"系统管理后台":"租户业务工作台"}</small></div></div>
       <div className="sidebar-caption">工作空间</div>
@@ -88,9 +93,9 @@ export function AppShell({
     </aside>
     <div className="app-main">
       <header className="app-topbar"><div className="breadcrumb"><span>TG 账号管理工具</span><span className="breadcrumb-separator">/</span><strong>{section.label}</strong></div>
-        <div className="topbar-user"><span className="role-label">{isAdmin?"超级管理员":"租户空间"}</span><button className="theme-toggle" aria-label="切换界面主题" aria-pressed={theme==="dark"} onClick={()=>setTheme(value=>value==="light"?"dark":"light")}>{theme==="light"?"◐ 深色":"☼ 浅色"}</button><span className="topbar-username">{user.username}</span><button className="topbar-logout" onClick={onLogout}>退出</button></div>
+        <div className="topbar-user">{!isAdmin&&<span className={subscriptionActive?"subscription-chip active":"subscription-chip inactive"}>{subscriptionActive?"服务正常":"待激活 / 已到期"}</span>}<span className="role-label">{isAdmin?"超级管理员":"租户空间"}</span><button className="theme-toggle" aria-label="切换界面主题" aria-pressed={theme==="dark"} onClick={()=>setTheme(value=>value==="light"?"dark":"light")}>{theme==="light"?"◐ 深色":"☼ 浅色"}</button><span className="topbar-username">{user.username}</span><button className="topbar-logout" onClick={onLogout}>退出</button></div>
       </header>
-      <div className="app-content">{content||<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG 账号管理工具 · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面正在接入真实接口；当前不展示演示数据或无效操作。</div></section>}</div>
+      <div className="app-content">{!isAdmin&&!subscriptionActive&&<section className="activation-banner" role="status"><div><strong>当前租户尚未激活服务</strong><p>请在「系统设置」中输入激活卡密。激活后即可使用账号管理、群组库和任务功能。</p></div><button className="primary" onClick={()=>go("settings")}>立即激活</button></section>}{content||<section className="module-placeholder"><div className="placeholder-icon">{section.icon}</div><div className="eyebrow">TG 账号管理工具 · {section.label.toUpperCase()}</div><h1>{section.label}</h1><p>{section.description}</p><div className="placeholder-note">页面正在接入真实接口；当前不展示演示数据或无效操作。</div></section>}</div>
       <nav className={isAdmin?"mobile-bottom-nav admin-mobile-nav":"mobile-bottom-nav"} aria-label="手机主导航">
         {primary.map(key=>{const item=items.find(x=>x.key===key)!;return <button key={key} aria-current={active===key?"page":undefined} className={active===key?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>go(key)}><span>{item.icon}</span><small>{item.label}</small></button>})}
         <div className="mobile-more-wrap" ref={moreMenuRef}><button ref={moreTriggerRef} aria-expanded={moreOpen} aria-haspopup="menu" aria-controls="mobile-more-menu" aria-label={moreOpen?"关闭更多导航":"打开更多导航"} className={moreOpen||more.some(item=>item.key===active)?"mobile-nav-item active":"mobile-nav-item"} onClick={()=>setMoreOpen(value=>!value)}><span>•••</span><small>更多</small></button>
@@ -98,5 +103,5 @@ export function AppShell({
         </div>
       </nav>
     </div>
-  </div>;
+  </div></>;
 }

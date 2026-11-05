@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, notifyUser, translateAPIError } from "./api-response";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -28,6 +28,7 @@ async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  Object.assign(headers,init?.headers||{});
  const response=await fetch(`${API_BASE}${path}`,{...init,headers,cache:"no-store"});
  if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message);throw new Error(message)}
+ if(["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase()))notifyUser("关键词规则或动作任务操作成功。");
  if(response.status===204)return undefined as T;
  return readAPIJSON<T>(response);
 }
@@ -72,7 +73,7 @@ export function KeywordMonitor({token}:{token:string}){
     api<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token)
    ]);
    if(sequence===loadSequence.current){setRules(r.rules||[]);setMatches(m.matches||[]);setMatchTotal(m.total||0);setActions(a.actions||[]);setActionTotal(a.total||0);setAssets(media.assets||[]);setAccounts(accountResult.accounts||[])}
-  }catch(e){if(sequence===loadSequence.current)setError(e instanceof Error?e.message:"关键词监控数据加载失败")}
+  }catch(e){if(sequence===loadSequence.current)setError(e instanceof Error ? translateAPIError(e.message) :"关键词监控数据加载失败")}
   finally{if(sequence===loadSequence.current)setLoading(false)}
  },[token,matchOffset,actionOffset,status]);
  useEffect(()=>{void load();const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},15000);return()=>{loadSequence.current++;window.clearInterval(timer)}},[load]);
@@ -109,18 +110,18 @@ export function KeywordMonitor({token}:{token:string}){
   try{
    const result=await api<{rule:Rule}>(draft.id?`/api/v1/keyword-rules/${draft.id}`:"/api/v1/keyword-rules",token,{method:draft.id?"PUT":"POST",body:JSON.stringify(payload)});
    setRules(old=>draft.id?old.map(x=>x.id===draft.id?result.rule:x):[result.rule,...old]);setDraft(null);setNotice("关键词规则已保存");await load();
-  }catch(e){setError(e instanceof Error?e.message:"规则保存失败")}
+  }catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"规则保存失败")}
   finally{operationLock.current=false;setBusy(false)}
  }
  async function remove(rule:Rule){
   if(!window.confirm(`确定删除规则「${rule.name}」？`))return;
   if(operationLock.current)return;operationLock.current=true;setBusy(true);setError("");setNotice("");try{await api(`/api/v1/keyword-rules/${rule.id}`,token,{method:"DELETE"});setRules(old=>old.filter(x=>x.id!==rule.id));setNotice("规则已删除")}
-  catch(e){setError(e instanceof Error?e.message:"删除规则失败")}finally{operationLock.current=false;setBusy(false)}
+  catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"删除规则失败")}finally{operationLock.current=false;setBusy(false)}
  }
  async function control(action:Action,op:"pause"|"resume"|"retry"){
   if(operationLock.current)return;operationLock.current=true;setBusy(true);setError("");setNotice("");
   try{await api(`/api/v1/keyword-actions/${action.id}/${op}`,token,{method:"POST"});setNotice("动作任务状态已更新");await load()}
-  catch(e){setError(e instanceof Error?e.message:"动作任务操作失败")}finally{operationLock.current=false;setBusy(false)}
+  catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"动作任务操作失败")}finally{operationLock.current=false;setBusy(false)}
  }
  async function openAssetPreview(asset:Asset){
   const sequence=++previewSequence.current;
@@ -131,7 +132,7 @@ export function KeywordMonitor({token}:{token:string}){
    const blob=await response.blob();
    if(sequence!==previewSequence.current)return;
    setPreview(old=>{if(old?.url)URL.revokeObjectURL(old.url);return {asset,url:URL.createObjectURL(blob)}});
-  }catch(e){if(sequence===previewSequence.current)setError(e instanceof Error?e.message:"素材预览加载失败")}
+  }catch(e){if(sequence===previewSequence.current)setError(e instanceof Error ? translateAPIError(e.message) :"素材预览加载失败")}
   finally{if(sequence===previewSequence.current)setPreviewLoading(false)}
  }
  function closeAssetPreview(){previewSequence.current++;if(preview)URL.revokeObjectURL(preview.url);setPreview(null)}
@@ -139,7 +140,7 @@ export function KeywordMonitor({token}:{token:string}){
   if(!window.confirm(`确定删除素材「${asset.file_name}」？若规则正在引用，后端会拒绝删除。`))return;
   if(operationLock.current)return;operationLock.current=true;setBusy(true);setError("");setNotice("");
   try{await api(`/api/v1/keyword-media-assets/${asset.id}`,token,{method:"DELETE"});setNotice("媒体素材已删除");await load()}
-  catch(e){setError(e instanceof Error?e.message:"素材删除失败")}
+  catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"素材删除失败")}
   finally{operationLock.current=false;setBusy(false)}
  }
  async function uploadAsset(file:File){
@@ -147,7 +148,7 @@ export function KeywordMonitor({token}:{token:string}){
   if(file.size===0){setError("不能上传空文件");return}
   const form=new FormData();form.append("file",file);operationLock.current=true;setBusy(true);setError("");setNotice("");
   try{await api("/api/v1/keyword-media-assets",token,{method:"POST",body:form});setNotice("媒体素材已上传");await load()}
-  catch(e){setError(e instanceof Error?e.message:"媒体素材上传失败")}finally{operationLock.current=false;setBusy(false)}
+  catch(e){setError(e instanceof Error ? translateAPIError(e.message) :"媒体素材上传失败")}finally{operationLock.current=false;setBusy(false)}
  }
  function updateStep(index:number,patch:Partial<ActionStep>){
   setDraft(current=>current?{...current,action_steps:(current.action_steps||[]).map((step,i)=>i===index?{...step,...patch}:step)}:current);
@@ -181,7 +182,7 @@ export function KeywordMonitor({token}:{token:string}){
    <div className="keyword-assets"><strong>媒体素材库</strong><label className="secondary">上传素材<input type="file" hidden accept="image/*,video/*,audio/*,.pdf,.doc,.docx" onChange={e=>{const file=e.target.files?.[0];if(file)void uploadAsset(file);e.currentTarget.value=""}}/></label><div className="keyword-asset-list">{assets.map(a=><span key={a.id}>{a.file_name} · {(a.file_size/1024).toFixed(0)} KB <button className="secondary" disabled={busy||previewLoading} onClick={()=>void openAssetPreview(a)}>{previewLoading?"加载中…":"预览"}</button><button className="danger-text" disabled={busy} onClick={()=>void deleteAsset(a)}>删除</button></span>)}</div></div>
   </>}
   {tab==="matches"&&<div className="keyword-table-wrap"><table className="keyword-table"><thead><tr><th>规则</th><th>账号</th><th>Chat ID</th><th>消息 ID</th><th>命中词</th><th>时间</th></tr></thead><tbody>{matches.map(m=><tr key={m.id}><td data-label="规则">{m.rule_name}</td><td data-label="账号">{m.account_id.slice(0,8)}…</td><td data-label="Chat ID">{m.chat_id}</td><td data-label="消息 ID">{m.message_id}</td><td data-label="命中词">{m.matched_terms.join("、")}</td><td data-label="命中时间">{date(m.matched_at)}</td></tr>)}</tbody></table>{!matches.length&&<div className="empty">{loading?"正在同步命中记录…":error?"加载失败，请检查提示后重试":"暂无命中记录"}</div>}<div className="groups-pagination"><span>第 {Math.floor(matchOffset/50)+1} 页 · 共 {matchTotal} 条</span><div><button type="button" className="secondary" disabled={!matchOffset||loading} onClick={()=>setMatchOffset(v=>Math.max(0,v-50))}>上一页</button><button type="button" className="secondary" disabled={matchOffset+50>=matchTotal||loading} onClick={()=>setMatchOffset(v=>v+50)}>下一页</button></div></div></div>}
-  {tab==="actions"&&<><div className="keyword-filter"><label>任务状态<select value={status} onChange={e=>{setStatus(e.target.value);setActionOffset(0)}}><option value="">全部状态</option>{["pending","processing","sent","failed","paused"].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="keyword-rule-list">{actions.map(a=><article className="keyword-card" key={a.id}><div><strong>{a.rule_name} · {a.action_type}</strong><span className="keyword-state">{a.status}</span><p>Chat {a.chat_id} · 尝试 {a.attempts} 次 · {date(a.created_at)}</p>{a.last_error&&<small className={a.last_error.includes("uncertain")?"keyword-error":"muted"}>{a.last_error}</small>}{(a.action_steps?.length||0)>0&&<div className="keyword-step-progress"><strong>动作进度：{a.status==="sent"?a.action_steps!.length:Math.min(a.current_step_index+1,a.action_steps!.length)}/{a.action_steps!.length}</strong>{a.action_steps!.map((step,i)=>{const result=a.step_results?.find(x=>x.step_index===i);return <small key={i}>第 {i+1} 步 · {step.action_type} · {result?.status==="sent"?"已完成":i===a.current_step_index?(a.status==="paused"?"已暂停":"执行中/待执行"):"等待中"}{result?.telegram_message_ids?.length?" · 消息 "+result.telegram_message_ids.join(","):""}{result?.telegram_call_id?" · Call "+result.telegram_call_id:""}</small>})}</div>}{a.telegram_message_ids?.length>0&&<small>Telegram 消息 ID：{a.telegram_message_ids.join(", ")}</small>}{a.voice_call_state&&<small>语音呼叫状态：{a.voice_call_state} · Call ID：{a.telegram_call_id||"—"}</small>}</div><div className="keyword-actions">{(a.status==="pending"||a.status==="failed")&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"pause")}>暂停</button>}{a.status==="paused"&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"resume")}>恢复（核验后）</button>}{a.status==="failed"&&<button className="primary" disabled={busy} onClick={()=>void control(a,"retry")}>重试</button>}</div></article>)}{!actions.length&&<div className="empty">{loading?"正在同步动作任务…":error?"加载失败，请检查提示后重试":"暂无符合条件的动作任务"}</div>}<div className="groups-pagination"><span>第 {Math.floor(actionOffset/50)+1} 页 · 共 {actionTotal} 条</span><div><button type="button" className="secondary" disabled={!actionOffset||loading} onClick={()=>setActionOffset(v=>Math.max(0,v-50))}>上一页</button><button type="button" className="secondary" disabled={actionOffset+50>=actionTotal||loading} onClick={()=>setActionOffset(v=>v+50)}>下一页</button></div></div></div></>}
+  {tab==="actions"&&<><div className="keyword-filter"><label>任务状态<select value={status} onChange={e=>{setStatus(e.target.value);setActionOffset(0)}}><option value="">全部状态</option>{["pending","processing","sent","failed","paused"].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="keyword-rule-list">{actions.map(a=><article className="keyword-card" key={a.id}><div><strong>{a.rule_name} · {a.action_type}</strong><span className="keyword-state">{a.status}</span><p>Chat {a.chat_id} · 尝试 {a.attempts} 次 · {date(a.created_at)}</p>{a.last_error&&<small className={a.last_error.includes("uncertain")?"keyword-error":"muted"}>{translateAPIError(a.last_error)}</small>}{(a.action_steps?.length||0)>0&&<div className="keyword-step-progress"><strong>动作进度：{a.status==="sent"?a.action_steps!.length:Math.min(a.current_step_index+1,a.action_steps!.length)}/{a.action_steps!.length}</strong>{a.action_steps!.map((step,i)=>{const result=a.step_results?.find(x=>x.step_index===i);return <small key={i}>第 {i+1} 步 · {step.action_type} · {result?.status==="sent"?"已完成":i===a.current_step_index?(a.status==="paused"?"已暂停":"执行中/待执行"):"等待中"}{result?.telegram_message_ids?.length?" · 消息 "+result.telegram_message_ids.join(","):""}{result?.telegram_call_id?" · Call "+result.telegram_call_id:""}</small>})}</div>}{a.telegram_message_ids?.length>0&&<small>Telegram 消息 ID：{a.telegram_message_ids.join(", ")}</small>}{a.voice_call_state&&<small>语音呼叫状态：{a.voice_call_state} · Call ID：{a.telegram_call_id||"—"}</small>}</div><div className="keyword-actions">{(a.status==="pending"||a.status==="failed")&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"pause")}>暂停</button>}{a.status==="paused"&&<button className="secondary" disabled={busy} onClick={()=>void control(a,"resume")}>恢复（核验后）</button>}{a.status==="failed"&&<button className="primary" disabled={busy} onClick={()=>void control(a,"retry")}>重试</button>}</div></article>)}{!actions.length&&<div className="empty">{loading?"正在同步动作任务…":error?"加载失败，请检查提示后重试":"暂无符合条件的动作任务"}</div>}<div className="groups-pagination"><span>第 {Math.floor(actionOffset/50)+1} 页 · 共 {actionTotal} 条</span><div><button type="button" className="secondary" disabled={!actionOffset||loading} onClick={()=>setActionOffset(v=>Math.max(0,v-50))}>上一页</button><button type="button" className="secondary" disabled={actionOffset+50>=actionTotal||loading} onClick={()=>setActionOffset(v=>v+50)}>下一页</button></div></div></div></>}
   {preview&&<div className="modal-backdrop" onClick={closeAssetPreview}><section className="account-modal keyword-preview" onClick={e=>e.stopPropagation()}><div className="modal-heading"><div><h2>{preview.asset.file_name}</h2><p>{preview.asset.mime_type} · {(preview.asset.file_size/1024).toFixed(0)} KB</p></div><button type="button" className="ghost" onClick={closeAssetPreview}>关闭</button></div>{preview.asset.mime_type.startsWith("image/")?<img src={preview.url} alt={preview.asset.file_name}/>:preview.asset.mime_type.startsWith("video/")?<video src={preview.url} controls/>:preview.asset.mime_type.startsWith("audio/")?<audio src={preview.url} controls/>:preview.asset.mime_type==="application/pdf"?<iframe src={preview.url} title={preview.asset.file_name}/>:<a href={preview.url} download={preview.asset.file_name}>下载素材</a>}</section></div>}
   {draft&&<div className="modal-backdrop"><form className="account-modal keyword-editor" onSubmit={save}>
    <div className="modal-heading"><div><h2>{draft.id?"编辑关键词规则":"新建关键词规则"}</h2><p>规则只匹配启用后的实时新消息，不回溯历史消息。</p></div><button type="button" className="ghost" onClick={()=>setDraft(null)}>关闭</button></div>

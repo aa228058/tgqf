@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, translateAPIError } from "./api-response";
 
 import { useCallback,useEffect,useRef,useState } from "react";
 const API=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
@@ -49,7 +49,7 @@ export function RuntimePage({token,user}:{token:string;user:{role:string}}){
  useEffect(()=>{
   if(admin||!selectedProxy){setChecks([]);return}
   let active=true;const sequence=++checkSequence.current;setChecks([]);
-  void get<{checks:Check[]}>(`/api/v1/proxies/${selectedProxy}/checks?limit=50`,token).then(r=>{if(active&&sequence===checkSequence.current)setChecks(r.checks||[])}).catch(e=>{if(active&&sequence===checkSequence.current)setError(e instanceof Error?e.message:"代理检测历史加载失败")});
+  void get<{checks:Check[]}>(`/api/v1/proxies/${selectedProxy}/checks?limit=50`,token).then(r=>{if(active&&sequence===checkSequence.current)setChecks(r.checks||[])}).catch(e=>{if(active&&sequence===checkSequence.current)setError(e instanceof Error ? translateAPIError(e.message) :"代理检测历史加载失败")});
   return()=>{active=false;checkSequence.current++};
  },[admin,selectedProxy,token]);
  const accountCounts=accounts.reduce<Record<string,number>>((acc,a)=>{acc[a.status]=(acc[a.status]||0)+1;return acc},{});
@@ -66,7 +66,7 @@ export function RuntimePage({token,user}:{token:string;user:{role:string}}){
    <section className="panel"><div className="panel-heading"><div><h2>Worker 心跳</h2><p>心跳阈值由后端定义为 45 秒</p></div></div>{workers.length?<div className="runtime-list">{workers.map(w=><article key={w.instance_id}><div><strong>{w.hostname||w.instance_id}</strong><State value={w.stale?"stale":w.status}/></div><small>实例 {w.instance_id} · PID {w.process_id}</small><small>最近心跳：{date(w.heartbeat_at)}</small><small>启动时间：{date(w.started_at)}</small></article>)}</div>:<div className="empty">{loading?"正在读取 Worker 心跳…":error?"加载失败，请检查提示后重试":"暂无 Worker 心跳记录"}</div>}</section>
    <section className="panel"><div className="panel-heading"><div><h2>租户运行状态</h2><p>租户状态与账号额度</p></div></div>{tenants.length?<div className="runtime-list">{tenants.map(t=><article key={t.id}><div><strong>{t.name||t.id}</strong><State value={t.status}/></div><small>账号额度：{t.account_limit}</small><small>到期时间：{date(t.expires_at)}</small><small>创建时间：{date(t.created_at)}</small></article>)}</div>:<div className="empty">{loading?"正在读取租户…":error?"加载失败，请检查提示后重试":"暂无租户"}</div>}</section>
   </div>:<div className="runtime-columns">
-   <section className="panel"><div className="panel-heading"><div><h2>账号运行状态</h2><p>当前租户账号记录和最近错误</p></div></div>{accounts.length?<div className="runtime-list">{accounts.map(a=><article key={a.id}><div><strong>{a.display_name||a.phone||a.id}</strong><State value={a.status}/></div><small>{a.phone} · 更新于 {date(a.updated_at)}</small>{a.last_error&&<small className="runtime-error">{a.last_error}</small>}</article>)}</div>:<div className="empty">{loading?"正在读取账号…":error?"加载失败，请检查提示后重试":"暂无账号记录"}</div>}</section>
+   <section className="panel"><div className="panel-heading"><div><h2>账号运行状态</h2><p>当前租户账号记录和最近错误</p></div></div>{accounts.length?<div className="runtime-list">{accounts.map(a=><article key={a.id}><div><strong>{a.display_name||a.phone||a.id}</strong><State value={a.status}/></div><small>{a.phone} · 更新于 {date(a.updated_at)}</small>{a.last_error&&<small className="runtime-error">{translateAPIError(a.last_error)}</small>}</article>)}</div>:<div className="empty">{loading?"正在读取账号…":error?"加载失败，请检查提示后重试":"暂无账号记录"}</div>}</section>
    <section className="panel"><div className="panel-heading"><div><h2>代理检测历史</h2><p>查看已保存的 TCP/Telegram 代理检测结果</p></div></div><select className="runtime-proxy-select" value={selectedProxy} onChange={e=>setSelectedProxy(e.target.value)}><option value="">选择代理</option>{proxies.map(p=><option value={p.id} key={p.id}>{p.name} · {p.host}:{p.port}</option>)}</select>{selectedProxy?checks.length?<div className="runtime-list">{checks.map(c=><article key={c.id}><div><strong>{c.check_type}</strong><State value={c.status}/></div><small>{date(c.checked_at)} · {c.latency_ms} ms</small><small>{c.message||"—"}</small></article>)}</div>:<div className="empty">{error?"检测历史加载失败，请查看上方提示":"正在读取检测历史或暂无记录"}</div>:<div className="empty">请选择代理查看检测历史</div>}</section>
   </div>}
   <section className="panel runtime-note"><h2>日志数据说明</h2><p>此页面只展示后端已持久化并开放的运行状态与代理检测记录。当前版本没有通用应用日志查询 API，因此不会伪造 Worker 日志、Telegram 原始日志或实时在线状态；需要完整日志检索时应由后端增加受权限控制的日志查询接口。</p></section>

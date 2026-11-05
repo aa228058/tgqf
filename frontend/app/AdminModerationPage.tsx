@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, notifyUser } from "./api-response";
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -13,6 +13,7 @@ async function request<T>(path:string,token:string,init?:RequestInit):Promise<T>
  Object.assign(headers,init?.headers||{});
  const response=await fetch(API+path,{...init,headers,cache:"no-store"});
  if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message);throw new Error(message)}
+ if(["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase()))notifyUser("审核操作已成功提交。");
  return readAPIJSON<T>(response);
 }
 const date=(value:string)=>new Date(value).toLocaleString();

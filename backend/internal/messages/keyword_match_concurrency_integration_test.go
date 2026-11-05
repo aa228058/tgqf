@@ -24,13 +24,6 @@ func TestConcurrentIncomingUpdateCreatesOneKeywordMatchAndAction(t *testing.T) {
 	// used by the production message/keyword migrations.
 	ddl := []string{
 		`CREATE TABLE tenant_message_settings (tenant_id UUID PRIMARY KEY, settings JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
-		`CREATE TABLE tenant_message_chats (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
-			chat_id BIGINT NOT NULL, chat_title TEXT NOT NULL DEFAULT '', chat_type TEXT NOT NULL,
-			username TEXT NOT NULL DEFAULT '', member_count INTEGER NOT NULL DEFAULT 0, is_verified BOOLEAN NOT NULL DEFAULT FALSE,
-			photo_id TEXT NOT NULL DEFAULT '', last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			UNIQUE(tenant_id,telegram_account_id,chat_id))`,
 		`CREATE TABLE unified_messages (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
 			chat_id BIGINT NOT NULL, message_id BIGINT NOT NULL, chat_type TEXT NOT NULL, chat_title TEXT NOT NULL DEFAULT '',

@@ -43,6 +43,7 @@ func NewHandler(s *Service,a *auth.Handler,m *telegrammtgo.Manager)*Handler{retu
 func(h *Handler)Routes(m *http.ServeMux){
  m.Handle("GET /api/v1/accounts",h.auth.Authenticated(http.HandlerFunc(h.list)))
  m.Handle("GET /api/v1/accounts/{id}/groups",h.auth.Authenticated(http.HandlerFunc(h.listAccountGroups)))
+ m.Handle("GET /api/v1/accounts/{id}/capabilities",h.auth.Authenticated(http.HandlerFunc(h.listCapabilityStatus)))
  m.Handle("POST /api/v1/accounts/{id}/groups/sync",h.auth.Authenticated(http.HandlerFunc(h.syncAccountGroups)))
  m.Handle("PATCH /api/v1/accounts/{id}",h.auth.Authenticated(http.HandlerFunc(h.updateDisplayName)))
  m.Handle("GET /api/v1/accounts/{id}/profile",h.auth.Authenticated(http.HandlerFunc(h.getTelegramProfile)))
@@ -583,4 +584,19 @@ func (h *Handler) getTelegramProfile(w http.ResponseWriter,r *http.Request) {
  profile,err:=h.telegram.AccountProfile(id)
  if err!=nil { writeError(w,http.StatusConflict,err.Error());return }
  writeJSON(w,http.StatusOK,map[string]any{"profile":profile})
+}
+
+
+// listCapabilityStatus returns only restrictions observed in real Telegram RPC
+// responses. An empty list means "not observed", never "all capabilities OK".
+func (h *Handler) listCapabilityStatus(w http.ResponseWriter,r *http.Request) {
+	id:=strings.TrimSpace(r.PathValue("id"))
+	if !validAccountUUID(id) { writeError(w,http.StatusBadRequest,"invalid account ID");return }
+	user:=auth.UserFromContext(r.Context())
+	items,err:=h.service.ListCapabilityStatus(r.Context(),user.TenantID,id)
+	if err!=nil {
+		if strings.Contains(err.Error(),"not found") { writeError(w,http.StatusNotFound,"account not found");return }
+		writeError(w,http.StatusInternalServerError,"failed to load account capability status");return
+	}
+	writeJSON(w,http.StatusOK,map[string]any{"capabilities":items,"observed_only":true})
 }

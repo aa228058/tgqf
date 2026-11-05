@@ -1,6 +1,7 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON } from "./api-response";
+import { apiErrorMessage, readAPIJSON, notifyUser, translateAPIError } from "./api-response";
+import { ToastViewport } from "./ToastViewport";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, AppUser } from "./AppShell";
@@ -33,6 +34,7 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     message = await apiErrorMessage(response, message);
     throw new Error(message);
   }
+  if (["POST", "PUT", "PATCH", "DELETE"].includes((init?.method || "GET").toUpperCase())) notifyUser("任务操作已成功完成，列表正在同步最新状态。");
   if (response.status === 204) return undefined as T;
   return readAPIJSON<T>(response);
 }
@@ -45,6 +47,7 @@ export default function Home() {
   const [showRegister, setShowRegister] = useState(false);
   const [tenantName, setTenantName] = useState("");
   const [signedIn, setSignedIn] = useState(false);
+  const [activationPending, setActivationPending] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -84,15 +87,22 @@ export default function Home() {
       } else failures.push(taskResult.reason instanceof Error ? taskResult.reason.message : "任务列表加载失败");
       if (summaryResult.status === "fulfilled") setSummary(summaryResult.value.summary);
       else failures.push(summaryResult.reason instanceof Error ? summaryResult.reason.message : "任务统计加载失败");
-      setError(failures.join("；"));
+      if (failures.some(message => message.includes("租户服务尚未激活或已到期"))) {
+        window.localStorage.setItem("tgqf_activation_pending", "1");
+        setActivationPending(true);
+        setError("");
+      } else {
+        setError(failures.join("；"));
+      }
     } catch (e) {
-      if (sequence === requestSequence.current) setError(e instanceof Error ? e.message : "加载任务失败");
+      if (sequence === requestSequence.current) setError(e instanceof Error ? translateAPIError(e.message) : "加载任务失败");
     } finally {
       if (sequence === requestSequence.current && !quiet) setBusy(false);
     }
   }, [offset, status, type, accountID, query]);
 
   useEffect(() => {
+    setActivationPending(window.localStorage.getItem("tgqf_activation_pending") === "1");
     const saved = window.localStorage.getItem("tgqf_access_token");
     if (!saved) return;
     setToken(saved);
@@ -100,7 +110,12 @@ export default function Home() {
     void fetch(`${API_BASE}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${saved}` }, cache: "no-store" })
       .then(async response => {
         if (!response.ok) throw new Error("会话已失效");
-        setUser(await readAPIJSON<AppUser>(response));
+        const currentUser = await readAPIJSON<AppUser>(response);
+        setUser(currentUser);
+        const pending = currentUser.role === "tenant_admin" && (currentUser.tenant_status !== "active" || !currentUser.tenant_expires_at || new Date(currentUser.tenant_expires_at).getTime() <= Date.now());
+        setActivationPending(pending);
+        if (pending) window.localStorage.setItem("tgqf_activation_pending", "1");
+        else window.localStorage.removeItem("tgqf_activation_pending");
       })
       .catch(() => {
         window.localStorage.removeItem("tgqf_access_token");
@@ -109,10 +124,10 @@ export default function Home() {
         setUser(null);
       });
   }, []);
-  useEffect(() => { if (signedIn && token && user?.role !== "super_admin") void load(token); }, [signedIn, token, user?.role, load]);
+  useEffect(() => { if (signedIn && token && user?.role !== "super_admin" && !activationPending) void load(token); }, [signedIn, token, user?.role, activationPending, load]);
   useEffect(() => { setSelected([]); }, [offset, status, type, accountID, query]);
   useEffect(() => {
-    if (!signedIn || !token || user?.role === "super_admin") return;
+    if (!signedIn || !token || user?.role === "super_admin" || activationPending) return;
     const refresh = () => { if (document.visibilityState === "visible" && !actionLock.current) void load(token, true); };
     const timer = window.setInterval(refresh, 10000);
     document.addEventListener("visibilitychange", refresh);
@@ -121,7 +136,7 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [signedIn, token, user?.role, load]);
+  }, [signedIn, token, user?.role, activationPending, load]);
 
   async function login(event: FormEvent) {
     event.preventDefault(); if (loginLock.current) return; loginLock.current = true; setBusy(true); setError("");
@@ -129,9 +144,14 @@ export default function Home() {
       const response = await fetch(`${API_BASE}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, login_type: loginMode, device_label: "tg-account-manager-web" }) });
       if (!response.ok) throw new Error(await apiErrorMessage(response, "登录失败，请检查账号信息后重试"));
       const body = await readAPIJSON<{access_token:string;user:AppUser}>(response);
+      const pending = body.user.role === "tenant_admin" && (body.user.tenant_status !== "active" || !body.user.tenant_expires_at || new Date(body.user.tenant_expires_at).getTime() <= Date.now());
+      setActivationPending(pending);
+      if (pending) window.localStorage.setItem("tgqf_activation_pending", "1");
+      else window.localStorage.removeItem("tgqf_activation_pending");
       window.localStorage.setItem("tgqf_access_token", body.access_token);
       setToken(body.access_token); setUser(body.user as AppUser); setSignedIn(true); setPassword("");
-    } catch (e) { setError(e instanceof Error ? e.message : "登录失败"); }
+      notifyUser("登录成功，欢迎回来。");
+    } catch (e) { setError(e instanceof Error ? translateAPIError(e.message) : "登录失败"); }
     finally { loginLock.current = false; setBusy(false); }
   }
   async function register(event: FormEvent) {
@@ -148,9 +168,12 @@ export default function Home() {
       setShowRegister(false);
       setLoginMode("tenant");
       setPassword("");
-      setNotice("租户注册申请已提交成功，请使用刚设置的用户名和密码登录。若账号尚未启用，请联系系统管理员。");
+      window.localStorage.setItem("tgqf_activation_pending", "1");
+      setActivationPending(true);
+      setNotice("注册成功！请使用刚设置的用户名和密码登录，然后兑换激活卡密，激活后即可使用业务功能。");
+      notifyUser("注册成功，请登录并兑换激活卡密后开始使用。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "注册失败，请稍后重试");
+      setError(e instanceof Error ? translateAPIError(e.message) : "注册失败，请稍后重试");
     } finally { loginLock.current = false; setBusy(false); }
   }
 
@@ -167,7 +190,7 @@ export default function Home() {
     if (actionLock.current) return; actionLock.current = true;
     setBusy(true); setNotice(""); setError("");
     try { await request(`/api/v1/tasks/${task.type}/${encodeURIComponent(task.id)}/${action}`, token, { method: "POST" }); setNotice("任务状态已更新"); await load(token, true); }
-    catch (e) { setError(e instanceof Error ? e.message : "操作失败"); }
+    catch (e) { setError(e instanceof Error ? translateAPIError(e.message) : "操作失败"); }
     finally { actionLock.current = false; setBusy(false); }
   }
   const selectedTasks = useMemo(() => tasks.filter(t => selected.includes(t.id)), [tasks, selected]);
@@ -187,12 +210,12 @@ export default function Home() {
       }
       setNotice("批量操作完成：成功 " + succeeded + " 条，失败 " + failed + " 条" + (failures.length ? "；" + failures.slice(0,3).join("；") : ""));
       setSelected([]); await load(token, true);
-    } catch (e) { setError(e instanceof Error ? e.message : "批量操作失败"); }
+    } catch (e) { setError(e instanceof Error ? translateAPIError(e.message) : "批量操作失败"); }
     finally { actionLock.current = false; setBusy(false); }
   }
   const toggle = (id: string) => setSelected(current => current.includes(id) ? current.filter(v => v !== id) : [...current, id]);
 
-  if (!signedIn) return <main className="login-shell"><form className="login-card" onSubmit={showRegister ? register : login}>
+  if (!signedIn) return <><ToastViewport /><main className="login-shell"><form className="login-card" onSubmit={showRegister ? register : login}>
     <div className="brand-mark">TG</div><h1>TG 账号管理工具</h1><p>Telegram 账号、群组、消息与任务统一管理</p>
     {showRegister ? <>
       <div className="panel-heading"><div><h2>创建租户</h2><p>注册后将创建独立租户及租户管理员账号</p></div></div>
@@ -213,10 +236,10 @@ export default function Home() {
       <button type="button" className="secondary full" onClick={() => {setShowRegister(true);setError("");setNotice("");setPassword("");}}>注册新租户</button>
       <small>安全登录 · 租户数据隔离</small>
     </>}
-  </form></main>;
+  </form></main></>;
   if (!user) return <main className="login-shell"><div className="login-card">正在验证登录会话…</div></main>;
 
-  return <AppShell user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} isSuperAdmin={user.role==="super_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} />} adminContent={<AdminConsole token={token} user={user}/>}><main className="shell">
+  return <AppShell initialSection={activationPending ? "settings" : undefined} user={user} onLogout={logout} workbench={<Workbench token={token} user={user} />} accounts={<AccountsPage token={token} />} messages={<MessagesPage token={token} />} groups={<GroupsPage token={token} canImport={user.role==="tenant_admin"} isSuperAdmin={user.role==="super_admin"} />} join={<JoinTasksPage token={token} />} monitor={<KeywordMonitor token={token} />} runtime={<RuntimePage token={token} user={user} />} settings={<SettingsPage token={token} user={user} onActivated={(expiry) => { setUser(current => current ? {...current,tenant_status:"active",tenant_expires_at:expiry} : current); setActivationPending(false); }} />} adminContent={<AdminConsole token={token} user={user}/>}><main className="shell">
     <header className="topbar"><div><div className="eyebrow">TG 账号管理工具</div><h1>任务中心</h1><p>统一查看和控制账号资料、加群、关键词处理及消息回复任务</p></div><div className="top-actions"><span className="live-dot" role="status" aria-live="polite">{busy?"正在同步任务":"自动刷新 · 10 秒"}</span><button className="secondary" onClick={() => void load(token)} disabled={busy}>{busy?"同步中…":"↻ 刷新"}</button></div></header>
     {error && <div className="alert error">{error}</div>}{notice && <div className="alert success">{notice}</div>}
     <section className="summary-grid">
@@ -236,7 +259,7 @@ export default function Home() {
       </div>
       {selected.length > 0 && <div className="bulkbar"><span>已选 {selected.length} 条{selectedTypes.length > 1 ? "（跨 " + selectedTypes.length + " 种任务类型）" : ""}</span><button disabled={busy} onClick={() => void bulk("pause")}>暂停</button><button disabled={busy} onClick={() => void bulk("resume")}>恢复</button><button disabled={busy} onClick={() => void bulk("retry")}>重试</button><button className="danger-text" disabled={busy} onClick={() => void bulk("cancel")}>取消</button><button className="ghost" onClick={() => setSelected([])}>清除选择</button></div>}
       <div className="table-wrap task-table-wrap"><table className="task-table"><thead><tr><th><input type="checkbox" aria-label="选择当前页全部任务" checked={tasks.length > 0 && selected.length === tasks.length} onChange={e => setSelected(e.target.checked ? tasks.map(t => t.id) : [])} /></th><th>任务</th><th>账号</th><th>状态</th><th>尝试</th><th>计划时间</th><th>最近错误</th><th>操作</th></tr></thead><tbody>
-        {tasks.map(task => <tr key={task.type + task.id}><td data-label="选择"><input type="checkbox" aria-label={`选择任务 ${task.id}`} checked={selected.includes(task.id)} onChange={() => toggle(task.id)} /></td><td data-label="任务"><strong>{task.title || typeNames[task.type]}</strong><small>{typeNames[task.type] || task.type} · {task.id}</small></td><td data-label="账号">{task.account_name || "—"}<small>{task.account_id}</small></td><td data-label="状态"><span className={`status status-${task.status}`}>{statusNames[task.status] || task.status}</span>{task.lease_until && <small>租约至 {new Date(task.lease_until).toLocaleString()}</small>}</td><td data-label="尝试">{task.attempts}</td><td data-label="计划时间">{task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "—"}</td><td data-label="最近错误" className="error-cell">{task.last_error || "—"}</td><td data-label="操作"><div className="row-actions">{task.can_pause && <button onClick={() => void act(task,"pause")} disabled={busy}>暂停</button>}{task.can_resume && <button onClick={() => void act(task,"resume")} disabled={busy}>恢复</button>}{task.can_retry && <button onClick={() => void act(task,"retry")} disabled={busy}>重试</button>}{task.can_cancel && <button className="danger-text" onClick={() => void act(task,"cancel")} disabled={busy}>取消</button>}</div></td></tr>)}
+        {tasks.map(task => <tr key={task.type + task.id}><td data-label="选择"><input type="checkbox" aria-label={`选择任务 ${task.id}`} checked={selected.includes(task.id)} onChange={() => toggle(task.id)} /></td><td data-label="任务"><strong>{task.title || typeNames[task.type]}</strong><small>{typeNames[task.type] || task.type} · {task.id}</small></td><td data-label="账号">{task.account_name || "—"}<small>{task.account_id}</small></td><td data-label="状态"><span className={`status status-${task.status}`}>{statusNames[task.status] || task.status}</span>{task.lease_until && <small>租约至 {new Date(task.lease_until).toLocaleString()}</small>}</td><td data-label="尝试">{task.attempts}</td><td data-label="计划时间">{task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "—"}</td><td data-label="最近错误" className="error-cell">{task.last_error ? translateAPIError(task.last_error) : "—"}</td><td data-label="操作"><div className="row-actions">{task.can_pause && <button onClick={() => void act(task,"pause")} disabled={busy}>暂停</button>}{task.can_resume && <button onClick={() => void act(task,"resume")} disabled={busy}>恢复</button>}{task.can_retry && <button onClick={() => void act(task,"retry")} disabled={busy}>重试</button>}{task.can_cancel && <button className="danger-text" onClick={() => void act(task,"cancel")} disabled={busy}>取消</button>}</div></td></tr>)}
         {tasks.length === 0 && <tr><td colSpan={8} className="empty">{busy ? "正在加载…" : error ? "加载失败，请根据上方提示重试" : "暂无符合条件的任务"}</td></tr>}
       </tbody></table></div>
       <footer className="pagination"><span>共 {total} 条</span><div><button className="secondary" disabled={offset === 0 || busy} onClick={() => setOffset(Math.max(0, offset-limit))}>上一页</button><span>第 {Math.floor(offset/limit)+1} / {Math.max(1,Math.ceil(total/limit))} 页</span><button className="secondary" disabled={offset+limit >= total || busy} onClick={() => setOffset(offset+limit)}>下一页</button></div></footer>

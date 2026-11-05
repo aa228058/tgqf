@@ -201,6 +201,6 @@ func (h *Handler) importAccounts(w http.ResponseWriter,r *http.Request,records [
         results=append(results,itemResult{Index:i,Account:&account});success++
     }
     status:=http.StatusOK
-    if success==0{status=http.StatusUnprocessableEntity}else if success<len(records){status=http.StatusMultiStatus}
+    if success<len(records){status=http.StatusMultiStatus}
     writeJSON(w,status,map[string]any{"total":len(records),"succeeded":success,"failed":len(records)-success,"results":results})
 }
