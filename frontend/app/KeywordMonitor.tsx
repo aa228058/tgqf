@@ -1,6 +1,6 @@
 "use client";
 
-import { apiErrorMessage, readAPIJSON, notifyUser, translateAPIError } from "./api-response";
+import { apiErrorMessage, readAPIJSON, translateAPIError } from "./api-response";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -28,7 +28,6 @@ async function api<T>(path:string,token:string,init?:RequestInit):Promise<T>{
  Object.assign(headers,init?.headers||{});
  const response=await fetch(`${API_BASE}${path}`,{...init,headers,cache:"no-store"});
  if(!response.ok){let message=`请求失败（${response.status}）`;message=await apiErrorMessage(response,message);throw new Error(message)}
- if(["POST","PUT","PATCH","DELETE"].includes((init?.method||"GET").toUpperCase()))notifyUser("关键词规则或动作任务操作成功。");
  if(response.status===204)return undefined as T;
  return readAPIJSON<T>(response);
 }
