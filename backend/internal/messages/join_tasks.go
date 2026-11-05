@@ -131,7 +131,7 @@ func (s *Service) GetJoinTask(ctx context.Context,tenantID,id string)(JoinTaskDe
     var detail JoinTaskDetail;detail.Accounts=[]JoinTaskAccount{}
     err:=withTenantTx(ctx,s.db,tenantID,func(tx *sql.Tx)error{
         err:=tx.QueryRowContext(ctx,`SELECT t.id::text,t.name,COALESCE(t.target_group_id,0),COALESCE(t.target_link_id,0),t.status,t.authorization_confirmed,t.authorization_note,t.authorized_at,
-            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at
+            (SELECT COUNT(*) FROM tenant_join_task_accounts a WHERE a.tenant_id=t.tenant_id AND a.task_id=t.id),t.created_at,t.updated_at,t.available_at
             FROM tenant_join_tasks t WHERE t.tenant_id=$1 AND t.id=$2`,tenantID,id).Scan(&detail.ID,&detail.Name,&detail.TargetGroupID,&detail.TargetLinkID,&detail.Status,&detail.AuthorizationConfirmed,&detail.AuthorizationNote,&detail.AuthorizedAt,&detail.AccountCount,&detail.CreatedAt,&detail.UpdatedAt,&detail.AvailableAt)
         if errors.Is(err,sql.ErrNoRows){return errors.New("join task not found")};if err!=nil{return err}
         rows,err:=tx.QueryContext(ctx,`SELECT a.telegram_account_id::text,COALESCE(NULLIF(t.display_name,''),t.phone,''),a.status,a.application_status,a.attempts,a.last_error,a.updated_at,a.available_at
