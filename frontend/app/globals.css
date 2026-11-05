@@ -1262,3 +1262,5 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .join-batch-targets{display:flex;flex-wrap:wrap;gap:7px;max-height:140px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
 .join-batch-targets span{padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-size:11px;overflow-wrap:anywhere}
 @media(max-width:600px){.groups-bulk-toolbar{align-items:stretch}.groups-bulk-toolbar>div{display:grid;grid-template-columns:1fr}.groups-bulk-toolbar button{min-height:42px}.join-batch-targets{max-height:110px}}
+
+.account-cooldown-note{display:block;margin-top:4px;color:var(--warning,#a66a00);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
