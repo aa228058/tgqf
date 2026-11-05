@@ -38,10 +38,6 @@ func TestReplyClaimAndTenantExpiryPreserveInflightSendResults(t *testing.T) {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),published_at TIMESTAMPTZ)`,
 		`CREATE TABLE keyword_action_jobs (tenant_id UUID,telegram_account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
 		`CREATE TABLE account_profile_update_jobs (tenant_id UUID,account_id UUID,status TEXT,lease_until TIMESTAMPTZ)`,
-		`CREATE TABLE telegram_account_capability_status (
-			tenant_id UUID NOT NULL,account_id UUID NOT NULL,capability TEXT NOT NULL,chat_id BIGINT NOT NULL DEFAULT 0,
-			status TEXT NOT NULL,rpc_error TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',source TEXT NOT NULL DEFAULT '',
-			last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(tenant_id,account_id,capability,chat_id))`,
 	}
 	for _,statement:=range ddl{if _,err:=db.ExecContext(ctx,statement);err!=nil{t.Fatal(err)}}
 	for _,tenant:=range []struct{id,status,expires string}{
