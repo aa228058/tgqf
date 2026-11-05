@@ -82,7 +82,7 @@ export function JoinTasksPage({ token }: { token: string }) {
       setTotal(taskResult.total || 0);
       setAccounts((accountResult.accounts || []).filter(a=>a.status==="authorized" && a.has_session));
       setGroups(groupResult.groups || []);
-      setLinks(linkResult.links || []);
+      setLinks(current => { const first = linkResult.links || []; const firstIDs = new Set(first.map(item => item.id)); return [...first, ...current.filter(item => !firstIDs.has(item.id))]; });
       setLinksTotal(linkResult.total || 0);
     } catch (e) {
       setError(e instanceof Error ? translateAPIError(e.message) : "自动加群数据加载失败");
