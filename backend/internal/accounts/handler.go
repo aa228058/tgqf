@@ -500,7 +500,7 @@ func (h *Handler) verifyBulkPhoneLogin(w http.ResponseWriter,r *http.Request) {
 		} else {
 			authResult,err=h.telegram.VerifyPhonePassword(r.Context(),item.AccountID,item.Password)
 		}
-		if err!=nil { entry["error"]="Telegram verification failed";results=append(results,entry);continue }
+		if err!=nil { entry["error"]=telegramLoginError(err,"Telegram verification failed");results=append(results,entry);continue }
 		account,saveErr:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,item.AccountID,authResult.Phone,authResult.FirstName,authResult.SessionString)
 		_ = h.telegram.Stop(item.AccountID)
 		if saveErr!=nil { entry["error"]="Telegram authorization succeeded but account details could not be saved";results=append(results,entry);continue }
@@ -536,7 +536,7 @@ func (h *Handler) verifyPhoneCode(w http.ResponseWriter,r *http.Request) {
 	pending,err:=h.service.IsPending(r.Context(),u.TenantID,id)
 	if err!=nil{writeError(w,500,"failed to verify pending account");return};if !pending{writeError(w,404,"pending account not found");return}
 	result,needsPassword,err:=h.telegram.VerifyPhoneCode(r.Context(),id,q.Code)
-	if err!=nil{writeError(w,400,err.Error());return}
+	if err!=nil{writeError(w,400,telegramLoginError(err,"Telegram verification failed"));return}
 	if needsPassword{writeJSON(w,202,map[string]any{"status":"two_factor_required"});return}
 	account,err:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,result.FirstName,result.SessionString)
 	_=h.telegram.Stop(id)
@@ -551,7 +551,7 @@ func (h *Handler) verifyPhonePassword(w http.ResponseWriter,r *http.Request) {
 	pending,err:=h.service.IsPending(r.Context(),u.TenantID,id)
 	if err!=nil{writeError(w,500,"failed to verify pending account");return};if !pending{writeError(w,404,"pending account not found");return}
 	result,err:=h.telegram.VerifyPhonePassword(r.Context(),id,q.Password)
-	if err!=nil{writeError(w,400,err.Error());return}
+	if err!=nil{writeError(w,400,telegramLoginError(err,"Telegram two-factor verification failed"));return}
 	account,err:=h.service.CompleteQRAuthorization(r.Context(),u.TenantID,id,result.Phone,result.FirstName,result.SessionString)
 	_=h.telegram.Stop(id)
 	if err!=nil{writeError(w,409,"Telegram authorization succeeded but account details could not be saved");return}
