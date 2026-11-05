@@ -1342,3 +1342,68 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .account-capability-list article>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .account-capability-list p{margin:0;font-size:13px}
 .account-capability-list small{color:var(--muted);overflow-wrap:anywhere}
+
+
+/* Final UX polish: predictable focus, touch targets, overlays and mobile overflow */
+html { scroll-behavior: smooth; }
+body { min-width: 320px; }
+button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [role="menuitem"]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+input, select, textarea {
+  min-height: 40px;
+  max-width: 100%;
+}
+textarea { resize: vertical; }
+.app-sidebar { overflow: hidden; }
+.sidebar-nav { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 2px; }
+.nav-item.locked { color: var(--muted); }
+.nav-lock { margin-left: auto; padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 10px; }
+.mobile-more-menu button.locked { color: var(--muted); }
+.mobile-more-menu button.locked small { margin-left: auto; color: var(--muted); font-size: 10px; }
+.mobile-more-menu button:focus-visible { outline-offset: -2px; }
+.modal-backdrop {
+  overscroll-behavior: contain;
+  padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+}
+.modal-backdrop > form, .modal-backdrop > section, .modal-backdrop > div {
+  max-height: calc(100dvh - 28px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.table-wrap, .account-table-wrap, .groups-table-wrap, .runtime-table-wrap {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.empty { line-height: 1.7; }
+.alert { overflow-wrap: anywhere; line-height: 1.65; }
+.toast-viewport { padding-top: env(safe-area-inset-top, 0px); }
+@media (max-width: 900px) {
+  .app-topbar { min-width: 0; }
+  .breadcrumb { min-width: 0; overflow: hidden; }
+  .breadcrumb > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-user { min-width: 0; gap: 7px; }
+  .subscription-chip { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+  .app-content > .shell, .accounts-page, .workbench-page { min-width: 0; }
+}
+@media (max-width: 600px) {
+  .panel { min-width: 0; }
+  .panel-heading { align-items: flex-start; flex-wrap: wrap; }
+  .filters, .account-filters { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .filters > *, .account-filters > * { width: 100%; min-width: 0; }
+  .pagination { gap: 10px; flex-wrap: wrap; }
+  .pagination > div { max-width: 100%; flex-wrap: wrap; }
+  .modal-backdrop { align-items: flex-end; padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .modal-backdrop > form, .modal-backdrop > section, .modal-backdrop > div {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-radius: 16px 16px 10px 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
