@@ -94,6 +94,9 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 		`CREATE TABLE tenant_message_chats (
 			tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
 			chat_type TEXT NOT NULL DEFAULT '',chat_title TEXT NOT NULL DEFAULT '',PRIMARY KEY(tenant_id,telegram_account_id,chat_id))`,
+		`CREATE TABLE tenant_message_chats (
+			tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
+			chat_type TEXT NOT NULL DEFAULT '',chat_title TEXT NOT NULL DEFAULT '',PRIMARY KEY(tenant_id,telegram_account_id,chat_id))`,
 		`CREATE TABLE tenant_join_task_accounts (
 			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,task_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
 			status TEXT NOT NULL,application_status TEXT NOT NULL DEFAULT 'not_started',attempts INTEGER NOT NULL DEFAULT 0,
