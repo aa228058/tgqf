@@ -43,6 +43,9 @@ const date = (v?:string) => v ? new Date(v).toLocaleString() : "—";
 export function JoinTasksPage({ token }: { token: string }) {
   const [tasks,setTasks] = useState<Task[]>([]);
   const [accounts,setAccounts] = useState<Account[]>([]);
+  const [accountsTotal,setAccountsTotal] = useState(0);
+  const [accountsLoadedCount,setAccountsLoadedCount] = useState(0);
+  const [loadingMoreAccounts,setLoadingMoreAccounts] = useState(false);
   const [groups,setGroups] = useState<Group[]>([]);
   const [links,setLinks] = useState<Link[]>([]);
   const [linksTotal,setLinksTotal] = useState(0);
@@ -74,13 +77,15 @@ export function JoinTasksPage({ token }: { token: string }) {
     try {
       const [taskResult,accountResult,groupResult,linkResult] = await Promise.all([
         api<{tasks:Task[];total:number}>(`/api/v1/join-tasks?limit=50&offset=${offset}`,token),
-        api<{accounts:Account[]}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token),
+        api<{accounts:Account[];total:number}>("/api/v1/accounts?limit=100&offset=0&status=authorized",token),
         api<{groups:Group[]}>("/api/v1/groups?limit=100&offset=0&sort=title",token),
         api<{links:Link[];total:number}>("/api/v1/group-links?limit=100&offset=0",token)
       ]);
       setTasks(taskResult.tasks || []);
       setTotal(taskResult.total || 0);
-      setAccounts((accountResult.accounts || []).filter(a=>a.status==="authorized" && a.has_session));
+      setAccounts(current => { const first=(accountResult.accounts||[]).filter(a=>a.status==="authorized"&&a.has_session); const ids=new Set(first.map(a=>a.id)); return [...first,...current.filter(a=>!ids.has(a.id))]; });
+      setAccountsTotal(accountResult.total||0);
+      setAccountsLoadedCount(current=>Math.max(current,(accountResult.accounts||[]).length));
       setGroups(groupResult.groups || []);
       setLinks(current => { const first = linkResult.links || []; const firstIDs = new Set(first.map(item => item.id)); return [...first, ...current.filter(item => !firstIDs.has(item.id))]; });
       setLinksTotal(linkResult.total || 0);
@@ -100,6 +105,18 @@ export function JoinTasksPage({ token }: { token: string }) {
     const timer=window.setInterval(()=>void refreshDetail(),10000);
     return()=>{active=false;window.clearInterval(timer)};
   },[detail?.id,token]);
+
+  async function loadMoreAccounts() {
+    if (loadingMoreAccounts || accountsLoadedCount >= accountsTotal) return;
+    setLoadingMoreAccounts(true); setError("");
+    try {
+      const result=await api<{accounts:Account[];total:number}>(`/api/v1/accounts?limit=100&offset=${accountsLoadedCount}&status=authorized`,token);
+      setAccounts(current=>{const seen=new Set(current.map(a=>a.id));return [...current,...(result.accounts||[]).filter(a=>a.status==="authorized"&&a.has_session&&!seen.has(a.id))];});
+      setAccountsLoadedCount(current=>current+(result.accounts||[]).length);
+      setAccountsTotal(result.total||0);
+    } catch(e) { setError(e instanceof Error?translateAPIError(e.message):"加载更多账号失败"); }
+    finally { setLoadingMoreAccounts(false); }
+  }
 
   async function loadMoreLinks() {
     if (loadingMoreLinks || links.length >= linksTotal) return;
@@ -191,7 +208,7 @@ export function JoinTasksPage({ token }: { token: string }) {
       {targetMode==="group"&&<div className="join-group-picker-field"><label>选择共享群组</label><SharedGroupPicker token={token} value={groupID} onChange={id=>setGroupID(id)} disabled={busy}/><small>支持按名称、username、群组类型搜索并分页；仅显示可通过公开 username 访问的目标。</small></div>}
       {targetMode==="link"&&<><label>选择本租户发现的链接<select required value={linkID} onChange={e=>setLinkID(e.target.value)}><option value="">选择链接</option>{links.filter(l=>l.status!=="invalid").map(l=><option key={l.id} value={l.id}>{l.type==="invite"?"私密邀请":"公开链接"} · {l.public_url||`邀请 #${l.id}`} · {linkStatusName[l.status]||l.status}</option>)}</select><small>仅允许使用本租户采集来源关联的链接。已加载 {links.length}/{linksTotal} 条。</small></label>{links.length<linksTotal&&<button type="button" className="secondary" onClick={()=>void loadMoreLinks()} disabled={loadingMoreLinks}>{loadingMoreLinks?"加载中…":"加载更多链接"}</button>}</>}
       {targetMode==="invite"&&<label>私密邀请链接<input required value={invite} onChange={e=>setInvite(e.target.value)} placeholder="https://t.me/+…"/><small>邀请 hash 仅以加密形式保存，不会明文写入任务表。</small></label>}
-      <fieldset className="join-account-picker"><legend>分配账号（最多 20 个）</legend><div className="join-account-list">{accounts.map(account=><label key={account.id}><input type="checkbox" checked={accountIDs.includes(account.id)} onChange={()=>toggleAccount(account.id)}/><span>{account.display_name||account.phone||account.id}<small>{account.phone} · {account.id.slice(0,8)}…</small></span></label>)}</div>{!accounts.length&&<small>当前没有已授权且存在 Session 的账号。</small>}<small>已选 {accountIDs.length}/20</small></fieldset>
+      <fieldset className="join-account-picker"><legend>分配账号（最多 20 个）</legend><div className="join-account-list">{accounts.map(account=><label key={account.id}><input type="checkbox" checked={accountIDs.includes(account.id)} onChange={()=>toggleAccount(account.id)}/><span>{account.display_name||account.phone||account.id}<small>{account.phone} · {account.id.slice(0,8)}…</small></span></label>)}</div>{!accounts.length&&<small>当前没有已授权且存在 Session 的账号。</small>}<small>已选 {accountIDs.length}/20 · 已加载 {accountsLoadedCount}/{accountsTotal} 个授权账号</small>{accountsLoadedCount<accountsTotal&&<button type="button" className="secondary" onClick={()=>void loadMoreAccounts()} disabled={loadingMoreAccounts}>{loadingMoreAccounts?"加载中…":"加载更多账号"}</button>}</fieldset>
       <label>授权说明（可选）<textarea rows={2} maxLength={500} value={authorizationNote} onChange={e=>setAuthorizationNote(e.target.value)} placeholder="记录本次加入的授权来源或业务目的"/></label>
       <label className="join-authorization"><input type="checkbox" checked={authorized} onChange={e=>setAuthorized(e.target.checked)}/><span>我确认已获得加入目标群组所需的授权，并理解 Telegram 平台限制及 FloodWait 冷却要求。</span></label>
       <button className="primary" disabled={busy||!authorized||!accountIDs.length||(targetMode==="group"&&!groupID)||(targetMode==="link"&&!linkID)||(targetMode==="invite"&&!invite.trim())}>创建任务（创建后需手动启动）</button>
