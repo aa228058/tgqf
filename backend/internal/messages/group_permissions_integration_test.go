@@ -92,8 +92,12 @@ func openGroupIntegrationDB(t *testing.T) (*sql.DB, func()) {
 			status TEXT NOT NULL,rpc_error TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',source TEXT NOT NULL DEFAULT '',
 			last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(tenant_id,account_id,capability,chat_id))`,
 		`CREATE TABLE tenant_message_chats (
-			tenant_id UUID NOT NULL,telegram_account_id UUID NOT NULL,chat_id BIGINT NOT NULL,
-			chat_type TEXT NOT NULL DEFAULT '',chat_title TEXT NOT NULL DEFAULT '',PRIMARY KEY(tenant_id,telegram_account_id,chat_id))`,
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID NOT NULL, telegram_account_id UUID NOT NULL,
+			chat_id BIGINT NOT NULL, chat_title TEXT NOT NULL DEFAULT '', chat_type TEXT NOT NULL DEFAULT '',
+			username TEXT NOT NULL DEFAULT '', member_count INTEGER NOT NULL DEFAULT 0, is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+			photo_id TEXT NOT NULL DEFAULT '', last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(tenant_id,telegram_account_id,chat_id))`,
 		`CREATE TABLE tenant_join_task_accounts (
 			id BIGSERIAL PRIMARY KEY,tenant_id UUID NOT NULL,task_id UUID NOT NULL,telegram_account_id UUID NOT NULL,
 			status TEXT NOT NULL,application_status TEXT NOT NULL DEFAULT 'not_started',attempts INTEGER NOT NULL DEFAULT 0,
